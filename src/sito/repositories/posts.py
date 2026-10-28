@@ -1,0 +1,78 @@
+from collections.abc import Collection, Sequence
+from dataclasses import asdict, dataclass
+from datetime import datetime
+
+from sqlalchemy import Boolean, func, literal_column, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from sito.models import Post, PostStatus
+
+
+@dataclass(frozen=True, slots=True)
+class NewPost:
+    source_id: int
+    external_id: str
+    url: str
+    url_normalized: str
+    title: str
+    raw_text: str | None
+    content_hash: str
+    published_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class UpsertResult:
+    inserted: int
+    updated: int
+    unchanged: int
+
+
+class PostRepository:
+    CHUNK_SIZE = 1000
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def url_owners(self, urls: Collection[str]) -> dict[str, tuple[int, str]]:
+        """Какие из адресов уже есть в базе и чьи они: url → (source_id, external_id)."""
+        if not urls:
+            return {}
+        result = await self.session.execute(
+            select(Post.url_normalized, Post.source_id, Post.external_id)
+            .where(Post.url_normalized.in_(urls))
+        )
+        return {url: (source_id, external_id) for url, source_id, external_id in result}
+
+    async def upsert_many(self, posts: Sequence[NewPost]) -> UpsertResult:
+        unique = list({(p.source_id, p.external_id): p for p in posts}.values())
+
+        inserted = updated = 0
+        for start in range(0, len(unique), self.CHUNK_SIZE):
+            chunk = unique[start:start + self.CHUNK_SIZE]
+
+            stmt = insert(Post).values([asdict(p) for p in chunk])
+            new = stmt.excluded  # строка, которую пытались вставить
+            upsert = stmt.on_conflict_do_update(
+                constraint="uq_post_source_id_external_id",
+                set_={
+                    "url": new.url,
+                    "url_normalized": new.url_normalized,
+                    "title": new.title,
+                    "raw_text": new.raw_text,
+                    "content_hash": new.content_hash,
+                    "published_at": new.published_at,
+                    "text": None,
+                    "status": PostStatus.NEW,
+                    "attempt": 0,
+                    "last_error": None,
+                    "updated_at": func.now(),
+                },
+                where=Post.content_hash != new.content_hash,
+            ).returning(literal_column("xmax = 0", Boolean))  # True — вставлена, False — обновлена
+
+            flags = (await self.session.execute(upsert)).scalars().all()
+            inserted += sum(flags)
+            updated += len(flags) - sum(flags)
+
+        return UpsertResult(inserted, updated, len(unique) - inserted - updated)

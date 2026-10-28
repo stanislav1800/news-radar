@@ -69,7 +69,6 @@ class IngestService:
         if collector is None:
             raise LookupError(f"Нет коллектора для типа {source.type!r}")
 
-        # Таймаут здесь, а не снаружи: TimeoutError попадёт в обработчик и запишется в источник
         async with asyncio.timeout(self.fetch_timeout):
             fetched = await collector.fetch(source)
 

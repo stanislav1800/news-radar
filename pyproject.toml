@@ -45,3 +45,10 @@ name = "ruff"
 type = "module"
 module = "ruff"
 options = "check --fix REVISION_SCRIPT_FILENAME"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Один event loop на все тесты: engine и пул соединений живут весь прогон
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"

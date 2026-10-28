@@ -15,6 +15,25 @@ class SourceRepository:
     async def get(self, source_id: int) -> Source | None:
         return await self.session.get(Source, source_id)
 
+    async def get_by_url(self, url: str) -> Source | None:
+        return await self.session.scalar(select(Source).where(Source.url == url))
+
+    async def list_all(self) -> list[Source]:
+        return list(await self.session.scalars(select(Source).order_by(Source.id)))
+
+    async def add(self, type_: SourceType, name: str, url: str, poll_interval: int) -> Source:
+        source = Source(type=type_, name=name, url=url, poll_interval=poll_interval)
+        self.session.add(source)
+        await self.session.flush()  # получить id до коммита
+        return source
+
+    async def set_enabled(self, source_id: int, enabled: bool) -> bool:
+        """Возвращает False, если источника нет."""
+        result = await self.session.execute(
+            update(Source).where(Source.id == source_id).values(enabled=enabled).returning(Source.id)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def due_for_polling(self, types: Collection[SourceType], limit: int = 100) -> list[int]:
         """Включённые источники, у которых с последней попытки прошло poll_interval секунд.
 

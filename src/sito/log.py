@@ -52,6 +52,7 @@ def setup_logging(level: LogLevel = "INFO", fmt: LogFormat = "text", sql: bool =
             # Шумные библиотеки: иначе строка на каждый HTTP-запрос
             "httpx": {"level": "WARNING"},
             "httpcore": {"level": "WARNING"},
+            "httpx2": {"level": "WARNING"},  # им пользуется huggingface_hub при скачивании моделей
             # INFO у sqlalchemy.engine печатает каждый SQL-запрос
             "sqlalchemy.engine": {"level": "INFO" if sql else "WARNING"},
         },

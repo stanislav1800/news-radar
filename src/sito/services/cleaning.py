@@ -7,12 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import Post, PostStatus
 from sito.repositories.posts import PostRepository
+from sito.services.pipeline import MAX_ATTEMPTS, mark_post_done, record_post_error
 from sito.utils.text import clean_html, clean_line
 
-logger = logging.getLogger(__name__)
+__all__ = ["MAX_ATTEMPTS", "CleanBatchResult", "CleaningService"]
 
-MAX_ATTEMPTS = 3
-ERROR_MAX_LENGTH = 2000
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +44,7 @@ class CleaningService:
                     status = self._clean(post)
                 except Exception as exc:
                     errors += 1
-                    self._record_error(post, exc)
+                    record_post_error(post, exc)
                     logger.exception(
                         "post=%s: ошибка очистки, попытка %d", post.id, post.attempt, extra={"post_id": post.id}
                     )
@@ -63,18 +63,8 @@ class CleaningService:
         post.title = clean_line(post.title)
         post.text = cleaned.text or None
         post.links = cleaned.links
-        post.last_error = None
 
         # Короткий пост без текста — не мусор: для склейки хватит заголовка
-        if cleaned.is_ad or not (post.title or post.text):
-            post.status = PostStatus.SKIPPED
-        else:
-            post.status = PostStatus.CLEANED
+        junk = cleaned.is_ad or not (post.title or post.text)
+        mark_post_done(post, PostStatus.SKIPPED if junk else PostStatus.CLEANED)
         return post.status
-
-    @staticmethod
-    def _record_error(post: Post, exc: Exception) -> None:
-        post.attempt += 1
-        post.last_error = f"{type(exc).__name__}: {exc}"[:ERROR_MAX_LENGTH]
-        if post.attempt >= MAX_ATTEMPTS:
-            post.status = PostStatus.FAILED  # больше не берём, ждёт разбора

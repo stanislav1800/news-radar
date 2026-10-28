@@ -78,6 +78,8 @@ class PostRepository:
                     "published_at": new.published_at,
                     "text": None,
                     "links": [],
+                    "embedding": None,
+                    "embedding_model": None,
                     "status": PostStatus.NEW,
                     "attempt": 0,
                     "last_error": None,

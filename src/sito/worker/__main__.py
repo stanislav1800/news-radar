@@ -2,6 +2,8 @@ import asyncio
 import contextlib
 import logging
 import signal
+from collections.abc import Awaitable, Callable
+from typing import Protocol
 
 import httpx
 
@@ -9,9 +11,11 @@ from sito.config import settings
 from sito.db.engine import async_session, engine
 from sito.log import setup_logging
 from sito.models import SourceType
+from sito.models.post import EMBEDDING_DIM
 from sito.repositories.sources import SourceRepository
 from sito.services.cleaning import CleaningService
 from sito.services.collector.rss import RssCollector
+from sito.services.embedding import EmbeddingService, SentenceTransformerEmbedder
 from sito.services.ingest import IngestService
 
 logger = logging.getLogger("sito.worker")
@@ -60,17 +64,52 @@ async def poll_loop(service: IngestService, stop: asyncio.Event) -> None:
         await sleep_until_stop(stop, settings.worker_tick_seconds)
 
 
-async def clean_loop(service: CleaningService, stop: asyncio.Event) -> None:
-    """Шаг 3: очистка новых постов. Пачки идут подряд, пока есть работа."""
+class BatchResult(Protocol):
+    @property
+    def total(self) -> int: ...
+
+
+async def drain_loop(
+    name: str, process_batch: Callable[[], Awaitable[BatchResult]], tick: float, stop: asyncio.Event
+) -> None:
+    """Обрабатывать пачки подряд, пока есть работа, потом ждать tick секунд."""
     while not stop.is_set():
         try:
-            result = await service.process_batch()
+            result = await process_batch()
         except Exception:
-            logger.exception("ошибка очистки")
+            logger.exception("ошибка шага «%s»", name)
         else:
             if result.total:
                 continue
-        await sleep_until_stop(stop, settings.clean_tick_seconds)
+        await sleep_until_stop(stop, tick)
+
+
+async def embed_loop(stop: asyncio.Event) -> None:
+    """Шаг 4: эмбеддинги. Сначала загрузить модель, при неудаче повторить через минуту."""
+    while not stop.is_set():
+        logger.info("загрузка модели %s (первый раз скачивается с Hugging Face)", settings.embedding_model)
+        try:
+            embedder = await SentenceTransformerEmbedder.load(
+                settings.embedding_model, settings.embedding_prefix, settings.embedding_batch_size
+            )
+        except Exception:
+            logger.exception("модель не загрузилась, повтор через минуту")
+            await sleep_until_stop(stop, 60)
+            continue
+        if embedder.dim != EMBEDDING_DIM:
+            # Ошибка настройки, а не сбой: повтор не поможет
+            logger.error(
+                "модель %s выдаёт векторы размера %d, а колонка post.embedding — %d. "
+                "Нужна другая модель или миграция; эмбеддинги выключены.",
+                embedder.name, embedder.dim, EMBEDDING_DIM,
+            )
+            return
+        logger.info("модель загружена: %s, размер вектора %d", embedder.name, embedder.dim)
+        service = EmbeddingService(
+            async_session, embedder, settings.embedding_batch_size, settings.embedding_max_chars
+        )
+        await drain_loop("эмбеддинги", service.process_batch, settings.embedding_tick_seconds, stop)
+        return
 
 
 async def main() -> None:
@@ -94,7 +133,8 @@ async def main() -> None:
 
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(poll_loop(ingest, stop))
-            tasks.create_task(clean_loop(cleaning, stop))
+            tasks.create_task(drain_loop("очистка", cleaning.process_batch, settings.clean_tick_seconds, stop))
+            tasks.create_task(embed_loop(stop))
 
     await engine.dispose()
     logger.info("worker остановлен")

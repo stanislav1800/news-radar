@@ -128,7 +128,6 @@ class IngestService:
             key = (post.source_id, post.external_id)
             if owners.setdefault(post.url_normalized, key) == key:
                 fresh.append(post)
-        # setdefault заодно убирает дубли внутри пачки: первый пост «занимает» адрес
         return fresh
 
     async def _mark_failed(self, source_id: int, exc: Exception) -> None:

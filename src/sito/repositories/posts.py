@@ -34,6 +34,20 @@ class PostRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def take_pending(self, status: PostStatus, limit: int) -> list[Post]:
+        """Пачка постов в статусе status, заблокированная до конца транзакции.
+
+        SKIP LOCKED: несколько обработчиков параллельно берут разные посты, не дожидаясь друг друга.
+        """
+        result = await self.session.scalars(
+            select(Post)
+            .where(Post.status == status)
+            .order_by(Post.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        return list(result)
+
     async def url_owners(self, urls: Collection[str]) -> dict[str, tuple[int, str]]:
         """Какие из адресов уже есть в базе и чьи они: url → (source_id, external_id)."""
         if not urls:
@@ -63,6 +77,7 @@ class PostRepository:
                     "content_hash": new.content_hash,
                     "published_at": new.published_at,
                     "text": None,
+                    "links": [],
                     "status": PostStatus.NEW,
                     "attempt": 0,
                     "last_error": None,

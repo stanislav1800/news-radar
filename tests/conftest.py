@@ -105,7 +105,9 @@ def make_source(session_factory: async_sessionmaker[AsyncSession]) -> MakeSource
     async def make(**fields: object) -> int:
         nonlocal counter
         counter += 1
-        values = {"type": SourceType.RSS, "name": f"source {counter}", "url": f"https://feed{counter}.example/rss"}
+        values: dict[str, object] = {
+            "type": SourceType.RSS, "name": f"source {counter}", "url": f"https://feed{counter}.example/rss"
+        }
         values.update(fields)
         async with session_factory() as session, session.begin():
             return (await session.execute(insert(Source).values(**values).returning(Source.id))).scalar_one()

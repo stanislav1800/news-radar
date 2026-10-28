@@ -5,9 +5,11 @@ from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
     Index,
+    Text,
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sito.db.base import Base, IdMixin, TimestampMixin, str_enum
@@ -33,7 +35,8 @@ class Post(IdMixin, TimestampMixin, Base):
     
     title: Mapped[str]
     raw_text: Mapped[str | None]
-    text: Mapped[str | None]
+    text: Mapped[str | None]       # очищенный, шаг 3
+    links: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")  # ссылки из текста, шаг 3
     content_hash: Mapped[str]
 
     published_at: Mapped[datetime | None] = mapped_column(index=True)

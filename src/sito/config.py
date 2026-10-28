@@ -19,5 +19,9 @@ class Settings(BaseSettings):
     http_timeout: float = 15          # на одну операцию HTTP (подключение, чтение)
     http_user_agent: str = "Sito/0.1 (news radar)"
 
+    # Worker: очистка текста (шаг 3)
+    clean_batch_size: int = 100       # постов за одну транзакцию
+    clean_tick_seconds: float = 5     # пауза, когда новых постов нет
+
 
 settings = Settings()

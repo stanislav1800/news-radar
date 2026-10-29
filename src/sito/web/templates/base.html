@@ -14,6 +14,7 @@
     <a class="brand" href="/">Сито</a>
     <nav>
       <a href="/">Лента</a>
+      {% if user.is_admin %}<a href="/admin/connectors">Подключения</a>{% endif %}
     </nav>
     <div class="account">
       <span class="muted">{{ user.username }}{% if user.is_admin %} · админ{% endif %}</span>
@@ -25,6 +26,7 @@
   </header>
   {% endif %}
   <main class="{% block main_class %}page{% endblock %}">
+    {% if user %}{% set message = pop_flash(request) %}{% if message %}<div class="flash" role="status">{{ message }}</div>{% endif %}{% endif %}
     {% block content %}{% endblock %}
   </main>
 </body>

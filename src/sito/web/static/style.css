@@ -150,3 +150,29 @@ h2 { font-size: 1.1rem; margin: 1.75rem 0 .5rem; }
   color: var(--muted); font-size: .85rem; margin: .5rem 0;
 }
 .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+
+/* Администратор */
+.page.wide { max-width: 1040px; }
+.flash { background: var(--notice-bg); border-radius: 8px; padding: .6rem .8rem; margin-bottom: 1rem; }
+.connector { margin-top: 1.25rem; }
+.connector-head h2 { margin: 0; }
+.connector-head p { margin: .2rem 0 1rem; }
+.table-wrap { overflow-x: auto; }
+table.sources { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.sources th { text-align: left; color: var(--muted); font-weight: 500; font-size: .82rem; padding: .4rem .5rem; border-bottom: 1px solid var(--border); }
+.sources td { padding: .55rem .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.sources tr.disabled td { opacity: .55; }
+.sources .num { text-align: right; white-space: nowrap; }
+.sources .url { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sources .actions { white-space: nowrap; text-align: right; }
+.sources .actions form { display: inline; margin-left: .6rem; }
+.status-ok { color: var(--muted); }
+.status-error, .field-error { color: var(--error-text); }
+button.link.danger { color: var(--error-text); }
+.add-source { margin-top: 1rem; }
+.add-source summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.stack { display: grid; gap: .8rem; max-width: 520px; margin-top: .8rem; }
+.field input { width: 100%; }
+.field.invalid input { border-color: var(--error-text); }
+.req { color: var(--error-text); }
+.check { display: flex; align-items: center; gap: .5rem; color: var(--text); font-size: .92rem; }

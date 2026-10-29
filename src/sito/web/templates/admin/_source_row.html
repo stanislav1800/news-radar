@@ -1,0 +1,35 @@
+{# Строка источника. Отдельный файл: HTMX заменяет только её при включении и выключении #}
+<tr id="source-{{ s.id }}" class="{% if not s.enabled %}disabled{% endif %}">
+  <td>
+    <strong>{{ s.name }}</strong>
+    <div class="muted small url">{{ s.url }}</div>
+  </td>
+  <td>
+    {% if not s.enabled %}
+    <span class="muted">выключен</span>
+    {% elif s.last_error and (not s.last_success_at or s.last_error_at > s.last_success_at) %}
+    <span class="status-error" title="{{ s.last_error }}">ошибка {{ s.last_error_at | ago(user.timezone, now) }}</span>
+    <div class="small field-error">{{ s.last_error[:120] }}</div>
+    {% elif s.last_success_at %}
+    <span class="status-ok">сбор {{ s.last_success_at | ago(user.timezone, now) }}</span>
+    {% else %}
+    <span class="muted">ещё не опрашивался</span>
+    {% endif %}
+  </td>
+  <td class="num">{{ s.posts_24h }}</td>
+  <td class="num">{{ s.poll_interval // 60 }} мин</td>
+  <td class="actions">
+    <form method="post" action="/admin/sources/{{ s.id }}/enabled"
+          hx-post="/admin/sources/{{ s.id }}/enabled" hx-target="closest tr" hx-swap="outerHTML">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="enabled" value="{{ 'false' if s.enabled else 'true' }}">
+      <button class="link" type="submit">{{ "Выключить" if s.enabled else "Включить" }}</button>
+    </form>
+    {# tojson: название из базы безопасно попадает в JS-строку, кавычки в нём не ломают код #}
+    <form method="post" action="/admin/sources/{{ s.id }}/delete"
+          onsubmit='return confirm({{ ("Удалить «" ~ s.name ~ "» вместе со всеми её постами? Лучше просто выключить.") | tojson }})'>
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <button class="link danger" type="submit">Удалить</button>
+    </form>
+  </td>
+</tr>

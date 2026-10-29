@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% import "_form_fields.html" as form %}
+{% block title %}Подключения · Сито{% endblock %}
+{% block main_class %}page wide{% endblock %}
+{% block content %}
+<h1>Подключения</h1>
+<p class="muted">Источники общие для всех пользователей. Подключение — тип источников со своими настройками; RSS есть всегда. Telegram появится следующим.</p>
+
+{% for section in sections %}
+{% set c = section.connector %}
+<section class="card connector">
+  <header class="connector-head">
+    <h2>{{ c.name }}{% if c.builtin %} <span class="badge">встроенное</span>{% endif %}</h2>
+    {% if section.spec %}<p class="muted small">{{ section.spec.description }}</p>{% endif %}
+  </header>
+
+  {% if section.sources %}
+  <div class="table-wrap">
+    <table class="sources">
+      <thead>
+        <tr><th>Источник</th><th>Состояние</th><th class="num">Постов за сутки</th><th class="num">Опрос</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in section.sources %}{% include "admin/_source_row.html" %}{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Источников пока нет.</p>
+  {% endif %}
+
+  {% if section.spec %}
+  <details class="add-source" {% if section.form_open %}open{% endif %}>
+    <summary>Добавить ленту</summary>
+    <form class="stack" method="post" action="/admin/connectors/{{ c.id }}/sources">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      {% if section.form_error %}<div class="error" role="alert">{{ section.form_error }}</div>{% endif %}
+      {{ form.render(section.fields) }}
+      {% if section.spec.trial_fetch %}
+      <label class="check">
+        <input type="checkbox" name="check" checked> Проверить ленту перед сохранением (пробный сбор)
+      </label>
+      {% endif %}
+      <button type="submit">Добавить</button>
+    </form>
+  </details>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

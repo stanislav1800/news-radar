@@ -15,8 +15,9 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from sito.config import Settings, settings
 from sito.db.engine import async_session
+from sito.services.sources import http_trial_fetch
 from sito.web.deps import LoginRequired, verify_csrf
-from sito.web.routes import auth, stories
+from sito.web.routes import admin, auth, stories
 from sito.web.security import LoginLimiter
 from sito.web.templating import WEB_DIR
 
@@ -47,6 +48,7 @@ def create_app(
     )
     app.state.settings = config
     app.state.session_factory = session_factory or async_session
+    app.state.trial_fetch = http_trial_fetch(config)  # тесты подменяют, чтобы не ходить в сеть
     app.state.login_limiter = LoginLimiter(
         max_failures=config.login_max_failures,
         lockout_seconds=timedelta(minutes=config.login_lockout_minutes).total_seconds(),
@@ -78,4 +80,5 @@ def create_app(
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
     app.include_router(auth.router)
     app.include_router(stories.router)
+    app.include_router(admin.router)
     return app

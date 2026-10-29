@@ -1,0 +1,16 @@
+{# Поля формы, построенные по Pydantic-модели (sito/web/forms.py) #}
+{% macro render(fields) %}
+{% for f in fields %}
+<label class="field{% if f.error %} invalid{% endif %}">
+  <span>{{ f.label }}{% if f.required %} <span class="req" aria-hidden="true">*</span>{% endif %}</span>
+  <input name="{{ f.name }}" type="{{ f.input_type }}" value="{{ f.value }}"
+         {% if f.required %}required{% endif %}
+         {% if f.min is not none %}min="{{ f.min }}"{% endif %}
+         {% if f.max is not none %}max="{{ f.max }}"{% endif %}
+         {% if f.maxlength is not none %}maxlength="{{ f.maxlength }}"{% endif %}
+         {% if f.error %}aria-invalid="true"{% endif %}>
+  {% if f.error %}<small class="field-error">{{ f.error }}</small>
+  {% elif f.help %}<small class="muted">{{ f.help }}</small>{% endif %}
+</label>
+{% endfor %}
+{% endmacro %}

@@ -1,11 +1,29 @@
 from collections.abc import Collection
+from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sito.models import Source, SourceType
+from sito.models import Post, Source, SourceType, Story
+from sito.repositories.stories import StoryRepository
 
 ERROR_MAX_LENGTH = 2000
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRow:
+    """Строка таблицы источников в админке."""
+
+    id: int
+    name: str
+    url: str
+    enabled: bool
+    poll_interval: int
+    last_success_at: datetime | None
+    last_error: str | None
+    last_error_at: datetime | None
+    posts_24h: int
 
 
 class SourceRepository:
@@ -21,11 +39,50 @@ class SourceRepository:
     async def list_all(self) -> list[Source]:
         return list(await self.session.scalars(select(Source).order_by(Source.id)))
 
-    async def add(self, type_: SourceType, name: str, url: str, poll_interval: int) -> Source:
-        source = Source(type=type_, name=name, url=url, poll_interval=poll_interval)
+    async def add(self, connector_id: int, type_: SourceType, name: str, url: str, poll_interval: int) -> Source:
+        source = Source(connector_id=connector_id, type=type_, name=name, url=url, poll_interval=poll_interval)
         self.session.add(source)
         await self.session.flush()  # получить id до коммита
         return source
+
+    async def list_with_stats(self, connector_id: int) -> list[SourceRow]:
+        posts_24h = (
+            select(func.count())
+            .where(Post.source_id == Source.id, Post.fetched_at > func.now() - text("interval '24 hours'"))
+            .scalar_subquery()
+        )
+        query = (
+            select(
+                Source.id, Source.name, Source.url, Source.enabled, Source.poll_interval,
+                Source.last_success_at, Source.last_error, Source.last_error_at, posts_24h.label("posts_24h"),
+            )
+            .where(Source.connector_id == connector_id)
+            .order_by(Source.name)
+        )
+        return [SourceRow(**row._mapping) for row in await self.session.execute(query)]
+
+    async def get_row(self, source_id: int) -> SourceRow | None:
+        source = await self.get(source_id)
+        if source is None:
+            return None
+        rows = [r for r in await self.list_with_stats(source.connector_id) if r.id == source_id]
+        return rows[0] if rows else None
+
+    async def delete(self, source_id: int) -> bool:
+        """Удалить источник вместе с его постами. Сюжеты, где были посты, пересчитываются, опустевшие удаляются."""
+        story_ids = list(await self.session.scalars(
+            select(Post.story_id).where(Post.source_id == source_id, Post.story_id.is_not(None)).distinct()
+        ))
+        result = await self.session.execute(delete(Source).where(Source.id == source_id).returning(Source.id))
+        if result.scalar_one_or_none() is None:
+            return False
+        if story_ids:
+            has_posts = select(Post.id).where(Post.story_id == Story.id).exists()
+            await self.session.execute(delete(Story).where(Story.id.in_(story_ids), ~has_posts))
+            stories = StoryRepository(self.session)
+            for story_id in await self.session.scalars(select(Story.id).where(Story.id.in_(story_ids))):
+                await stories.refresh(story_id)
+        return True
 
     async def set_enabled(self, source_id: int, enabled: bool) -> bool:
         """Возвращает False, если источника нет."""

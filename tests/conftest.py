@@ -44,10 +44,10 @@ TEST_DATABASE_URL = _test_database_url()
 # До импорта sito: настройки и engine должны прочитать адрес тестовой базы
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL.render_as_string(hide_password=False)
 
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sito.models import Source, SourceType
+from sito.models import Connector, Source, SourceType
 
 
 async def _recreate_database(url: URL) -> None:
@@ -110,11 +110,14 @@ def make_source(session_factory: async_sessionmaker[AsyncSession]) -> MakeSource
     async def make(**fields: object) -> int:
         nonlocal counter
         counter += 1
-        values: dict[str, object] = {
-            "type": SourceType.RSS, "name": f"source {counter}", "url": f"https://feed{counter}.example/rss"
-        }
-        values.update(fields)
         async with session_factory() as session, session.begin():
+            # Встроенное RSS-подключение создаёт миграция
+            rss_connector = select(Connector.id).where(Connector.builtin, Connector.type == SourceType.RSS)
+            values: dict[str, object] = {
+                "connector_id": rss_connector.scalar_subquery(),
+                "type": SourceType.RSS, "name": f"source {counter}", "url": f"https://feed{counter}.example/rss",
+            }
+            values.update(fields)
             return (await session.execute(insert(Source).values(**values).returning(Source.id))).scalar_one()
 
     return make

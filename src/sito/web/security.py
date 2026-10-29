@@ -61,3 +61,16 @@ def safe_next(url: str | None) -> str:
     if url and url.startswith("/") and not url.startswith(("//", "/\\")):
         return url
     return "/"
+
+
+FLASH_SESSION_KEY = "flash"
+
+
+def flash(request: Request, message: str) -> None:
+    """Сообщение после действия («Лента добавлена»): покажется один раз на следующей странице."""
+    request.session[FLASH_SESSION_KEY] = message
+
+
+def pop_flash(request: Request) -> str | None:
+    message = request.session.pop(FLASH_SESSION_KEY, None)
+    return str(message) if message else None

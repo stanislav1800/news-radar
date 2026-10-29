@@ -1,0 +1,142 @@
+# Сито
+
+Персональный новостной радар, который разворачивают у себя (self-hosted). Сито читает RSS-ленты, склеивает одну и ту же новость из разных изданий в один **сюжет** и показывает ленту сюжетов без копий: у каждого сюжета видно, сколько изданий его подхватили, кто написал первым и как развивалось событие.
+
+Подробное описание и решения — в [docs/ТЗ.md](docs/ТЗ.md).
+
+## Как это работает
+
+```
+RSS-ленты ──► сбор ──► очистка ──► векторы ──► склейка в сюжеты ──► веб
+              (worker: четыре параллельных цикла)               (sito web)
+```
+
+- **worker** раз в несколько минут опрашивает ленты, отсеивает точные дубли, чистит HTML, считает векторы локальной моделью `intfloat/multilingual-e5-base` и склеивает похожие посты в сюжеты;
+- **веб** показывает ленту сюжетов, страницу сюжета с хронологией и «похожими», прочитанное; администратор управляет источниками и пользователями.
+
+Регистрации нет: пользователей заводит администратор. Без входа видна только страница логина.
+
+## Быстрый старт
+
+Нужны Python 3.13, [uv](https://docs.astral.sh/uv/) и Docker.
+
+```bash
+# 1. База данных (PostgreSQL с pgvector)
+docker compose up -d db
+
+# 2. Настройки
+cp .env.example .env
+#    в .env: DATABASE_URL (порт — как в compose.yaml) и SITO_SECRET_KEY:
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# 3. Зависимости и схема базы
+uv sync
+uv run alembic upgrade head
+
+# 4. Администратор (пароль спросит в консоли)
+uv run sito user create admin --admin
+
+# 5. Первые ленты (делает пробный сбор перед сохранением)
+uv run sito source add "ТАСС" https://tass.ru/rss/v2.xml
+uv run sito source add "Интерфакс" https://www.interfax.ru/rss
+
+# 6. Запуск: worker и веб в двух терминалах
+uv run python -m sito.worker
+uv run sito web
+```
+
+Откройте http://127.0.0.1:8000. При первом запуске worker скачает модель эмбеддингов (около 1,1 ГБ, в `~/.cache/huggingface`); дальше она грузится из кэша за секунды.
+
+## Команды
+
+| Команда | Что делает |
+| --- | --- |
+| `sito web [--port 8080] [--reload]` | веб-интерфейс |
+| `python -m sito.worker` | сбор и обработка; останавливается по Ctrl+C без потери данных |
+| `sito user create <логин> [--admin]` | новый пользователь |
+| `sito user list` / `sito user set-password <логин>` | список, смена пароля |
+| `sito source add <название> <адрес> [--no-check]` | новая RSS-лента |
+| `sito source list` / `enable` / `disable <id>` | источники |
+| `sito pipeline recluster` | склеить все посты в сюжеты заново (после смены порогов склейки) |
+
+Пользователями и источниками можно управлять и в вебе: страницы «Пользователи» и «Подключения» видны администратору.
+
+## Настройки
+
+Все настройки — переменные окружения или строки в `.env`; полный список с комментариями в [src/sito/config.py](src/sito/config.py), пример в [.env.example](.env.example).
+
+| Переменная | По умолчанию | Зачем |
+| --- | --- | --- |
+| `DATABASE_URL` | — | адрес базы |
+| `SITO_SECRET_KEY` | — | подпись cookie сессий; без него веб не стартует |
+| `WEB_HOST`, `WEB_PORT` | `127.0.0.1`, `8000` | где слушает веб |
+| `SESSION_COOKIE_SECURE` | `false` | включить, если веб открыт через HTTPS |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | каким прокси доверять заголовки `X-Forwarded-*` |
+| `LOG_LEVEL`, `LOG_FORMAT` | `INFO`, `text` | логи; `json` — для Docker и сборщиков логов |
+| `CLUSTER_*` | см. config.py | пороги склейки, подобраны по разметке в `eval/` |
+
+## Открыть в интернет
+
+Сито само работает по обычному HTTP, как Grafana или Miniflux. HTTPS даёт обратный прокси перед ним. Как и где разворачивать, решаете вы; ниже два типовых варианта для прокси на той же машине.
+
+**Caddy** (сам получает и продлевает сертификат Let's Encrypt):
+
+```
+sito.example.ru {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+**nginx:**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name sito.example.ru;
+    ssl_certificate     /etc/letsencrypt/live/sito.example.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sito.example.ru/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+И в `.env`:
+
+```
+SESSION_COOKIE_SECURE=true   # cookie сессии только по HTTPS
+FORWARDED_ALLOW_IPS=127.0.0.1  # адрес прокси; если прокси в другом контейнере — его адрес
+```
+
+`FORWARDED_ALLOW_IPS` важен: по заголовкам прокси Сито узнаёт настоящий адрес посетителя, а на нём держится ограничение попыток входа (после 5 неудач — пауза 5 минут). Доверять этим заголовкам можно только от своего прокси.
+
+Что защищено в самом приложении при любом способе развёртывания: пароли хранятся как хэш argon2, cookie сессии `HttpOnly` и `SameSite=Lax`, формы защищены CSRF-токеном, после смены пароля прежние входы перестают действовать, страницы нельзя встроить в чужой сайт.
+
+## Разработка
+
+```bash
+uv run pytest            # тесты; создают отдельную базу <имя>_test, рабочую не трогают
+uv run ruff check src tests
+uv run mypy src tests
+```
+
+Тесты с базой работают на настоящем PostgreSQL: база `<имя из DATABASE_URL>_test` пересоздаётся в начале прогона, каждый тест выполняется в откатываемой транзакции. Сеть в тестах не нужна.
+
+Структура:
+
+```
+src/sito/
+├── worker/        цикл обработки (сбор, очистка, векторы, склейка)
+├── web/           FastAPI, шаблоны Jinja2, HTMX
+├── services/      логика: сбор, очистка, эмбеддинги, склейка, пользователи
+├── repositories/  запросы к базе
+├── models/        таблицы SQLAlchemy
+└── cli.py         команды sito ...
+migrations/        Alembic
+eval/              размеченные пары постов для подбора порогов склейки
+scripts/           инструмент разметки
+```

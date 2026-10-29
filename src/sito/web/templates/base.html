@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Сито{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  {% if user %}
+  <header class="topbar">
+    <a class="brand" href="/">Сито</a>
+    <nav>
+      <a href="/">Лента</a>
+    </nav>
+    <div class="account">
+      <span class="muted">{{ user.username }}{% if user.is_admin %} · админ{% endif %}</span>
+      <form method="post" action="/logout">
+        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+        <button class="link" type="submit">Выйти</button>
+      </form>
+    </div>
+  </header>
+  {% endif %}
+  <main class="{% block main_class %}page{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

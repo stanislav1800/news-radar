@@ -3,6 +3,8 @@
     uv run sito source add "ТАСС" https://tass.ru/rss/v2.xml
     uv run sito source list
     uv run sito source disable 3
+    uv run sito user create admin --admin
+    uv run sito web
 """
 
 import asyncio
@@ -19,12 +21,16 @@ from sito.db.engine import async_session, engine
 from sito.log import setup_logging
 from sito.models import Source, SourceType
 from sito.repositories.sources import SourceRepository
+from sito.repositories.users import UserRepository
 from sito.services.collector.base import FetchResult
 from sito.services.collector.rss import RssCollector
+from sito.services.users import UserError, UserService
 
 app = typer.Typer(help="Сито: персональный новостной радар.", no_args_is_help=True)
 source_app = typer.Typer(help="Источники: RSS-ленты и Telegram-каналы.", no_args_is_help=True)
 app.add_typer(source_app, name="source")
+user_app = typer.Typer(help="Пользователи веба.", no_args_is_help=True)
+app.add_typer(user_app, name="user")
 
 console = Console()
 PREVIEW_TITLES = 3
@@ -137,6 +143,105 @@ def source_enable(source_id: int) -> None:
 def source_disable(source_id: int) -> None:
     """Выключить источник: worker перестанет его опрашивать, посты останутся."""
     _set_enabled(source_id, False)
+
+
+def _ask_password() -> str:
+    return str(typer.prompt("Пароль", hide_input=True, confirmation_prompt="Повторите пароль"))
+
+
+@user_app.command("create")
+def user_create(
+    username: Annotated[str, typer.Argument(help="Логин: латиница, цифры, точка, дефис, подчёркивание.")],
+    admin: Annotated[bool, typer.Option("--admin", help="Сделать администратором.")] = False,
+) -> None:
+    """Создать пользователя. Пароль спрашивается в консоли и не попадает в историю команд."""
+    password = _ask_password()
+
+    async def run() -> None:
+        try:
+            async with async_session() as session, session.begin():
+                user = await UserService(session).create(username, password, is_admin=admin)
+        except UserError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+        role = "администратор" if user.is_admin else "пользователь"
+        console.print(f"Создан {role} [bold]{user.username}[/bold]")
+
+    _run(run())
+
+
+@user_app.command("list")
+def user_list() -> None:
+    """Показать пользователей."""
+
+    async def run() -> None:
+        async with async_session() as session:
+            users = await UserRepository(session).list_all()
+        if not users:
+            console.print("Пользователей пока нет. Создать: sito user create <логин> --admin")
+            return
+        table = Table()
+        for header in ("логин", "роль", "активен", "последний вход"):
+            table.add_column(header)
+        for u in users:
+            table.add_row(
+                u.username,
+                "администратор" if u.is_admin else "пользователь",
+                "да" if u.is_active else "[dim]нет[/dim]",
+                f"{u.last_login_at.astimezone():%Y-%m-%d %H:%M}" if u.last_login_at else "—",
+            )
+        console.print(table)
+
+    _run(run())
+
+
+@user_app.command("set-password")
+def user_set_password(username: str) -> None:
+    """Сменить пароль. Все прежние входы пользователя перестанут действовать."""
+    password = _ask_password()
+
+    async def run() -> None:
+        async with async_session() as session, session.begin():
+            user = await UserRepository(session).get_by_username(username.strip().lower())
+            if user is None:
+                console.print(f"[red]Пользователя {username} нет[/red]")
+                raise typer.Exit(1)
+            try:
+                await UserService(session).set_password(user, password)
+            except UserError as exc:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(1) from exc
+        console.print(f"Пароль {user.username} изменён")
+
+    _run(run())
+
+
+@app.command("web")
+def web(
+    host: Annotated[str | None, typer.Option(help="Адрес, по умолчанию из WEB_HOST.")] = None,
+    port: Annotated[int | None, typer.Option(help="Порт, по умолчанию из WEB_PORT.")] = None,
+    reload: Annotated[bool, typer.Option(help="Перезапуск при изменении кода, для разработки.")] = False,
+) -> None:
+    """Запустить веб. За обратным прокси доверяет X-Forwarded-* от адресов из FORWARDED_ALLOW_IPS."""
+    import uvicorn
+
+    if settings.secret_key is None:
+        console.print(
+            "[red]Не задан SITO_SECRET_KEY.[/red] Сгенерируйте ключ и добавьте в .env:\n"
+            '  python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        )
+        raise typer.Exit(1)
+
+    uvicorn.run(
+        "sito.web.app:create_app",
+        factory=True,
+        host=host or settings.web_host,
+        port=port or settings.web_port,
+        reload=reload,
+        proxy_headers=True,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
+        log_config=None,  # логи настраивает setup_logging, uvicorn не должен их перетирать
+    )
 
 
 def _run(coro: Coroutine[Any, Any, None]) -> None:

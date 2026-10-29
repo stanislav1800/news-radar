@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Вход · Сито{% endblock %}
+{% block main_class %}center{% endblock %}
+{% block content %}
+<form class="card login" method="post" action="/login">
+  <h1>Сито</h1>
+  <p class="muted">Персональный новостной радар</p>
+
+  {% if first_run %}
+  <div class="notice">
+    Пользователей пока нет. Создайте администратора в консоли:
+    <code>sito user create admin --admin</code>
+  </div>
+  {% endif %}
+
+  {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+  <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+  <input type="hidden" name="next" value="{{ next }}">
+
+  <label>Логин
+    <input name="username" value="{{ username }}" autocomplete="username" autocapitalize="none" required autofocus>
+  </label>
+  <label>Пароль
+    <input name="password" type="password" autocomplete="current-password" required>
+  </label>
+  <button type="submit">Войти</button>
+</form>
+{% endblock %}

@@ -1,9 +1,15 @@
 {# Карточки сюжетов. Отдельный файл: его же отдаёт /feed/items для «Показать ещё» #}
 {% for s in stories %}
-<article class="story-card">
+{% if s.id == divider_before %}
+<div class="divider" role="separator">
+  Вы были здесь {{ user.previous_visit_at | ago(user.timezone, now) }}
+</div>
+{% endif %}
+<article class="story-card {{ s.read_state }}">
   <a class="story-title" href="/stories/{{ s.id }}">{{ s.title }}</a>
   {% if s.lead %}<p class="lead">{{ s.lead }}</p>{% endif %}
   <div class="meta">
+    {% if s.read_state == "updated" %}<span class="badge updated">есть обновления</span>{% endif %}
     {% if s.sources_count > 1 %}
     <span class="badge">{{ s.sources_count | plural("издание", "издания", "изданий") }}</span>
     {% endif %}
@@ -17,9 +23,7 @@
 {% endfor %}
 
 {% if next_cursor %}
+{% set params = "min_sources=" ~ min_sources ~ ("&unread=true" if unread else "") ~ "&cursor=" ~ next_cursor %}
 {# Без JavaScript — обычная ссылка на следующую страницу, с HTMX — дописывает карточки на место ссылки #}
-<a class="more"
-   href="/?min_sources={{ min_sources }}&cursor={{ next_cursor }}"
-   hx-get="/feed/items?min_sources={{ min_sources }}&cursor={{ next_cursor }}"
-   hx-target="this" hx-swap="outerHTML">Показать ещё</a>
+<a class="more" href="/?{{ params }}" hx-get="/feed/items?{{ params }}" hx-target="this" hx-swap="outerHTML">Показать ещё</a>
 {% endif %}

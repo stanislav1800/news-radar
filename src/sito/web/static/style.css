@@ -139,3 +139,14 @@ h2 { font-size: 1.1rem; margin: 1.75rem 0 .5rem; }
   .timeline li { grid-template-columns: 1fr; gap: .1rem; }
   .topbar { gap: .75rem; }
 }
+
+/* Прочитанное */
+.feed-actions { margin: -.5rem 0 1rem; text-align: right; font-size: .9rem; }
+.story-card.read { opacity: .6; }
+.story-card.read .story-title { font-weight: 500; }
+.badge.updated { background: var(--accent); color: var(--accent-text); }
+.divider {
+  display: flex; align-items: center; gap: .75rem;
+  color: var(--muted); font-size: .85rem; margin: .5rem 0;
+}
+.divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }

@@ -17,3 +17,9 @@ class User(IdMixin, TimestampMixin, Base):
     session_version: Mapped[int] = mapped_column(server_default="1")
     timezone: Mapped[str] = mapped_column(server_default="Europe/Moscow")
     last_login_at: Mapped[datetime | None]
+
+    # «Новое с прошлого визита». Визит — заходы без перерыва дольше 30 минут.
+    last_seen_at: Mapped[datetime | None]       # последний заход в ленту
+    previous_visit_at: Mapped[datetime | None]  # последний заход в прошлый визит: граница «нового»
+    # «Отметить всё прочитанным»: сюжеты, не менявшиеся после этого момента, считаются прочитанными
+    read_all_before: Mapped[datetime | None]

@@ -2,10 +2,22 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, bindparam, literal_column, select, text, tuple_
+from sqlalchemy import (
+    DateTime,
+    bindparam,
+    case,
+    false,
+    func,
+    literal_column,
+    or_,
+    select,
+    text,
+    tuple_,
+)
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sito.models import Post, Source, Story
+from sito.models import Post, Source, Story, StoryRead
 from sito.models.post import EMBEDDING_DIM, EVENT_AT_SQL
 
 LEAD_MAX_CHARS = 300  # ТЗ: из чужих материалов показываем не больше первого абзаца, около 300 знаков
@@ -46,6 +58,7 @@ class FeedStory:
     started_at: datetime
     last_post_at: datetime
     first_source_name: str | None
+    read_state: str  # new — не открывал; updated — открывал, но с тех пор появились посты; read
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +123,9 @@ _REFRESH_SQL = text(f"""
         first_source_id = first_post.source_id,
         title = latest_post.title,
         lead = nullif(left(split_part(coalesce(latest_post.text, ''), E'\\n', 1), :lead_max), ''),
-        updated_at = now()
+        -- Когда сюжет изменился у нас (приклеился пост): по нему считается «есть обновления».
+        -- clock_timestamp, а не now(): now() — время начала транзакции, а не текущее.
+        updated_at = clock_timestamp()
     FROM totals, first_post, latest_post
     WHERE story.id = :story_id
 """)
@@ -176,15 +191,35 @@ class StoryRepository:
         return [SimilarStory(**row._mapping) for row in result]
 
     async def feed(
-        self, limit: int, min_sources: int = 1, before: tuple[datetime, int] | None = None
+        self,
+        limit: int,
+        *,
+        user_id: int,
+        read_all_before: datetime | None = None,
+        min_sources: int = 1,
+        before: tuple[datetime, int] | None = None,
+        unread_only: bool = False,
     ) -> list[FeedStory]:
-        """Сюжеты, новые сверху (по времени первого поста). before — курсор для «Показать ещё»."""
+        """Сюжеты, новые сверху (по времени первого поста), с отметками прочитанного для пользователя.
+
+        before — курсор для «Показать ещё». read_all_before — момент «Отметить всё прочитанным».
+        """
+        # Сравниваем с моментом, когда сюжет изменился у нас, а не со временем публикации:
+        # пост, опубликованный до прочтения, но скачанный после, — тоже обновление
+        read_at = StoryRead.read_at
+        is_read = or_(
+            read_at >= Story.updated_at,
+            Story.updated_at <= read_all_before if read_all_before else false(),
+        )
+        read_state = case((is_read, "read"), (read_at.is_not(None), "updated"), else_="new")
         query = (
             select(
                 Story.id, Story.title, Story.lead, Story.sources_count, Story.posts_count,
                 Story.started_at, Story.last_post_at, Source.name.label("first_source_name"),
+                read_state.label("read_state"),
             )
             .outerjoin(Source, Source.id == Story.first_source_id)
+            .outerjoin(StoryRead, (StoryRead.story_id == Story.id) & (StoryRead.user_id == user_id))
             .where(Story.sources_count >= min_sources)
             .order_by(Story.started_at.desc(), Story.id.desc())
             .limit(limit)
@@ -192,7 +227,15 @@ class StoryRepository:
         if before is not None:
             # Курсор по (время, id), а не OFFSET: новые сюжеты наверху не сдвигают уже показанные
             query = query.where(tuple_(Story.started_at, Story.id) < tuple_(*before))
+        if unread_only:
+            query = query.where(read_state != "read")
         return [FeedStory(**row._mapping) for row in await self.session.execute(query)]
+
+    async def mark_read(self, user_id: int, story_id: int) -> None:
+        stmt = insert(StoryRead).values(user_id=user_id, story_id=story_id, read_at=func.clock_timestamp())
+        await self.session.execute(
+            stmt.on_conflict_do_update(index_elements=["user_id", "story_id"], set_={"read_at": stmt.excluded.read_at})
+        )
 
     async def timeline(self, story_id: int) -> list[TimelinePost]:
         """Посты сюжета по времени: как развивалось событие."""

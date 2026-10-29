@@ -30,5 +30,12 @@ class Settings(BaseSettings):
     embedding_max_chars: int = 1000    # сколько текста после заголовка подавать в модель
     embedding_tick_seconds: float = 5
 
+    # Worker: склейка в сюжеты (шаг 5). Пороги подобраны по разметке в eval/
+    cluster_cross_source_min_similarity: float = 0.90
+    cluster_same_source_min_similarity: float = 0.94
+    cluster_max_gap_hours: float = 6
+    cluster_batch_size: int = 100
+    cluster_tick_seconds: float = 5
+
 
 settings = Settings()

@@ -1,0 +1,218 @@
+"""Склейка в сюжеты. Векторы задаются вручную, чтобы точно выставить сходство между постами."""
+
+import math
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import func, insert, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from sito.models import Post, PostStatus, Story
+from sito.models.post import EMBEDDING_DIM
+from sito.repositories.stories import StoryRepository
+from sito.services.clustering import ClusteringService
+from tests.conftest import MakeSource
+
+T0 = datetime(2026, 10, 28, 9, 0, tzinfo=UTC)
+
+
+def vec(similarity: float = 1.0, axis: int = 1) -> list[float]:
+    """Единичный вектор со сходством similarity к базовому вектору vec()."""
+    v = [0.0] * EMBEDDING_DIM
+    v[0] = similarity
+    v[axis] = math.sqrt(max(0.0, 1 - similarity**2))
+    return v
+
+
+class Posts:
+    def __init__(self, factory: async_sessionmaker[AsyncSession]) -> None:
+        self.factory = factory
+        self.n = 0
+
+    async def add(
+        self, source_id: int, embedding: list[float], at: datetime = T0, title: str | None = None,
+        text: str | None = None, story_id: int | None = None,
+    ) -> int:
+        self.n += 1
+        async with self.factory() as session, session.begin():
+            return (await session.execute(insert(Post).values(
+                source_id=source_id, external_id=f"id-{self.n}", url=f"https://news.example/{self.n}",
+                url_normalized=f"https://news.example/{self.n}", title=title or f"Пост {self.n}", text=text,
+                content_hash=f"h{self.n}", published_at=at, embedding=embedding,
+                status=PostStatus.EMBEDDED, story_id=story_id,
+            ).returning(Post.id))).scalar_one()
+
+    async def story_of(self, post_id: int) -> int | None:
+        async with self.factory() as session:
+            return (await session.execute(select(Post.story_id).where(Post.id == post_id))).scalar_one()
+
+
+async def get_story(factory: async_sessionmaker[AsyncSession], story_id: int | None) -> Story:
+    assert story_id is not None
+    async with factory() as session:
+        story = await session.get(Story, story_id)
+        assert story is not None
+        return story
+
+
+async def count_stories(factory: async_sessionmaker[AsyncSession]) -> int:
+    async with factory() as session:
+        return (await session.execute(select(func.count()).select_from(Story))).scalar_one()
+
+
+async def test_first_post_starts_story(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    source = await make_source()
+    posts = Posts(session_factory)
+    post_id = await posts.add(source, vec(), title="В Испании столкнулись поезда", text="Первый абзац.\nВторой.")
+
+    result = await ClusteringService(session_factory).process_batch()
+
+    assert (result.new_stories, result.attached) == (1, 0)
+    story = await get_story(session_factory, await posts.story_of(post_id))
+    assert story.title == "В Испании столкнулись поезда"
+    assert story.lead == "Первый абзац."
+    assert (story.posts_count, story.sources_count) == (1, 1)
+    assert story.first_post_id == post_id
+    assert story.started_at == T0
+
+
+async def test_cross_source_copy_is_attached(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    tass, rbc = await make_source(), await make_source()
+    posts = Posts(session_factory)
+    first = await posts.add(tass, vec(), T0, title="Столкнулись поезда")
+    second = await posts.add(rbc, vec(0.95), T0 + timedelta(hours=2), title="40 погибших при столкновении поездов")
+
+    result = await ClusteringService(session_factory).process_batch()
+
+    assert (result.new_stories, result.attached) == (1, 1)
+    story_id = await posts.story_of(first)
+    assert await posts.story_of(second) == story_id
+    story = await get_story(session_factory, story_id)
+    assert (story.posts_count, story.sources_count) == (2, 2)
+    assert story.title == "40 погибших при столкновении поездов"  # из самого свежего поста
+    assert (story.first_post_id, story.first_source_id) == (first, tass)  # первым был ТАСС
+    assert story.last_post_at == T0 + timedelta(hours=2)
+
+
+async def test_uncertain_similarity_starts_new_story(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    a, b = await make_source(), await make_source()
+    posts = Posts(session_factory)
+    await posts.add(a, vec())
+    await posts.add(b, vec(0.88), T0 + timedelta(minutes=30))  # спорно: не склеиваем
+
+    await ClusteringService(session_factory).process_batch()
+
+    assert await count_stories(session_factory) == 2
+
+
+async def test_same_story_on_different_days_is_not_attached(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    a, b = await make_source(), await make_source()
+    posts = Posts(session_factory)
+    await posts.add(a, vec(), T0, title="В аэропорту Внуково ввели ограничения")
+    await posts.add(b, vec(0.97), T0 + timedelta(hours=8), title="В аэропорту Внуково ввели ограничения")
+
+    await ClusteringService(session_factory).process_batch()
+
+    assert await count_stories(session_factory) == 2
+
+
+async def test_same_source_needs_higher_similarity(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    source = await make_source()
+    posts = Posts(session_factory)
+    base = await posts.add(source, vec())
+    similar = await posts.add(source, vec(0.92, axis=2), T0 + timedelta(minutes=10))  # хватило бы для разных изданий
+    update = await posts.add(source, vec(0.96, axis=3), T0 + timedelta(minutes=20))
+
+    await ClusteringService(session_factory).process_batch()
+
+    assert await posts.story_of(similar) != await posts.story_of(base)
+    assert await posts.story_of(update) == await posts.story_of(base)
+
+
+async def test_processing_order_does_not_matter(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    early_source, late_source = await make_source(), await make_source()
+    posts = Posts(session_factory)
+    # Поздний пост попал в базу раньше раннего
+    late = await posts.add(late_source, vec(), T0 + timedelta(hours=1), title="Поздний")
+    early = await posts.add(early_source, vec(0.95), T0, title="Ранний")
+
+    await ClusteringService(session_factory).process_batch()
+
+    story = await get_story(session_factory, await posts.story_of(late))
+    assert await posts.story_of(early) == story.id
+    assert (story.first_post_id, story.first_source_id) == (early, early_source)
+    assert story.title == "Поздний"
+
+
+async def test_edited_post_stays_in_its_story(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    a, b = await make_source(), await make_source()
+    posts = Posts(session_factory)
+    first = await posts.add(a, vec(), title="Столкнулись поезда")
+    service = ClusteringService(session_factory)
+    await service.process_batch()
+    story_id = await posts.story_of(first)
+
+    # Пост отредактировали: он снова прошёл пайплайн, но привязка к сюжету сохранилась.
+    # Новый вектор далёк от прежнего — пост всё равно не переезжает в другой сюжет.
+    edited = await posts.add(b, vec(0.5), T0 + timedelta(hours=1), title="Уточнение: 68 погибших", story_id=story_id)
+    await service.process_batch()
+
+    assert await posts.story_of(edited) == story_id
+    story = await get_story(session_factory, story_id)
+    assert (story.posts_count, story.title) == (2, "Уточнение: 68 погибших")
+
+
+async def test_similar_stories(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource, session: AsyncSession
+) -> None:
+    a, b, c = await make_source(), await make_source(), await make_source()
+    posts = Posts(session_factory)
+    crash = await posts.add(a, vec(), title="Столкнулись поезда")
+    reaction = await posts.add(b, vec(0.88), T0 + timedelta(hours=1), title="Премьер потрясён катастрофой")
+    await posts.add(c, vec(0.30), T0, title="Вышел FastAPI 1.0")
+    await ClusteringService(session_factory).process_batch()
+
+    crash_story = await posts.story_of(crash)
+    assert crash_story is not None
+    similar = await StoryRepository(session).similar(crash_story, min_similarity=0.86, window=timedelta(hours=48))
+
+    assert [s.story_id for s in similar] == [await posts.story_of(reaction)]
+    assert math.isclose(similar[0].similarity, 0.88, abs_tol=1e-3)
+
+
+async def test_broken_post_does_not_break_batch(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    a, b = await make_source(), await make_source()
+    posts = Posts(session_factory)
+    good = await posts.add(a, vec())
+    async with session_factory() as session, session.begin():  # пост без вектора: склейка упадёт
+        broken = (await session.execute(insert(Post).values(
+            source_id=b, external_id="broken", url="https://news.example/broken",
+            url_normalized="https://news.example/broken", title="Битый", content_hash="x",
+            status=PostStatus.EMBEDDED,
+        ).returning(Post.id))).scalar_one()
+    after = await posts.add(b, vec(0.95), T0 + timedelta(minutes=5))
+
+    result = await ClusteringService(session_factory).process_batch()
+
+    assert (result.errors, result.new_stories, result.attached) == (1, 1, 1)
+    assert await posts.story_of(after) == await posts.story_of(good)
+    async with session_factory() as session:
+        row = (await session.execute(
+            select(Post.status, Post.attempt, Post.last_error, Post.story_id).where(Post.id == broken)
+        )).one()
+    assert row == (PostStatus.EMBEDDED, 1, "ValueError: у поста нет вектора", None)

@@ -3,6 +3,7 @@ import contextlib
 import logging
 import signal
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Protocol
 
 import httpx
@@ -14,6 +15,7 @@ from sito.models import SourceType
 from sito.models.post import EMBEDDING_DIM
 from sito.repositories.sources import SourceRepository
 from sito.services.cleaning import CleaningService
+from sito.services.clustering import ClusteringRules, ClusteringService
 from sito.services.collector.rss import RssCollector
 from sito.services.embedding import EmbeddingService, SentenceTransformerEmbedder
 from sito.services.ingest import IngestService
@@ -129,12 +131,24 @@ async def main() -> None:
             fetch_timeout=settings.fetch_timeout,
         )
         cleaning = CleaningService(async_session, batch_size=settings.clean_batch_size)
+        clustering = ClusteringService(
+            async_session,
+            ClusteringRules(
+                cross_source_min_similarity=settings.cluster_cross_source_min_similarity,
+                same_source_min_similarity=settings.cluster_same_source_min_similarity,
+                max_gap=timedelta(hours=settings.cluster_max_gap_hours),
+            ),
+            batch_size=settings.cluster_batch_size,
+        )
         logger.info("worker запущен")
 
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(poll_loop(ingest, stop))
             tasks.create_task(drain_loop("очистка", cleaning.process_batch, settings.clean_tick_seconds, stop))
             tasks.create_task(embed_loop(stop))
+            tasks.create_task(
+                drain_loop("склейка", clustering.process_batch, settings.cluster_tick_seconds, stop)
+            )
 
     await engine.dispose()
     logger.info("worker остановлен")

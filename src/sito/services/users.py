@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from functools import cache
 
 from pwdlib import PasswordHash
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sito.models import User
@@ -20,6 +21,16 @@ _hasher = PasswordHash.recommended()
 
 class UserError(ValueError):
     """Ошибка, которую можно показать человеку как есть."""
+
+
+class UserCreateForm(BaseModel):
+    """Форма «Новый пользователь» на странице администратора."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    username: str = Field(title="Логин", description="Латиница, цифры, точка, дефис, подчёркивание", min_length=1)
+    password: SecretStr = Field(title="Пароль", description=f"Не короче {MIN_PASSWORD_LENGTH} символов", min_length=1)
+    is_admin: bool = Field(False, title="Администратор")
 
 
 def normalize_username(raw: str) -> str:
@@ -75,6 +86,24 @@ class UserService:
             user.password_hash = new_hash
         user.last_login_at = datetime.now(UTC)
         return user
+
+    @staticmethod
+    def _not_self(actor: User, target: User, action: str) -> None:
+        # Действующий администратор себя не меняет — значит, хотя бы один администратор всегда остаётся
+        if actor.id == target.id:
+            raise UserError(f"Нельзя {action} самого себя: так можно остаться без администратора")
+
+    async def set_active(self, actor: User, target: User, active: bool) -> None:
+        self._not_self(actor, target, "отключить")
+        target.is_active = active  # отключённого сразу выбрасывает: current_user проверяет is_active
+
+    async def set_admin(self, actor: User, target: User, is_admin: bool) -> None:
+        self._not_self(actor, target, "лишить прав администратора")
+        target.is_admin = is_admin
+
+    async def delete(self, actor: User, target: User) -> None:
+        self._not_self(actor, target, "удалить")
+        await self.repo.session.delete(target)
 
     async def set_password(self, user: User, password: str) -> None:
         """Сменить пароль. Все прежние входы пользователя перестают действовать."""

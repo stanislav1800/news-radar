@@ -17,7 +17,7 @@ from sito.config import Settings, settings
 from sito.db.engine import async_session
 from sito.services.sources import http_trial_fetch
 from sito.web.deps import LoginRequired, verify_csrf
-from sito.web.routes import admin, auth, stories
+from sito.web.routes import admin, admin_users, auth, stories
 from sito.web.security import LoginLimiter
 from sito.web.templating import WEB_DIR
 
@@ -81,4 +81,5 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(stories.router)
     app.include_router(admin.router)
+    app.include_router(admin_users.router)
     return app

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% import "_form_fields.html" as form %}
+{% block title %}Пользователи · Сито{% endblock %}
+{% block main_class %}page wide{% endblock %}
+{% block content %}
+<h1>Пользователи</h1>
+<p class="muted">Регистрации нет: пользователей заводит администратор. У каждого свои темы и лента, источники общие.</p>
+
+<section class="card">
+  <div class="table-wrap">
+    <table class="sources users">
+      <thead>
+        <tr><th>Логин</th><th>Роль</th><th>Последний вход</th><th>Новый пароль</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        {% set is_me = u.id == user.id %}
+        <tr class="{% if not u.is_active %}disabled{% endif %}">
+          <td>
+            <strong>{{ u.username }}</strong>{% if is_me %} <span class="muted small">(это вы)</span>{% endif %}
+            {% if not u.is_active %}<div class="small field-error">отключён, войти не может</div>{% endif %}
+          </td>
+          <td>{{ "администратор" if u.is_admin else "пользователь" }}</td>
+          <td class="muted">{{ u.last_login_at | ago(user.timezone, now) if u.last_login_at else "не входил" }}</td>
+          <td>
+            <form class="inline-form" method="post" action="/admin/users/{{ u.id }}/password">
+              <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+              <input name="password" type="password" minlength="8" required autocomplete="new-password"
+                     placeholder="не короче 8 символов" aria-label="Новый пароль для {{ u.username }}">
+              <button class="link" type="submit">Сменить</button>
+            </form>
+          </td>
+          <td class="actions">
+            {% if not is_me %}
+            <form method="post" action="/admin/users/{{ u.id }}/admin">
+              <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+              <input type="hidden" name="is_admin" value="{{ 'false' if u.is_admin else 'true' }}">
+              <button class="link" type="submit">{{ "Снять админа" if u.is_admin else "Сделать админом" }}</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}/active">
+              <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+              <input type="hidden" name="active" value="{{ 'false' if u.is_active else 'true' }}">
+              <button class="link" type="submit">{{ "Отключить" if u.is_active else "Включить" }}</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}/delete"
+                  onsubmit='return confirm({{ ("Удалить пользователя " ~ u.username ~ "? Его темы и отметки прочитанного пропадут.") | tojson }})'>
+              <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+              <button class="link danger" type="submit">Удалить</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <details class="add-source" {% if form_open %}open{% endif %}>
+    <summary>Новый пользователь</summary>
+    <form class="stack" method="post" action="/admin/users">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      {% if form_error %}<div class="error" role="alert">{{ form_error }}</div>{% endif %}
+      {{ form.render(fields) }}
+      <button type="submit">Создать</button>
+    </form>
+  </details>
+</section>
+{% endblock %}

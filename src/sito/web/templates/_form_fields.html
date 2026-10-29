@@ -1,9 +1,14 @@
 {# Поля формы, построенные по Pydantic-модели (sito/web/forms.py) #}
 {% macro render(fields) %}
 {% for f in fields %}
+{% if f.input_type == "checkbox" %}
+<label class="check">
+  <input type="checkbox" name="{{ f.name }}" {% if f.value in ("on", "true", "True") %}checked{% endif %}> {{ f.label }}
+</label>
+{% else %}
 <label class="field{% if f.error %} invalid{% endif %}">
   <span>{{ f.label }}{% if f.required %} <span class="req" aria-hidden="true">*</span>{% endif %}</span>
-  <input name="{{ f.name }}" type="{{ f.input_type }}" value="{{ f.value }}"
+  <input name="{{ f.name }}" type="{{ f.input_type }}" value="{{ '' if f.input_type == 'password' else f.value }}"
          {% if f.required %}required{% endif %}
          {% if f.min is not none %}min="{{ f.min }}"{% endif %}
          {% if f.max is not none %}max="{{ f.max }}"{% endif %}
@@ -12,5 +17,6 @@
   {% if f.error %}<small class="field-error">{{ f.error }}</small>
   {% elif f.help %}<small class="muted">{{ f.help }}</small>{% endif %}
 </label>
+{% endif %}
 {% endfor %}
 {% endmacro %}

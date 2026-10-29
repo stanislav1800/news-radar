@@ -176,3 +176,6 @@ button.link.danger { color: var(--error-text); }
 .field.invalid input { border-color: var(--error-text); }
 .req { color: var(--error-text); }
 .check { display: flex; align-items: center; gap: .5rem; color: var(--text); font-size: .92rem; }
+.inline-form { display: flex; gap: .5rem; align-items: center; }
+.inline-form input { padding: .3rem .5rem; font-size: .88rem; width: 12rem; }
+.users .actions form { display: block; margin: 0 0 .2rem; }

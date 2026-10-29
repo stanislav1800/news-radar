@@ -216,3 +216,66 @@ async def test_broken_post_does_not_break_batch(
             select(Post.status, Post.attempt, Post.last_error, Post.story_id).where(Post.id == broken)
         )).one()
     assert row == (PostStatus.EMBEDDED, 1, "ValueError: у поста нет вектора", None)
+
+
+def angle(degrees: float) -> list[float]:
+    """Единичный вектор в плоскости двух первых осей: сходство двух таких векторов — косинус угла между ними."""
+    v = [0.0] * EMBEDDING_DIM
+    v[0], v[1] = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+    return v
+
+
+async def test_story_does_not_drift_along_a_chain(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    a, b, c = await make_source(), await make_source(), await make_source()
+    posts = Posts(session_factory)
+    moscow = await posts.add(a, angle(0), T0, title="Атака на Москву")
+    more = await posts.add(b, angle(18), T0 + timedelta(hours=1), title="Над Москвой сбили ещё 20")
+    # Похож на предыдущий пост (0,95), но далёк от сюжета в целом: цепочка уходит в сторону
+    kursk = await posts.add(c, angle(36), T0 + timedelta(hours=2), title="В Курской области сбили 150 БПЛА")
+
+    await ClusteringService(session_factory).process_batch()
+
+    assert await posts.story_of(more) == await posts.story_of(moscow)
+    assert await posts.story_of(kursk) != await posts.story_of(moscow)
+
+
+async def test_headline_is_typical_recent_post_not_a_side_one(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    sources = [await make_source() for _ in range(4)]
+    posts = Posts(session_factory)
+    first = await posts.add(sources[0], angle(0), T0, title="Атака на Москву")
+    await posts.add(sources[1], angle(10), T0 + timedelta(hours=1), title="Над Москвой сбили 100 дронов")
+    await posts.add(sources[2], angle(20), T0 + timedelta(hours=2), title="Над Москвой сбили 231 дрон")
+    # Самый свежий, но боковой: приклеен (близок к соседу и центру), а для заголовка не годится
+    await posts.add(sources[3], angle(28), T0 + timedelta(hours=2, minutes=30), title="Под Смоленском сбили 12 дронов")
+
+    await ClusteringService(session_factory).process_batch()
+
+    story = await get_story(session_factory, await posts.story_of(first))
+    assert story.posts_count == 4
+    assert story.title == "Над Москвой сбили 231 дрон"
+
+
+async def test_reset_and_recluster(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    a, b = await make_source(), await make_source()
+    posts = Posts(session_factory)
+    first = await posts.add(a, vec())
+    second = await posts.add(b, vec(0.95), T0 + timedelta(minutes=30))
+    await posts.add(b, vec(0.3), T0, title="Другая новость")
+    service = ClusteringService(session_factory)
+    await service.process_batch()
+    assert await count_stories(session_factory) == 2
+
+    assert await service.reset() == 3
+    assert await count_stories(session_factory) == 0
+    assert await posts.story_of(first) is None
+
+    result = await service.process_batch()
+
+    assert (result.new_stories, result.attached) == (2, 1)
+    assert await posts.story_of(first) == await posts.story_of(second)

@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sito.models import Post, PostStatus
+from sito.models.post import EVENT_AT_SQL
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,18 +35,18 @@ class PostRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def take_pending(self, status: PostStatus, limit: int) -> list[Post]:
+    async def take_pending(self, status: PostStatus, limit: int, by_event_time: bool = False) -> list[Post]:
         """Пачка постов в статусе status, заблокированная до конца транзакции.
 
         SKIP LOCKED: несколько обработчиков параллельно берут разные посты, не дожидаясь друг друга.
+        by_event_time: по времени новости, а не по порядку записи в базу (для склейки).
         """
-        result = await self.session.scalars(
-            select(Post)
-            .where(Post.status == status)
-            .order_by(Post.id)
-            .limit(limit)
-            .with_for_update(skip_locked=True)
-        )
+        query = select(Post).where(Post.status == status).limit(limit).with_for_update(skip_locked=True)
+        if by_event_time:
+            query = query.order_by(literal_column(EVENT_AT_SQL), Post.id)
+        else:
+            query = query.order_by(Post.id)
+        result = await self.session.scalars(query)
         return list(result)
 
     async def url_owners(self, urls: Collection[str]) -> dict[str, tuple[int, str]]:

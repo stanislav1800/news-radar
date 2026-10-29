@@ -3,7 +3,6 @@ import contextlib
 import logging
 import signal
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
 from typing import Protocol
 
 import httpx
@@ -132,13 +131,7 @@ async def main() -> None:
         )
         cleaning = CleaningService(async_session, batch_size=settings.clean_batch_size)
         clustering = ClusteringService(
-            async_session,
-            ClusteringRules(
-                cross_source_min_similarity=settings.cluster_cross_source_min_similarity,
-                same_source_min_similarity=settings.cluster_same_source_min_similarity,
-                max_gap=timedelta(hours=settings.cluster_max_gap_hours),
-            ),
-            batch_size=settings.cluster_batch_size,
+            async_session, ClusteringRules.from_settings(settings), batch_size=settings.cluster_batch_size
         )
         logger.info("worker запущен")
 

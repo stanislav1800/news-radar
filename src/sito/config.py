@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     cluster_cross_source_min_similarity: float = 0.90
     cluster_same_source_min_similarity: float = 0.94
     cluster_max_gap_hours: float = 6
+    cluster_min_story_similarity: float = 0.92  # и с центром сюжета: не даёт крупным сюжетам расползаться
     cluster_batch_size: int = 100
     cluster_tick_seconds: float = 5
 

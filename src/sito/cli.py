@@ -22,6 +22,7 @@ from sito.log import setup_logging
 from sito.models import Source, SourceType
 from sito.repositories.sources import SourceRepository
 from sito.repositories.users import UserRepository
+from sito.services.clustering import ClusteringRules, ClusteringService
 from sito.services.collector.base import FetchResult
 from sito.services.collector.rss import RssCollector
 from sito.services.users import UserError, UserService
@@ -31,6 +32,8 @@ source_app = typer.Typer(help="Источники: RSS-ленты и Telegram-к
 app.add_typer(source_app, name="source")
 user_app = typer.Typer(help="Пользователи веба.", no_args_is_help=True)
 app.add_typer(user_app, name="user")
+pipeline_app = typer.Typer(help="Обслуживание пайплайна.", no_args_is_help=True)
+app.add_typer(pipeline_app, name="pipeline")
 
 console = Console()
 PREVIEW_TITLES = 3
@@ -212,6 +215,35 @@ def user_set_password(username: str) -> None:
                 console.print(f"[red]{exc}[/red]")
                 raise typer.Exit(1) from exc
         console.print(f"Пароль {user.username} изменён")
+
+    _run(run())
+
+
+@pipeline_app.command("recluster")
+def pipeline_recluster(
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Не спрашивать подтверждение.")] = False,
+) -> None:
+    """Склеить все посты в сюжеты заново: после смены правил или порогов склейки.
+
+    Сюжеты удаляются и собираются заново. Посты и их векторы не трогаются.
+    """
+    if not yes:
+        typer.confirm("Все сюжеты будут удалены и собраны заново. Продолжить?", abort=True)
+
+    async def run() -> None:
+        service = ClusteringService(
+            async_session, ClusteringRules.from_settings(settings), batch_size=settings.cluster_batch_size
+        )
+        total = await service.reset()
+        console.print(f"К пересклейке постов: {total}")
+        attached = new_stories = errors = 0
+        with console.status("Склейка...") as status:
+            while (result := await service.process_batch()).total:
+                attached += result.attached
+                new_stories += result.new_stories
+                errors += result.errors
+                status.update(f"Склейка... {attached + new_stories + errors} из {total}")
+        console.print(f"Готово: сюжетов {new_stories}, приклеено постов {attached}, ошибок {errors}")
 
     _run(run())
 

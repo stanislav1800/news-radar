@@ -9,6 +9,8 @@ from sito.models import Post, Source, Story
 from sito.models.post import EMBEDDING_DIM, EVENT_AT_SQL
 
 LEAD_MAX_CHARS = 300  # ТЗ: из чужих материалов показываем не больше первого абзаца, около 300 знаков
+HEADLINE_WINDOW = timedelta(hours=3)  # заголовок выбирается среди постов последних часов сюжета
+HEADLINE_SLACK = 0.02                 # «типичный» пост: не дальше от центра, чем самый типичный, на столько
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +20,8 @@ class MatchCandidate:
     post_id: int
     story_id: int
     source_id: int
-    similarity: float
+    similarity: float               # с этим постом
+    story_similarity: float | None  # с центром его сюжета (None, если у сюжета ещё нет центра)
     event_at: datetime
 
 
@@ -61,8 +64,10 @@ _vector = bindparam("embedding", type_=Vector(EMBEDDING_DIM))
 _CANDIDATES_SQL = text(f"""
     SELECT post.id AS post_id, post.story_id, post.source_id,
            1 - (post.embedding <=> :embedding) AS similarity,
+           1 - (story.centroid <=> :embedding) AS story_similarity,
            {EVENT_AT_SQL} AS event_at
     FROM post
+    JOIN story ON story.id = post.story_id
     WHERE post.story_id IS NOT NULL
       AND post.embedding IS NOT NULL
       AND post.id <> :post_id
@@ -71,7 +76,9 @@ _CANDIDATES_SQL = text(f"""
     LIMIT :limit
 """).bindparams(_vector)
 
-# Сводка сюжета по его постам: счётчики, первый пост, самый свежий пост, средний вектор
+# Сводка сюжета по его постам: счётчики, первый пост, средний вектор и пост для заголовка.
+# Заголовок — самый свежий пост среди «типичных» за последние часы: свежий, но про суть сюжета.
+# Просто самый свежий пост бывает боковым (реакция, соседний регион) и подменяет смысл сюжета.
 _REFRESH_SQL = text(f"""
     WITH members AS (
         SELECT post.id, post.source_id, post.title, post.text, post.embedding, {EVENT_AT_SQL} AS event_at
@@ -83,7 +90,16 @@ _REFRESH_SQL = text(f"""
         FROM members
     ),
     first_post AS (SELECT id, source_id FROM members ORDER BY event_at, id LIMIT 1),
-    latest_post AS (SELECT title, text FROM members ORDER BY event_at DESC, id DESC LIMIT 1)
+    recent AS (
+        SELECT members.*, 1 - (members.embedding <=> totals.centroid) AS centrality
+        FROM members, totals
+        WHERE members.event_at >= totals.last - CAST(:headline_window AS interval)
+    ),
+    latest_post AS (
+        SELECT title, text FROM recent
+        WHERE centrality IS NULL OR centrality >= (SELECT max(centrality) FROM recent) - :headline_slack
+        ORDER BY event_at DESC, id DESC LIMIT 1
+    )
     UPDATE story SET
         posts_count = totals.posts,
         sources_count = totals.sources,
@@ -143,7 +159,12 @@ class StoryRepository:
 
     async def refresh(self, story_id: int) -> None:
         """Пересчитать сводку сюжета по его постам. Порядок обработки постов не важен."""
-        await self.session.execute(_REFRESH_SQL, {"story_id": story_id, "lead_max": LEAD_MAX_CHARS})
+        await self.session.execute(_REFRESH_SQL, {
+            "story_id": story_id,
+            "lead_max": LEAD_MAX_CHARS,
+            "headline_window": HEADLINE_WINDOW,
+            "headline_slack": HEADLINE_SLACK,
+        })
 
     async def similar(
         self, story_id: int, min_similarity: float, window: timedelta, limit: int = 5
@@ -183,3 +204,12 @@ class StoryRepository:
             .order_by(event_at, Post.id)
         )
         return [TimelinePost(**row._mapping) for row in await self.session.execute(query)]
+
+    async def reset_all(self) -> int:
+        """Снять со всех постов привязку к сюжетам и удалить сюжеты. Возвращает число постов к пересклейке."""
+        result = await self.session.execute(text("""
+            UPDATE post SET story_id = NULL, status = 'embedded', attempt = 0, last_error = NULL
+            WHERE status = 'clustered' OR story_id IS NOT NULL
+        """))
+        await self.session.execute(text("DELETE FROM story"))
+        return result.rowcount  # type: ignore[attr-defined]

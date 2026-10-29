@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Лента · Сито{% endblock %}
+{% block content %}
+<div class="feed-head">
+  <h1>Лента</h1>
+  <nav class="chips" aria-label="Сколько изданий подхватили сюжет">
+    {% for value, label in filters.items() %}
+    <a class="chip{% if value == min_sources %} active{% endif %}" href="/?min_sources={{ value }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+</div>
+
+{% if stories %}
+<div class="feed">
+  {% include "_feed_items.html" %}
+</div>
+{% else %}
+<p class="muted">Сюжетов пока нет. Они появятся, когда worker соберёт и обработает первые посты.</p>
+{% endif %}
+{% endblock %}

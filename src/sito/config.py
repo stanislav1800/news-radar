@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     forwarded_allow_ips: str = "127.0.0.1"
     login_max_failures: int = 5       # неудачных попыток входа подряд...
     login_lockout_minutes: int = 5    # ...после которых пауза
+    feed_page_size: int = 30
+    # «Похожие» на странице сюжета: близкие по смыслу сюжеты, которые не склеились с этим
+    related_min_similarity: float = 0.86
+    related_window_hours: float = 48
+    related_limit: int = 6
 
     @field_validator("secret_key", mode="before")
     @classmethod

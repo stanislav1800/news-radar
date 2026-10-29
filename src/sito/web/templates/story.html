@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ story.title }} · Сито{% endblock %}
+{% block content %}
+<a class="back" href="/">← Лента</a>
+
+<article class="story">
+  <h1>{{ story.title }}</h1>
+  {% if story.lead %}<p class="lead">{{ story.lead }}</p>{% endif %}
+  <p class="meta">
+    {{ story.sources_count | plural("издание", "издания", "изданий") }}
+    · {{ story.posts_count | plural("пост", "поста", "постов") }}
+    · {{ story.started_at | local_time(user.timezone, now) }}
+    {% if (story.last_post_at - story.started_at).total_seconds() > 600 %}
+    — {{ story.last_post_at | local_time(user.timezone, now) }}
+    {% endif %}
+  </p>
+
+  <h2>Хронология</h2>
+  {# Свежее сверху: сначала видно, что известно сейчас, ниже — как развивалось событие #}
+  <ol class="timeline">
+    {% for p in timeline | reverse %}
+    <li{% if p.id == story.first_post_id %} class="first"{% endif %}>
+      <time datetime="{{ p.event_at.isoformat() }}">{{ p.event_at | local_time(user.timezone, now) }}</time>
+      <div>
+        <span class="source">{{ p.source_name }}</span>
+        {% if p.id == story.first_post_id %}<span class="badge">первым</span>{% endif %}
+        <a href="{{ p.url | safe_url }}" target="_blank" rel="noopener noreferrer">{{ p.title }}</a>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+
+  {% if similar %}
+  <h2>Похожие</h2>
+  <p class="muted small">Близкие по смыслу сюжеты, которые не склеились с этим: возможно, это продолжение или соседняя история.</p>
+  <ul class="similar">
+    {% for s in similar %}
+    <li>
+      <a href="/stories/{{ s.story_id }}">{{ s.title }}</a>
+      <span class="muted small">· {{ s.sources_count | plural("издание", "издания", "изданий") }} · {{ s.started_at | local_time(user.timezone, now) }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</article>
+{% endblock %}

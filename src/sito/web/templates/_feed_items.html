@@ -1,0 +1,25 @@
+{# Карточки сюжетов. Отдельный файл: его же отдаёт /feed/items для «Показать ещё» #}
+{% for s in stories %}
+<article class="story-card">
+  <a class="story-title" href="/stories/{{ s.id }}">{{ s.title }}</a>
+  {% if s.lead %}<p class="lead">{{ s.lead }}</p>{% endif %}
+  <div class="meta">
+    {% if s.sources_count > 1 %}
+    <span class="badge">{{ s.sources_count | plural("издание", "издания", "изданий") }}</span>
+    {% endif %}
+    {% if s.first_source_name %}<span>{{ s.first_source_name }}</span> ·{% endif %}
+    <time datetime="{{ s.started_at.isoformat() }}">{{ s.started_at | ago(user.timezone, now) }}</time>
+    {% if (s.last_post_at - s.started_at).total_seconds() > 600 %}
+    · <span>обновлено {{ s.last_post_at | ago(user.timezone, now) }}</span>
+    {% endif %}
+  </div>
+</article>
+{% endfor %}
+
+{% if next_cursor %}
+{# Без JavaScript — обычная ссылка на следующую страницу, с HTMX — дописывает карточки на место ссылки #}
+<a class="more"
+   href="/?min_sources={{ min_sources }}&cursor={{ next_cursor }}"
+   hx-get="/feed/items?min_sources={{ min_sources }}&cursor={{ next_cursor }}"
+   hx-target="this" hx-swap="outerHTML">Показать ещё</a>
+{% endif %}

@@ -2,10 +2,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import bindparam, text
+from sqlalchemy import DateTime, bindparam, literal_column, select, text, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sito.models import Story
+from sito.models import Post, Source, Story
 from sito.models.post import EMBEDDING_DIM, EVENT_AT_SQL
 
 LEAD_MAX_CHARS = 300  # ТЗ: из чужих материалов показываем не больше первого абзаца, около 300 знаков
@@ -27,6 +27,33 @@ class SimilarStory:
     story_id: int
     title: str
     similarity: float
+    sources_count: int
+    started_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class FeedStory:
+    """Карточка сюжета в ленте."""
+
+    id: int
+    title: str
+    lead: str | None
+    sources_count: int
+    posts_count: int
+    started_at: datetime
+    last_post_at: datetime
+    first_source_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class TimelinePost:
+    """Пост в хронологии сюжета. Полный текст чужих материалов не показываем (ТЗ)."""
+
+    id: int
+    title: str
+    url: str
+    source_name: str
+    event_at: datetime
 
 
 _vector = bindparam("embedding", type_=Vector(EMBEDDING_DIM))
@@ -73,7 +100,8 @@ _REFRESH_SQL = text(f"""
 """)
 
 _SIMILAR_SQL = text("""
-    SELECT other.id AS story_id, other.title, 1 - (other.centroid <=> this.centroid) AS similarity
+    SELECT other.id AS story_id, other.title, 1 - (other.centroid <=> this.centroid) AS similarity,
+           other.sources_count, other.started_at
     FROM story AS this
     JOIN story AS other
       ON other.id <> this.id
@@ -125,3 +153,33 @@ class StoryRepository:
             "story_id": story_id, "min_similarity": min_similarity, "window": window, "limit": limit,
         })
         return [SimilarStory(**row._mapping) for row in result]
+
+    async def feed(
+        self, limit: int, min_sources: int = 1, before: tuple[datetime, int] | None = None
+    ) -> list[FeedStory]:
+        """Сюжеты, новые сверху (по времени первого поста). before — курсор для «Показать ещё»."""
+        query = (
+            select(
+                Story.id, Story.title, Story.lead, Story.sources_count, Story.posts_count,
+                Story.started_at, Story.last_post_at, Source.name.label("first_source_name"),
+            )
+            .outerjoin(Source, Source.id == Story.first_source_id)
+            .where(Story.sources_count >= min_sources)
+            .order_by(Story.started_at.desc(), Story.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            # Курсор по (время, id), а не OFFSET: новые сюжеты наверху не сдвигают уже показанные
+            query = query.where(tuple_(Story.started_at, Story.id) < tuple_(*before))
+        return [FeedStory(**row._mapping) for row in await self.session.execute(query)]
+
+    async def timeline(self, story_id: int) -> list[TimelinePost]:
+        """Посты сюжета по времени: как развивалось событие."""
+        event_at = literal_column(EVENT_AT_SQL, DateTime(timezone=True))
+        query = (
+            select(Post.id, Post.title, Post.url, Source.name.label("source_name"), event_at.label("event_at"))
+            .join(Source, Source.id == Post.source_id)
+            .where(Post.story_id == story_id)
+            .order_by(event_at, Post.id)
+        )
+        return [TimelinePost(**row._mapping) for row in await self.session.execute(query)]

@@ -1,51 +1,14 @@
 """Вход в веб: сессии, CSRF, ограничение попыток, перенаправления."""
 
-import re
-from collections.abc import AsyncIterator
-
 import httpx
 import pytest
-from fastapi import FastAPI
-from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.config import settings
 from sito.repositories.users import UserRepository
 from sito.services.users import UserError, UserService
 from sito.web.app import create_app
-
-PASSWORD = "correct-horse-battery"
-
-
-@pytest.fixture
-def app(session_factory: async_sessionmaker[AsyncSession]) -> FastAPI:
-    return create_app(session_factory, settings.model_copy(update={"secret_key": SecretStr("test-secret")}))
-
-
-@pytest.fixture
-async def client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        yield c
-
-
-@pytest.fixture
-async def user(session_factory: async_sessionmaker[AsyncSession]) -> str:
-    async with session_factory() as session, session.begin():
-        await UserService(session).create("Ivan", PASSWORD)
-    return "ivan"
-
-
-async def csrf_from(client: httpx.AsyncClient, path: str = "/login") -> str:
-    match = re.search(r'name="csrf_token" value="([^"]+)"', (await client.get(path)).text)
-    assert match, "в форме нет CSRF-токена"
-    return match.group(1)
-
-
-async def login(client: httpx.AsyncClient, username: str, password: str, **extra: str) -> httpx.Response:
-    token = await csrf_from(client)
-    return await client.post(
-        "/login", data={"username": username, "password": password, "csrf_token": token, **extra}
-    )
+from tests.web import PASSWORD, csrf_from, login
 
 
 async def test_pages_require_login(client: httpx.AsyncClient) -> None:

@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from sito.config import Settings, settings
 from sito.db.engine import async_session
 from sito.web.deps import LoginRequired, verify_csrf
-from sito.web.routes import auth, pages
+from sito.web.routes import auth, stories
 from sito.web.security import LoginLimiter
 from sito.web.templating import WEB_DIR
 
@@ -45,6 +45,7 @@ def create_app(
         docs_url=None, redoc_url=None, openapi_url=None,  # JSON API пока нет, документация не нужна
         dependencies=[Depends(verify_csrf)],
     )
+    app.state.settings = config
     app.state.session_factory = session_factory or async_session
     app.state.login_limiter = LoginLimiter(
         max_failures=config.login_max_failures,
@@ -76,5 +77,5 @@ def create_app(
 
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
     app.include_router(auth.router)
-    app.include_router(pages.router)
+    app.include_router(stories.router)
     return app

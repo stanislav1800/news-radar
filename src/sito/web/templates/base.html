@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Сито{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  <script src="{{ url_for('static', path='htmx.min.js') }}" defer></script>
 </head>
-<body>
+{# HTMX отправляет CSRF-токен заголовком в каждом изменяющем запросе #}
+<body{% if user %} hx-headers='{"{{ CSRF_HEADER }}": "{{ csrf_token(request) }}"}'{% endif %}>
   {% if user %}
   <header class="topbar">
     <a class="brand" href="/">Сито</a>

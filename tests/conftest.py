@@ -10,11 +10,16 @@ import os
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import asyncpg
 import pytest
 from dotenv import dotenv_values
 from sqlalchemy.engine import URL, make_url
+
+if TYPE_CHECKING:
+    import httpx
+    from fastapi import FastAPI
 
 ROOT = Path(__file__).parent.parent
 
@@ -113,3 +118,41 @@ def make_source(session_factory: async_sessionmaker[AsyncSession]) -> MakeSource
             return (await session.execute(insert(Source).values(**values).returning(Source.id))).scalar_one()
 
     return make
+
+
+@pytest.fixture
+def app(session_factory: async_sessionmaker[AsyncSession]) -> "FastAPI":
+    from pydantic import SecretStr
+
+    from sito.config import settings
+    from sito.web.app import create_app
+
+    return create_app(session_factory, settings.model_copy(update={"secret_key": SecretStr("test-secret-key-0123")}))
+
+
+@pytest.fixture
+async def client(app: "FastAPI") -> AsyncIterator["httpx.AsyncClient"]:
+    import httpx
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
+        yield c
+
+
+@pytest.fixture
+async def user(session_factory: async_sessionmaker[AsyncSession]) -> str:
+    """Обычный пользователь ivan с паролем tests.web.PASSWORD."""
+    from sito.services.users import UserService
+    from tests.web import PASSWORD
+
+    async with session_factory() as session, session.begin():
+        await UserService(session).create("Ivan", PASSWORD)
+    return "ivan"
+
+
+@pytest.fixture
+async def logged_in(client: "httpx.AsyncClient", user: str) -> "httpx.AsyncClient":
+    """Клиент, который уже вошёл как user."""
+    from tests.web import login
+
+    assert (await login(client, user)).status_code == 303
+    return client

@@ -20,7 +20,7 @@ RSS-ленты ──► сбор ──► очистка ──► векто�
 
 ## Быстрый старт (Docker)
 
-Нужен Docker с Compose.
+Нужен Docker с Compose и buildx (образ собирается BuildKit'ом).
 
 ```bash
 # 1. Настройки: обязателен ключ SITO_SECRET_KEY

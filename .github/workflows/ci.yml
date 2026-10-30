@@ -41,5 +41,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
       - name: Образ собирается
-        run: docker build -t sito:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: sito:ci
+          # Слои кэшируются между запусками: torch не качается заново, пока не поменялся uv.lock
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

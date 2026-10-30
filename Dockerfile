@@ -1,20 +1,27 @@
+# syntax=docker/dockerfile:1
 # Образ Сито: один на веб и worker, команда задаётся в compose.yaml.
+# Собирается BuildKit'ом (docker compose build или docker buildx build).
 
 FROM python:3.13-slim AS build
-COPY --from=ghcr.io/astral-sh/uv:0.9.24 /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.9.24 /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never
+    UV_PYTHON_DOWNLOADS=never \
+    UV_NO_DEV=1
 WORKDIR /app
 
-# Сначала только зависимости: этот слой (torch и остальное) пересобирается лишь при смене uv.lock.
-# Без RUN --mount: так образ собирается и старым сборщиком Docker, без BuildKit
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project --no-cache
+# Сначала только зависимости: слой с torch и остальным пересобирается лишь при смене uv.lock.
+# Файлы проекта подключаются на время команды (bind), скачанные пакеты остаются в кэше между сборками
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project
 
-COPY README.md ./
+# Затем сам проект: не в режиме редактирования, чтобы в итоговый образ хватило одного .venv
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
-RUN uv sync --frozen --no-dev --no-editable --no-cache
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-editable
 
 
 FROM python:3.13-slim

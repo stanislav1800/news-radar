@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     fetch_timeout: float = 60         # на весь сбор одного источника
     http_timeout: float = 15          # на одну операцию HTTP (подключение, чтение)
     http_user_agent: str = "Sito/0.1 (news radar)"
+    # После неудач подряд пауза перед опросом источника удваивается, но не дольше этого
+    source_max_backoff_hours: float = 6
     # Как часто сверять подключения в базе с работающими (Telegram): новые, выключенные, изменённые
     connector_check_seconds: float = 15
 
@@ -83,6 +85,9 @@ class Settings(BaseSettings):
     topic_backfill_days: int = 30          # за сколько дней пересопоставить сюжеты после изменения темы
     topic_match_tick_seconds: float = 10   # как часто worker сопоставляет новые сюжеты с темами
     topic_suggestions_limit: int = 10      # «Возможно, подойдёт» на странице темы
+
+    # Хранение: тексты и векторы постов старше этого удаляются (заголовок, ссылка и сюжеты остаются)
+    post_retention_days: int = 90
 
     # Поиск
     search_limit: int = 20                 # результатов в каждом разделе: «со словами» и «по смыслу»

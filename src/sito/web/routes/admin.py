@@ -11,21 +11,48 @@ from pydantic import ValidationError
 
 from sito.models import Connector, User
 from sito.repositories.connectors import ConnectorRepository
+from sito.repositories.pipeline import PipelineRepository
 from sito.repositories.sources import SourceRepository
 from sito.services.collector.registry import COLLECTORS, CollectorSpec, RssSourceForm
 from sito.services.connectors import ConnectorError, ConnectorService, secret_fields
 from sito.services.sources import SourceError, SourceService
 from sito.web.deps import AdminUser, DbSession, require_admin
 from sito.web.forms import FormField, form_fields, validation_errors
+from sito.web.routes.health import worker_state
 from sito.web.security import flash
 from sito.web.templating import templates
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 
-@router.get("")
-async def admin_home() -> Response:
-    return RedirectResponse("/admin/connectors", status.HTTP_303_SEE_OTHER)
+FAILED_SHOWN = 20
+
+
+@router.get("", response_class=HTMLResponse)
+async def summary_page(request: Request, db: DbSession, user: AdminUser) -> HTMLResponse:
+    """Сводка: что происходит с конвейером и источниками и жив ли worker."""
+    now = datetime.now(UTC)
+    pipeline = PipelineRepository(db)
+    sources = await SourceRepository(db).list_with_stats()
+    beat = await pipeline.heartbeat("worker")
+    return templates.TemplateResponse(request, "admin/summary.html", {
+        "user": user,
+        "summary": await pipeline.summary(),
+        "failed": await pipeline.failed_posts(FAILED_SHOWN),
+        "broken": [s for s in sources if s.failing],
+        "silent": [(s, since) for s in sources if (since := s.silent_since(now))],
+        "worker": worker_state(beat.beat_at if beat else None, now),
+        "beat": beat,
+        "now": now,
+    })
+
+
+@router.post("/failed/retry")
+async def retry_failed(request: Request, db: DbSession, post_id: Annotated[int | None, Form()] = None) -> Response:
+    count = await PipelineRepository(db).retry_failed([post_id] if post_id is not None else None)
+    await db.commit()
+    flash(request, f"Вернул в обработку постов: {count}. Worker возьмёт их на ближайшем круге.")
+    return RedirectResponse("/admin", status.HTTP_303_SEE_OTHER)
 
 
 SECRET_KEPT_HELP = "Сохранено. Оставьте пустым, чтобы не менять."

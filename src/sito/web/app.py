@@ -23,7 +23,7 @@ from sito.services.embedding import Embedder, LazyEmbedder, SentenceTransformerE
 from sito.services.sources import http_trial_fetch
 from sito.utils.crypto import SecretBox
 from sito.web.deps import LoginRequired, verify_csrf
-from sito.web.routes import admin, admin_users, auth, stories, topics
+from sito.web.routes import admin, admin_users, auth, health, stories, topics
 from sito.web.security import LoginLimiter
 from sito.web.templating import WEB_DIR
 
@@ -121,6 +121,7 @@ def create_app(
         return RedirectResponse(login_url, status_code=303)
 
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
+    app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(stories.router)
     app.include_router(topics.router)

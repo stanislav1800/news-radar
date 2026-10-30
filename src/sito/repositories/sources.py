@@ -1,9 +1,9 @@
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import ScalarSelect, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,20 @@ from sito.models import Post, Source, SourceType, Story
 from sito.repositories.stories import StoryRepository
 
 ERROR_MAX_LENGTH = 2000
+
+
+# «Источник молчит»: новых постов нет дольше, чем в десять раз его обычного промежутка между постами
+# (по истории за неделю), но не меньше 6 часов и не больше 3 суток. ТАСС пишет раз в несколько минут —
+# тревога через 6 часов; OpenNET пару раз в день — через 3 суток
+SILENCE_FACTOR = 10
+SILENCE_MIN = timedelta(hours=6)
+SILENCE_MAX = timedelta(days=3)
+HISTORY = timedelta(days=7)
+
+
+def silence_limit(posts_week: int) -> timedelta:
+    usual_gap = HISTORY / max(posts_week, 1)
+    return min(max(usual_gap * SILENCE_FACTOR, SILENCE_MIN), SILENCE_MAX)
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +40,29 @@ class SourceRow:
     last_success_at: datetime | None
     last_error: str | None
     last_error_at: datetime | None
+    failures: int
+    created_at: datetime
+    last_post_at: datetime | None  # когда пришёл последний новый пост
     posts_24h: int
+    posts_week: int
+
+    @property
+    def failing(self) -> bool:
+        """Последняя попытка сбора — ошибка."""
+        return bool(
+            self.enabled and self.last_error and self.last_error_at
+            and (self.last_success_at is None or self.last_error_at > self.last_success_at)
+        )
+
+    def silent_since(self, now: datetime) -> datetime | None:
+        """С какого момента источник молчит дольше нормы для него; None — всё в порядке.
+
+        Источник с ошибкой не «молчит»: у него своя причина, она показывается отдельно.
+        """
+        if not self.enabled or self.failing:
+            return None
+        since = self.last_post_at or self.created_at
+        return since if now - since > silence_limit(self.posts_week) else None
 
 
 class SourceRepository:
@@ -82,20 +118,26 @@ class SourceRepository:
         assert source is not None
         return source
 
-    async def list_with_stats(self, connector_id: int) -> list[SourceRow]:
-        posts_24h = (
-            select(func.count())
-            .where(Post.source_id == Source.id, Post.fetched_at > func.now() - text("interval '24 hours'"))
-            .scalar_subquery()
-        )
+    async def list_with_stats(self, connector_id: int | None = None) -> list[SourceRow]:
+        """Источники со статистикой: одного подключения или все."""
+        def posts_since(interval: str) -> ScalarSelect[int]:
+            return (
+                select(func.count())
+                .where(Post.source_id == Source.id, Post.fetched_at > func.now() - text(f"interval '{interval}'"))
+                .scalar_subquery()
+            )
+        last_post_at = select(func.max(Post.fetched_at)).where(Post.source_id == Source.id).scalar_subquery()
         query = (
             select(
                 Source.id, Source.name, Source.url, Source.external_id, Source.enabled, Source.poll_interval,
-                Source.last_success_at, Source.last_error, Source.last_error_at, posts_24h.label("posts_24h"),
+                Source.last_success_at, Source.last_error, Source.last_error_at, Source.failures,
+                Source.created_at, last_post_at.label("last_post_at"),
+                posts_since("24 hours").label("posts_24h"), posts_since("7 days").label("posts_week"),
             )
-            .where(Source.connector_id == connector_id)
             .order_by(Source.name)
         )
+        if connector_id is not None:
+            query = query.where(Source.connector_id == connector_id)
         return [SourceRow(**row._mapping) for row in await self.session.execute(query)]
 
     async def get_row(self, source_id: int) -> SourceRow | None:
@@ -128,14 +170,21 @@ class SourceRepository:
         )
         return result.scalar_one_or_none() is not None
 
-    async def due_for_polling(self, types: Collection[SourceType], limit: int = 100) -> list[int]:
-        """Включённые источники, у которых с последней попытки прошло poll_interval секунд.
+    async def due_for_polling(
+        self, types: Collection[SourceType], limit: int = 100, max_backoff: timedelta = timedelta(hours=6),
+    ) -> list[int]:
+        """Включённые источники, которым пора на опрос.
 
-        Попытка — это и успех, и ошибка: упавший сайт опрашивается с тем же интервалом,
-        а не на каждом круге цикла.
+        Пауза после последней попытки — poll_interval, а после неудач подряд она удваивается
+        (1, 2, 4, 8… интервала), но не дольше max_backoff: сломанный сайт не опрашивается
+        каждые 5 минут, а починившийся снова подхватывается сам.
         """
         last_attempt = func.greatest(Source.last_success_at, Source.last_error_at)  # NULL не учитывается
-        next_poll = last_attempt + func.make_interval(0, 0, 0, 0, 0, 0, Source.poll_interval)
+        pause = func.least(
+            Source.poll_interval * func.power(2, func.greatest(Source.failures - 1, 0)),
+            max_backoff.total_seconds(),
+        )
+        next_poll = last_attempt + func.make_interval(0, 0, 0, 0, 0, 0, pause)
         result = await self.session.execute(
             select(Source.id)
             .where(
@@ -151,7 +200,9 @@ class SourceRepository:
 
     async def mark_success(self, source_id: int, state: Mapping[str, Any] | None = None) -> None:
         """Сбор прошёл. state — новый курсор сборщика; None — оставить прежний."""
-        values: dict[str, Any] = {"last_success_at": func.now(), "last_error": None, "last_error_at": None}
+        values: dict[str, Any] = {
+            "last_success_at": func.now(), "last_error": None, "last_error_at": None, "failures": 0,
+        }
         if state is not None:
             values["state"] = dict(state)
         await self.session.execute(update(Source).where(Source.id == source_id).values(**values))
@@ -160,5 +211,5 @@ class SourceRepository:
         await self.session.execute(
             update(Source)
             .where(Source.id == source_id)
-            .values(last_error=error[:ERROR_MAX_LENGTH], last_error_at=func.now())
+            .values(last_error=error[:ERROR_MAX_LENGTH], last_error_at=func.now(), failures=Source.failures + 1)
         )

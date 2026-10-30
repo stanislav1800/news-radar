@@ -247,3 +247,9 @@ button.vote.on { background: var(--notice-bg); border-color: var(--accent); filt
 .row-actions { display: flex; gap: 1.25rem; }
 .row-actions form { margin: 0; }
 .new-connector summary { cursor: pointer; }
+
+/* Сводка */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; }
+.stat { display: grid; gap: .15rem; align-content: start; }
+.stat strong { font-size: 1.4rem; }
+.problems { margin: 0; padding-left: 1.1rem; display: grid; gap: .6rem; }

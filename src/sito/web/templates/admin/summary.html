@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Сводка · Сито{% endblock %}
+{% block main_class %}page wide{% endblock %}
+{% block content %}
+<h1>Сводка</h1>
+
+<section class="card stats">
+  <div class="stat">
+    <span class="muted small">Worker</span>
+    {% if worker == "ok" %}<strong class="status-ok">работает</strong>
+    <span class="muted small">с {{ beat.started_at | local_time(user.timezone, now) }}</span>
+    {% elif worker == "stale" %}<strong class="status-error">не отвечает</strong>
+    <span class="muted small">последний раз {{ beat.beat_at | ago(user.timezone, now) }}</span>
+    {% else %}<strong class="status-error">не запускался</strong>
+    <span class="muted small">uv run python -m sito.worker</span>{% endif %}
+  </div>
+  <div class="stat"><span class="muted small">Постов за сутки</span><strong>{{ summary.posts_24h }}</strong></div>
+  <div class="stat"><span class="muted small">Сюжетов за сутки</span><strong>{{ summary.stories_24h }}</strong></div>
+  <div class="stat">
+    <span class="muted small">В очереди конвейера</span>
+    {% set pending = summary.by_status.get("new", 0) + summary.by_status.get("cleaned", 0) + summary.by_status.get("embedded", 0) %}
+    <strong>{{ pending }}</strong>
+    {% if summary.oldest_pending_at %}<span class="muted small">самый старый {{ summary.oldest_pending_at | ago(user.timezone, now) }}</span>{% endif %}
+  </div>
+  <div class="stat">
+    <span class="muted small">С ошибкой</span>
+    <strong class="{{ 'status-error' if summary.by_status.get('failed') else '' }}">{{ summary.by_status.get("failed", 0) }}</strong>
+  </div>
+</section>
+<p class="muted small">По шагам:
+  собрано {{ summary.by_status.get("new", 0) }} ·
+  очищено {{ summary.by_status.get("cleaned", 0) }} ·
+  с вектором {{ summary.by_status.get("embedded", 0) }} ·
+  в сюжетах {{ summary.by_status.get("clustered", 0) }} ·
+  отсеяно {{ summary.by_status.get("skipped", 0) }}.
+  Если очередь растёт, а самый старый пост всё старше, — конвейер не успевает за сбором.</p>
+
+<h2>Источники с проблемами</h2>
+{% if broken or silent %}
+<section class="card">
+  <ul class="problems">
+    {% for s in broken %}
+    <li><strong>{{ s.name }}</strong> — <span class="status-error">ошибка</span>
+      {% if s.failures > 1 %}{{ s.failures | plural("раз", "раза", "раз") }} подряд, {% endif %}последняя {{ s.last_error_at | ago(user.timezone, now) }}.
+      <div class="small field-error">{{ (s.last_error or "")[:200] }}</div></li>
+    {% endfor %}
+    {% for s, since in silent %}
+    <li><strong>{{ s.name }}</strong> — <span class="status-error">молчит</span>:
+      новых постов нет с {{ since | local_time(user.timezone, now) }}, хотя лента отвечает. Возможно, сменился адрес.</li>
+    {% endfor %}
+  </ul>
+  <p class="small"><a href="/admin/connectors">Все источники →</a></p>
+</section>
+{% else %}
+<p class="muted">Все источники работают.</p>
+{% endif %}
+
+<h2>Посты с ошибкой</h2>
+{% if failed %}
+<p class="muted small">Обработка не удалась три раза подряд. После исправления причины их можно вернуть в конвейер.</p>
+<section class="card">
+  <div class="table-wrap">
+    <table class="sources">
+      <thead><tr><th>Пост</th><th>Ошибка</th><th></th></tr></thead>
+      <tbody>
+        {% for p in failed %}
+        <tr>
+          <td><a href="{{ p.url | safe_url }}" target="_blank" rel="noopener noreferrer">{{ p.title or "без заголовка" }}</a>
+            <div class="muted small">{{ p.source_name }} · {{ p.failed_at | ago(user.timezone, now) }}</div></td>
+          <td class="small field-error">{{ (p.last_error or "")[:200] }}</td>
+          <td class="actions">
+            <form method="post" action="/admin/failed/retry">
+              <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+              <input type="hidden" name="post_id" value="{{ p.id }}">
+              <button class="link" type="submit">Повторить</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <form method="post" action="/admin/failed/retry">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button class="link" type="submit">Повторить все</button>
+  </form>
+</section>
+{% else %}
+<p class="muted">Нет.</p>
+{% endif %}
+{% endblock %}

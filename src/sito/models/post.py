@@ -26,6 +26,11 @@ EVENT_AT_SQL = "least(post.published_at, post.fetched_at)"
 # дословно, иначе Postgres не возьмёт индекс ix_post_fts. Конфигурация с ::regconfig — чтобы
 # выражение было неизменяемым (immutable), этого требует индекс.
 POST_FTS_SQL = "to_tsvector('russian'::regconfig, post.title || ' ' || left(coalesce(post.text, ''), 1000))"
+# То же выражение в той записи, в какой его хранит Postgres: иначе alembic autogenerate каждый раз
+# считает индекс изменённым. Для Postgres записи равнозначны, запросы с POST_FTS_SQL берут индекс.
+_POST_FTS_INDEX_SQL = (
+    "to_tsvector('russian'::regconfig, (title || ' '::text) || \"left\"(COALESCE(text, ''::text), 1000))"
+)
 
 # У сюжета есть пост с текстом, а не один заголовок. Вектор голого короткого заголовка (видео,
 # «X о Y») похож на любой короткий запрос — такие сюжеты всплывали бы в поиске по смыслу всегда.
@@ -46,7 +51,7 @@ class Post(IdMixin, TimestampMixin, Base):
         ),
         # Время новости (см. EVENT_AT): склейка ищет соседей в окне по нему
         Index("ix_post_event_at", text("least(published_at, fetched_at)")),
-        Index("ix_post_fts", text(POST_FTS_SQL), postgresql_using="gin"),
+        Index("ix_post_fts", text(_POST_FTS_INDEX_SQL), postgresql_using="gin"),
         # Склейка по ссылкам: какие посты ссылаются на эту статью (links @> ARRAY[url])
         Index("ix_post_links", "links", postgresql_using="gin"),
     )

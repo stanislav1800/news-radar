@@ -42,3 +42,5 @@ class Source(IdMixin, TimestampMixin, Base):
     last_success_at: Mapped[datetime | None]
     last_error: Mapped[str | None]
     last_error_at: Mapped[datetime | None]
+    # Неудач подряд: по ним растёт пауза перед следующим опросом. Успех обнуляет
+    failures: Mapped[int] = mapped_column(server_default="0")

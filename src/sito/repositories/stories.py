@@ -144,7 +144,8 @@ _REFRESH_SQL = text(f"""
         sources_count = totals.sources,
         started_at = totals.started,
         last_post_at = totals.last,
-        centroid = totals.centroid,
+        -- У старых постов векторы удалены чисткой: тогда центр сюжета остаётся прежним
+        centroid = coalesce(totals.centroid, story.centroid),
         first_post_id = first_post.id,
         first_source_id = first_post.source_id,
         title = latest_post.title,
@@ -358,10 +359,26 @@ class StoryRepository:
         return [TimelinePost(**row._mapping) for row in await self.session.execute(query)]
 
     async def reset_all(self) -> int:
-        """Снять со всех постов привязку к сюжетам и удалить сюжеты. Возвращает число постов к пересклейке."""
-        result = await self.session.execute(text("""
+        """Снять с постов привязку к сюжетам, чтобы склеить заново. Возвращает число постов к пересклейке.
+
+        Пересклеить можно только посты с вектором. Посты старше срока хранения векторов остаются
+        в своих сюжетах: старые сюжеты не пропадают. Опустевшие сюжеты удаляются, остальные пересчитываются.
+        """
+        moved = await self.session.execute(text("""
+            WITH moved AS (
+                SELECT id, story_id FROM post
+                WHERE embedding IS NOT NULL AND (status = 'clustered' OR story_id IS NOT NULL)
+            )
             UPDATE post SET story_id = NULL, status = 'embedded', attempt = 0, last_error = NULL
-            WHERE status = 'clustered' OR story_id IS NOT NULL
+            FROM moved WHERE post.id = moved.id
+            RETURNING moved.story_id
         """))
-        await self.session.execute(text("DELETE FROM story"))
-        return result.rowcount  # type: ignore[attr-defined]
+        rows = moved.all()
+        story_ids = {row.story_id for row in rows if row.story_id is not None}
+        await self.session.execute(text(
+            "DELETE FROM story WHERE NOT EXISTS (SELECT 1 FROM post WHERE post.story_id = story.id)"
+        ))
+        left = list(await self.session.scalars(select(Story.id).where(Story.id.in_(story_ids))))
+        for story_id in left:
+            await self.refresh(story_id)
+        return len(rows)

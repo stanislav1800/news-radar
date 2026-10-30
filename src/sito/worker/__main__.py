@@ -3,6 +3,7 @@ import contextlib
 import logging
 import signal
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 import httpx
@@ -12,6 +13,7 @@ from sito.db.engine import async_session, engine
 from sito.log import setup_logging
 from sito.models import SourceType
 from sito.models.post import EMBEDDING_DIM
+from sito.repositories.pipeline import PipelineRepository
 from sito.repositories.sources import SourceRepository
 from sito.services.cleaning import CleaningService
 from sito.services.clustering import ClusteringRules, ClusteringService
@@ -47,7 +49,9 @@ async def poll_one(service: IngestService, semaphore: asyncio.Semaphore, source_
 async def poll_due_sources(service: IngestService, semaphore: asyncio.Semaphore) -> None:
     """Один круг: найти источники, которым пора, и опросить их."""
     async with async_session() as session:
-        source_ids = await SourceRepository(session).due_for_polling(POLLED_TYPES)
+        source_ids = await SourceRepository(session).due_for_polling(
+            POLLED_TYPES, max_backoff=timedelta(hours=settings.source_max_backoff_hours)
+        )
     if not source_ids:
         return
     logger.info("к опросу источников: %d", len(source_ids))
@@ -119,6 +123,42 @@ async def embed_loop(stop: asyncio.Event) -> None:
         return
 
 
+HEARTBEAT_SECONDS = 30
+RETENTION_SECONDS = 3600
+RETENTION_BATCH = 1000
+
+
+async def heartbeat_loop(stop: asyncio.Event) -> None:
+    """«Пульс»: сводка и /health видят, что worker жив."""
+    started_at = datetime.now(UTC)
+    while not stop.is_set():
+        try:
+            async with async_session() as session, session.begin():
+                await PipelineRepository(session).beat("worker", started_at)
+        except Exception:
+            logger.exception("не удалось записать пульс")
+        await sleep_until_stop(stop, HEARTBEAT_SECONDS)
+
+
+async def retention_loop(stop: asyncio.Event) -> None:
+    """Раз в час убирать тексты и векторы старых постов (ТЗ: храним 90 дней)."""
+    while not stop.is_set():
+        before = datetime.now(UTC) - timedelta(days=settings.post_retention_days)
+        try:
+            total = 0
+            while not stop.is_set():
+                async with async_session() as session, session.begin():
+                    purged = await PipelineRepository(session).purge_old_texts(before, RETENTION_BATCH)
+                total += purged
+                if purged < RETENTION_BATCH:
+                    break
+            if total:
+                logger.info("хранение: убраны тексты и векторы %d старых постов", total, extra={"purged": total})
+        except Exception:
+            logger.exception("ошибка чистки старых постов")
+        await sleep_until_stop(stop, RETENTION_SECONDS)
+
+
 async def main() -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -155,6 +195,8 @@ async def main() -> None:
                 drain_loop("темы", matching.process_batch, settings.topic_match_tick_seconds, stop)
             )
             tasks.create_task(supervisor.run(stop, settings.connector_check_seconds))
+            tasks.create_task(heartbeat_loop(stop))
+            tasks.create_task(retention_loop(stop))
 
     await engine.dispose()
     logger.info("worker остановлен")

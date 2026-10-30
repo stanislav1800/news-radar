@@ -7,9 +7,13 @@
   <td>
     {% if not s.enabled %}
     <span class="muted">выключен</span>
-    {% elif s.last_error and (not s.last_success_at or s.last_error_at > s.last_success_at) %}
+    {% elif s.failing %}
     <span class="status-error" title="{{ s.last_error }}">ошибка {{ s.last_error_at | ago(user.timezone, now) }}</span>
+    {% if s.failures > 1 %}<span class="small muted">· {{ s.failures }} раз подряд, опрос реже</span>{% endif %}
     <div class="small field-error">{{ s.last_error[:120] }}</div>
+    {% elif s.silent_since(now) %}
+    <span class="status-error">молчит</span>
+    <div class="small muted">новых постов нет {{ s.silent_since(now) | ago(user.timezone, now) | replace(" назад", "") }}, обычно чаще</div>
     {% elif s.last_success_at %}
     <span class="status-ok">сбор {{ s.last_success_at | ago(user.timezone, now) }}</span>
     {% else %}

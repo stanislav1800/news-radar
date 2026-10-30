@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     fetch_timeout: float = 60         # на весь сбор одного источника
     http_timeout: float = 15          # на одну операцию HTTP (подключение, чтение)
     http_user_agent: str = "Sito/0.1 (news radar)"
+    # Как часто сверять подключения в базе с работающими (Telegram): новые, выключенные, изменённые
+    connector_check_seconds: float = 15
 
     # Worker: очистка текста (шаг 3)
     clean_batch_size: int = 100       # постов за одну транзакцию

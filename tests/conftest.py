@@ -116,6 +116,7 @@ def make_source(session_factory: async_sessionmaker[AsyncSession]) -> MakeSource
             values: dict[str, object] = {
                 "connector_id": rss_connector.scalar_subquery(),
                 "type": SourceType.RSS, "name": f"source {counter}", "url": f"https://feed{counter}.example/rss",
+                "poll_interval": 300,
             }
             values.update(fields)
             return (await session.execute(insert(Source).values(**values).returning(Source.id))).scalar_one()

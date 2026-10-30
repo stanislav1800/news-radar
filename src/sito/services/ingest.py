@@ -1,14 +1,16 @@
 import asyncio
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sito.models import SourceType
+from sito.models import ConnectorStatus, Source, SourceType
+from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.posts import NewPost, PostRepository
 from sito.repositories.sources import SourceRepository
-from sito.services.collector.base import BaseCollector, RawPost
+from sito.services.collector.base import BaseCollector, KnownSource, RawPost, SaveResult
 from sito.utils.urls import content_hash, normalize_url
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,16 @@ class IngestResult:
         )
 
 
+def _known(source: Source) -> KnownSource:
+    return KnownSource(
+        id=source.id, external_id=source.external_id or "", name=source.name,
+        enabled=source.enabled, state=dict(source.state or {}),
+    )
+
+
 class IngestService:
+    """Шаги 1–2: сбор и сохранение постов. Для слушающих сборщиков — их PostSink."""
+
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -72,26 +83,58 @@ class IngestService:
         async with asyncio.timeout(self.fetch_timeout):
             fetched = await collector.fetch(source)
 
-        async with self.session_factory() as session, session.begin():
-            sources = SourceRepository(session)
+        if fetched.not_modified:
+            async with self.session_factory() as session, session.begin():
+                await SourceRepository(session).mark_success(source_id, fetched.state)
+            return IngestResult(not_modified=True)
 
-            if fetched.not_modified:
-                await sources.mark_success(source_id, fetched.etag, fetched.last_modified)
-                return IngestResult(not_modified=True)
-
-            prepared, invalid = self._prepare(fetched.posts)
-            fresh = await self._drop_duplicates(PostRepository(session), prepared)
-            saved = await PostRepository(session).upsert_many(fresh)
-            await sources.mark_success(source_id, fetched.etag, fetched.last_modified)
-
+        saved = await self.save(source_id, fetched.posts, fetched.state)
         return IngestResult(
             fetched=len(fetched.posts),
-            invalid=invalid,
-            duplicates=len(prepared) - len(fresh),
+            invalid=saved.invalid,
+            duplicates=saved.duplicates,
             inserted=saved.inserted,
             updated=saved.updated,
             unchanged=saved.unchanged,
         )
+
+    # --- PostSink: общее сохранение для опрашивающих и слушающих сборщиков ---------------------
+
+    async def save(
+        self, source_id: int, posts: Sequence[RawPost], state: Mapping[str, Any] | None = None
+    ) -> SaveResult:
+        """Сохранить посты источника и его курсор одной транзакцией: курсор не убежит вперёд постов."""
+        async with self.session_factory() as session, session.begin():
+            prepared, invalid = self._prepare(posts)
+            fresh = await self._drop_duplicates(PostRepository(session), prepared)
+            saved = await PostRepository(session).upsert_many(fresh) if fresh else None
+            await SourceRepository(session).mark_success(source_id, state)
+        return SaveResult(
+            inserted=saved.inserted if saved else 0,
+            updated=saved.updated if saved else 0,
+            unchanged=saved.unchanged if saved else 0,
+            duplicates=len(prepared) - len(fresh),
+            invalid=invalid,
+        )
+
+    async def sources(self, connector_id: int) -> list[KnownSource]:
+        async with self.session_factory() as session:
+            found = await SourceRepository(session).list_for_connector(connector_id)
+        return [_known(s) for s in found if s.external_id is not None]
+
+    async def source(self, connector_id: int, external_id: str, *, name: str, url: str | None = None) -> KnownSource:
+        async with self.session_factory() as session, session.begin():
+            connector = await ConnectorRepository(session).get(connector_id)
+            if connector is None:
+                raise LookupError(f"Подключение {connector_id} не найдено")
+            found = await SourceRepository(session).get_or_add_external(
+                connector_id, connector.type, external_id, name, url
+            )
+            return _known(found)
+
+    async def connected(self, connector_id: int) -> None:
+        async with self.session_factory() as session, session.begin():
+            await ConnectorRepository(session).set_status(connector_id, ConnectorStatus.ACTIVE)
 
     @staticmethod
     def _prepare(raw_posts: Iterable[RawPost]) -> tuple[list[NewPost], int]:

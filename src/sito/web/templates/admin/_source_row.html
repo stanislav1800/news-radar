@@ -2,7 +2,7 @@
 <tr id="source-{{ s.id }}" class="{% if not s.enabled %}disabled{% endif %}">
   <td>
     <strong>{{ s.name }}</strong>
-    <div class="muted small url">{{ s.url }}</div>
+    <div class="muted small url">{{ s.url or s.external_id }}</div>
   </td>
   <td>
     {% if not s.enabled %}
@@ -17,7 +17,7 @@
     {% endif %}
   </td>
   <td class="num">{{ s.posts_24h }}</td>
-  <td class="num">{{ s.poll_interval // 60 }} мин</td>
+  <td class="num">{{ (s.poll_interval // 60) ~ " мин" if s.poll_interval else "сразу" }}</td>
   <td class="actions">
     <form method="post" action="/admin/sources/{{ s.id }}/enabled"
           hx-post="/admin/sources/{{ s.id }}/enabled" hx-target="closest tr" hx-swap="outerHTML">
@@ -27,7 +27,7 @@
     </form>
     {# tojson: название из базы безопасно попадает в JS-строку, кавычки в нём не ломают код #}
     <form method="post" action="/admin/sources/{{ s.id }}/delete"
-          onsubmit='return confirm({{ ("Удалить «" ~ s.name ~ "» вместе со всеми её постами? Лучше просто выключить.") | tojson }})'>
+          onsubmit='return confirm({{ ("Удалить «" ~ s.name ~ "» вместе со всеми постами? Лучше просто выключить.") | tojson }})'>
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
       <button class="link danger" type="submit">Удалить</button>
     </form>

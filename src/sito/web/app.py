@@ -21,6 +21,7 @@ from sito.db.engine import async_session
 from sito.models.post import EMBEDDING_DIM
 from sito.services.embedding import Embedder, LazyEmbedder, SentenceTransformerEmbedder
 from sito.services.sources import http_trial_fetch
+from sito.utils.crypto import SecretBox
 from sito.web.deps import LoginRequired, verify_csrf
 from sito.web.routes import admin, admin_users, auth, stories, topics
 from sito.web.security import LoginLimiter
@@ -89,6 +90,7 @@ def create_app(
     app.state.settings = config
     app.state.session_factory = session_factory or async_session
     app.state.embedder = search_embedder
+    app.state.secret_box = SecretBox(config.secret_key.get_secret_value())  # секреты подключений
     app.state.trial_fetch = http_trial_fetch(config)  # тесты подменяют, чтобы не ходить в сеть
     app.state.login_limiter = LoginLimiter(
         max_failures=config.login_max_failures,

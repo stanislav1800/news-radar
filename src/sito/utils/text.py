@@ -73,3 +73,21 @@ def _extract_links(soup: BeautifulSoup, own_url: str | None) -> list[str]:
         if url.startswith("https://") and url != own_url:
             links.setdefault(url, None)
     return list(links)
+
+
+TITLE_MAX_CHARS = 140
+_SENTENCE_END = re.compile(r"[.!?…](?=\s)")
+
+
+def title_from_text(text: str, max_chars: int = TITLE_MAX_CHARS) -> str:
+    """Заголовок для поста без заголовка (Telegram): первая строка, а в ней — первая фраза.
+
+    Длинная фраза обрезается по слову с «…». Пустой текст — пустой заголовок.
+    """
+    line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    if (match := _SENTENCE_END.search(line)) and match.end() <= max_chars:
+        line = line[: match.end()]
+    if len(line) <= max_chars:
+        return line.rstrip(".")  # точка в конце заголовка не нужна, а «!», «?» и «…» — смысл
+    cut = line.rfind(" ", 0, max_chars - 1)
+    return line[: cut if cut > 0 else max_chars - 1].rstrip(" ,;:—-") + "…"

@@ -102,7 +102,7 @@ def source_list() -> None:
                 s.type,
                 s.name,
                 "да" if s.enabled else "[dim]нет[/dim]",
-                f"{s.poll_interval} с",
+                f"{s.poll_interval} с" if s.poll_interval else "сразу",
                 f"{s.last_success_at.astimezone():%Y-%m-%d %H:%M}" if s.last_success_at else "—",
                 f"[red]{s.last_error[:60]}[/red]" if s.last_error else "",
             )

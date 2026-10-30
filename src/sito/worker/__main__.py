@@ -15,14 +15,19 @@ from sito.models.post import EMBEDDING_DIM
 from sito.repositories.sources import SourceRepository
 from sito.services.cleaning import CleaningService
 from sito.services.clustering import ClusteringRules, ClusteringService
+from sito.services.collector.base import ConnectorListener
 from sito.services.collector.rss import RssCollector
+from sito.services.connectors import ConnectorSupervisor
 from sito.services.embedding import EmbeddingService, SentenceTransformerEmbedder
 from sito.services.ingest import IngestService
 from sito.services.topics import TopicMatchingService, TopicRules
+from sito.utils.crypto import SecretBox
 
 logger = logging.getLogger("sito.worker")
 
 POLLED_TYPES = (SourceType.RSS,)
+# Слушающие сборщики по типам подключений. Telegram добавится здесь
+LISTENERS: dict[SourceType, ConnectorListener] = {}
 
 
 async def poll_one(service: IngestService, semaphore: asyncio.Semaphore, source_id: int) -> None:
@@ -135,6 +140,8 @@ async def main() -> None:
             async_session, ClusteringRules.from_settings(settings), batch_size=settings.cluster_batch_size
         )
         matching = TopicMatchingService(async_session, TopicRules.from_settings(settings))
+        box = SecretBox(settings.secret_key.get_secret_value()) if settings.secret_key else None
+        supervisor = ConnectorSupervisor(async_session, LISTENERS, ingest, box)
         logger.info("worker запущен")
 
         async with asyncio.TaskGroup() as tasks:
@@ -147,6 +154,7 @@ async def main() -> None:
             tasks.create_task(
                 drain_loop("темы", matching.process_batch, settings.topic_match_tick_seconds, stop)
             )
+            tasks.create_task(supervisor.run(stop, settings.connector_check_seconds))
 
     await engine.dispose()
     logger.info("worker остановлен")

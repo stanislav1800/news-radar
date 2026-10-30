@@ -26,9 +26,9 @@ class FakeCollector(BaseCollector):
         if self.error:
             raise self.error
         if self.not_modified:
-            return FetchResult(not_modified=True, etag=source.etag)
+            return FetchResult(not_modified=True)
         posts = [RawPost(source.id, eid, url, None, title, f"<p>{title}</p>") for eid, url, title in self.items]
-        return FetchResult(posts=posts, etag='"v1"')
+        return FetchResult(posts=posts, state={"etag": '"v1"'})
 
 
 def make_service(factory: async_sessionmaker[AsyncSession], collector: FakeCollector) -> IngestService:
@@ -61,7 +61,7 @@ async def test_saves_posts_and_marks_success(
     assert (result.fetched, result.inserted) == (2, 2)
     assert await count_posts(session_factory) == 2
     source = await get_source(session_factory, source_id)
-    assert source.etag == '"v1"'
+    assert source.state == {"etag": '"v1"'}
     assert source.last_success_at is not None
     async with session_factory() as session:
         urls = set((await session.execute(select(Post.url_normalized))).scalars())
@@ -124,13 +124,15 @@ async def test_invalid_urls_are_counted_and_skipped(
 
 
 async def test_not_modified(session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource) -> None:
-    source_id = await make_source(etag='"v0"')
+    source_id = await make_source(state={"etag": '"v0"'})
 
     result = await make_service(session_factory, FakeCollector(not_modified=True)).ingest_source(source_id)
 
     assert result.not_modified
     assert await count_posts(session_factory) == 0
-    assert (await get_source(session_factory, source_id)).last_success_at is not None
+    source = await get_source(session_factory, source_id)
+    assert source.last_success_at is not None
+    assert source.state == {"etag": '"v0"'}  # 304: курсор прежний
 
 
 async def test_error_is_recorded_and_reraised(

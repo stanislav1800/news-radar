@@ -239,3 +239,11 @@ button.vote.on { background: var(--notice-bg); border-color: var(--accent); filt
   .follow { flex-direction: column; align-items: stretch; }
   .search { flex-wrap: wrap; }
 }
+
+/* Подключения */
+.connector.disabled > :not(.connector-actions) { opacity: .6; }
+.connector-status { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; margin: 0 0 .75rem; font-size: .92rem; }
+.connector-actions { margin-top: 1rem; display: grid; gap: .5rem; }
+.row-actions { display: flex; gap: 1.25rem; }
+.row-actions form { margin: 0; }
+.new-connector summary { cursor: pointer; }

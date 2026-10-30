@@ -1,8 +1,10 @@
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sito.models import Post, Source, SourceType, Story
@@ -17,9 +19,10 @@ class SourceRow:
 
     id: int
     name: str
-    url: str
+    url: str | None
+    external_id: str | None
     enabled: bool
-    poll_interval: int
+    poll_interval: int | None
     last_success_at: datetime | None
     last_error: str | None
     last_error_at: datetime | None
@@ -36,13 +39,47 @@ class SourceRepository:
     async def get_by_url(self, url: str) -> Source | None:
         return await self.session.scalar(select(Source).where(Source.url == url))
 
+    async def get_by_external_id(self, type_: SourceType, external_id: str) -> Source | None:
+        return await self.session.scalar(
+            select(Source).where(Source.type == type_, Source.external_id == external_id)
+        )
+
     async def list_all(self) -> list[Source]:
         return list(await self.session.scalars(select(Source).order_by(Source.id)))
 
-    async def add(self, connector_id: int, type_: SourceType, name: str, url: str, poll_interval: int) -> Source:
-        source = Source(connector_id=connector_id, type=type_, name=name, url=url, poll_interval=poll_interval)
+    async def list_for_connector(self, connector_id: int) -> list[Source]:
+        return list(await self.session.scalars(
+            select(Source).where(Source.connector_id == connector_id).order_by(Source.id)
+        ))
+
+    async def add(
+        self, connector_id: int, type_: SourceType, name: str, *,
+        url: str | None = None, external_id: str | None = None, poll_interval: int | None = None,
+    ) -> Source:
+        source = Source(
+            connector_id=connector_id, type=type_, name=name, url=url, external_id=external_id,
+            poll_interval=poll_interval, state={},
+        )
         self.session.add(source)
         await self.session.flush()  # получить id до коммита
+        return source
+
+    async def get_or_add_external(
+        self, connector_id: int, type_: SourceType, external_id: str, name: str, url: str | None
+    ) -> Source:
+        """Источник слушающего сборщика: найти по id у сервиса или завести.
+
+        Гонка двух подключений за один новый канал решается уникальностью (type, external_id):
+        второе получит уже заведённый источник.
+        """
+        stmt = (
+            insert(Source)
+            .values(connector_id=connector_id, type=type_, name=name, url=url, external_id=external_id, state={})
+            .on_conflict_do_nothing(index_elements=["type", "external_id"])
+        )
+        await self.session.execute(stmt)
+        source = await self.get_by_external_id(type_, external_id)
+        assert source is not None
         return source
 
     async def list_with_stats(self, connector_id: int) -> list[SourceRow]:
@@ -53,7 +90,7 @@ class SourceRepository:
         )
         query = (
             select(
-                Source.id, Source.name, Source.url, Source.enabled, Source.poll_interval,
+                Source.id, Source.name, Source.url, Source.external_id, Source.enabled, Source.poll_interval,
                 Source.last_success_at, Source.last_error, Source.last_error_at, posts_24h.label("posts_24h"),
             )
             .where(Source.connector_id == connector_id)
@@ -104,6 +141,7 @@ class SourceRepository:
             .where(
                 Source.enabled,
                 Source.type.in_(types),
+                Source.poll_interval.is_not(None),
                 or_(last_attempt.is_(None), next_poll <= func.now()),
             )
             .order_by(last_attempt.asc().nulls_first())  # сначала новые и самые давние
@@ -111,18 +149,12 @@ class SourceRepository:
         )
         return list(result.scalars())
 
-    async def mark_success(self, source_id: int, etag: str | None, last_modified: str | None) -> None:
-        await self.session.execute(
-            update(Source)
-            .where(Source.id == source_id)
-            .values(
-                etag=etag,
-                last_modified=last_modified,
-                last_success_at=func.now(),
-                last_error=None,
-                last_error_at=None,
-            )
-        )
+    async def mark_success(self, source_id: int, state: Mapping[str, Any] | None = None) -> None:
+        """Сбор прошёл. state — новый курсор сборщика; None — оставить прежний."""
+        values: dict[str, Any] = {"last_success_at": func.now(), "last_error": None, "last_error_at": None}
+        if state is not None:
+            values["state"] = dict(state)
+        await self.session.execute(update(Source).where(Source.id == source_id).values(**values))
 
     async def mark_failed(self, source_id: int, error: str) -> None:
         await self.session.execute(

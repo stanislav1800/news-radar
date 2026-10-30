@@ -15,27 +15,28 @@ class RssCollector(BaseCollector):
         self.client = client
 
     async def fetch(self, source: Source) -> FetchResult:
-        # Условный запрос: если лента не менялась, сервер ответит 304 без тела
+        if not source.url:
+            raise ValueError(f"У RSS-источника {source.id} нет адреса ленты")
+        # Условный запрос: если лента не менялась, сервер ответит 304 без тела.
+        # Курсор RSS — ETag и Last-Modified из прошлого ответа
+        state = source.state or {}
         headers = {}
-        if source.etag:
-            headers["If-None-Match"] = source.etag
-        if source.last_modified:
-            headers["If-Modified-Since"] = source.last_modified
+        if etag := state.get("etag"):
+            headers["If-None-Match"] = etag
+        if last_modified := state.get("last_modified"):
+            headers["If-Modified-Since"] = last_modified
 
         resp = await self.client.get(source.url, headers=headers)
         if resp.status_code == HTTPStatus.NOT_MODIFIED:
-            return FetchResult(etag=source.etag, last_modified=source.last_modified, not_modified=True)
+            return FetchResult(not_modified=True)
         resp.raise_for_status()
 
         # Разбор большой ленты занимает процессор, уносим его из event loop
         feed = await asyncio.to_thread(feedparser.parse, resp.content)
         posts = [post for entry in feed.entries if (post := self._to_post(source.id, entry))]
 
-        return FetchResult(
-            posts=posts,
-            etag=resp.headers.get("ETag"),
-            last_modified=resp.headers.get("Last-Modified"),
-        )
+        new_state = {"etag": resp.headers.get("ETag"), "last_modified": resp.headers.get("Last-Modified")}
+        return FetchResult(posts=posts, state={k: v for k, v in new_state.items() if v})
 
     @classmethod
     def _to_post(cls, source_id: int, entry: feedparser.FeedParserDict) -> RawPost | None:

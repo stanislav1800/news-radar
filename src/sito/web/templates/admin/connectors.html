@@ -4,14 +4,23 @@
 {% block main_class %}page wide{% endblock %}
 {% block content %}
 <h1>Подключения</h1>
-<p class="muted">Источники общие для всех пользователей. Подключение — тип источников со своими настройками; RSS есть всегда. Telegram появится следующим.</p>
+<p class="muted">Источники общие для всех пользователей. Подключение — тип источников со своими настройками и учётными данными; RSS есть всегда.</p>
 
 {% for section in sections %}
 {% set c = section.connector %}
-<section class="card connector">
+<section class="card connector{% if not c.enabled %} disabled{% endif %}" id="connector-{{ c.id }}">
   <header class="connector-head">
     <h2>{{ c.name }}{% if c.builtin %} <span class="badge">встроенное</span>{% endif %}</h2>
     {% if section.spec %}<p class="muted small">{{ section.spec.description }}</p>{% endif %}
+    {% if not c.builtin %}
+    <p class="connector-status">
+      {% if not c.enabled %}<span class="muted">выключено</span>
+      {% elif c.status == "needs_login" %}<span class="status-error">нужен повторный вход</span>
+      {% elif c.status == "error" %}<span class="status-error">ошибка</span>
+      {% else %}<span class="status-ok">работает</span>{% endif %}
+      {% if c.last_error %}<span class="small field-error">{{ c.last_error[:300] }}</span>{% endif %}
+    </p>
+    {% endif %}
   </header>
 
   {% if section.sources %}
@@ -25,11 +34,13 @@
       </tbody>
     </table>
   </div>
+  {% elif section.spec and not section.spec.polled %}
+  <p class="muted">Источников пока нет: они появятся сами с первыми постами.</p>
   {% else %}
   <p class="muted">Источников пока нет.</p>
   {% endif %}
 
-  {% if section.spec %}
+  {% if section.spec and section.spec.source_form %}
   <details class="add-source" {% if section.form_open %}open{% endif %}>
     <summary>Добавить ленту</summary>
     <form class="stack" method="post" action="/admin/connectors/{{ c.id }}/sources">
@@ -45,6 +56,50 @@
     </form>
   </details>
   {% endif %}
+
+  {% if not c.builtin %}
+  <div class="connector-actions">
+    {% if section.edit_fields %}
+    <details class="add-source" {% if section.edit_open %}open{% endif %}>
+      <summary>Настройки подключения</summary>
+      <form class="stack" method="post" action="/admin/connectors/{{ c.id }}">
+        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+        {% if section.edit_error %}<div class="error" role="alert">{{ section.edit_error }}</div>{% endif %}
+        {{ form.render(section.edit_fields) }}
+        <button type="submit">Сохранить</button>
+      </form>
+    </details>
+    {% endif %}
+    <div class="row-actions">
+      <form method="post" action="/admin/connectors/{{ c.id }}/enabled">
+        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="enabled" value="{{ 'false' if c.enabled else 'true' }}">
+        <button class="link" type="submit">{{ "Выключить подключение" if c.enabled else "Включить подключение" }}</button>
+      </form>
+      <form method="post" action="/admin/connectors/{{ c.id }}/delete"
+            onsubmit='return confirm({{ ("Удалить подключение «" ~ c.name ~ "»?") | tojson }})'>
+        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+        <button class="link danger" type="submit">Удалить</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+
+{% for item in new_connectors %}
+<section class="card connector new-connector">
+  <details {% if item.form_open %}open{% endif %}>
+    <summary><strong>Добавить подключение: {{ item.spec.title }}</strong></summary>
+    <p class="muted small">{{ item.spec.description }}</p>
+    <form class="stack" method="post" action="/admin/connectors?type={{ item.spec.source_type }}">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      {% if item.form_error %}<div class="error" role="alert">{{ item.form_error }}</div>{% endif %}
+      {{ form.render(item.fields) }}
+      <p class="muted small">Учётные данные хранятся в базе зашифрованными ключом SITO_SECRET_KEY и после сохранения не показываются.</p>
+      <button type="submit">Добавить</button>
+    </form>
+  </details>
 </section>
 {% endfor %}
 {% endblock %}

@@ -66,8 +66,7 @@ async def test_returns_cache_headers() -> None:
 
     result = await collector.fetch(make_source())
 
-    assert result.etag == '"v2"'
-    assert result.last_modified == "Sat, 24 Oct 2026"
+    assert result.state == {"etag": '"v2"', "last_modified": "Sat, 24 Oct 2026"}
 
 
 async def test_conditional_request_and_304() -> None:
@@ -79,12 +78,12 @@ async def test_conditional_request_and_304() -> None:
         return httpx.Response(304)
 
     collector = make_collector(handler)
-    result = await collector.fetch(make_source(etag='"v1"', last_modified="Fri, 23 Oct 2026"))
+    result = await collector.fetch(make_source(state={"etag": '"v1"', "last_modified": "Fri, 23 Oct 2026"}))
 
     assert seen == {"etag": '"v1"', "modified": "Fri, 23 Oct 2026"}
     assert result.not_modified
     assert result.posts == []
-    assert result.etag == '"v1"'  # прежние значения сохраняются
+    assert result.state is None  # курсор не меняется
 
 
 async def test_server_error_raises() -> None:

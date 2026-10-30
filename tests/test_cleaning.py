@@ -48,6 +48,22 @@ async def test_cleans_new_posts(session_factory: async_sessionmaker[AsyncSession
     assert post.raw_text is not None  # оригинал сохраняется
 
 
+async def test_post_without_title_gets_one_from_text(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    """У постов Telegram заголовка нет: им становится первая фраза текста."""
+    source_id = await make_source()
+    post_id = await add_post(
+        session_factory, source_id, 1, "", "<p>На шахте «Листвяжная» возобновили добычу. Об этом сообщили в компании.</p>"
+    )
+
+    await CleaningService(session_factory).process_batch()
+
+    post = await get_post(session_factory, post_id)
+    assert post.status is PostStatus.CLEANED
+    assert post.title == "На шахте «Листвяжная» возобновили добычу"
+
+
 async def test_title_only_is_not_junk(
     session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
 ) -> None:

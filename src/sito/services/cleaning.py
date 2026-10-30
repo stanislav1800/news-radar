@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sito.models import Post, PostStatus
 from sito.repositories.posts import PostRepository
 from sito.services.pipeline import MAX_ATTEMPTS, mark_post_done, record_post_error
-from sito.utils.text import clean_html, clean_line
+from sito.utils.text import clean_html, clean_line, title_from_text
 
 __all__ = ["MAX_ATTEMPTS", "CleanBatchResult", "CleaningService"]
 
@@ -60,7 +60,7 @@ class CleaningService:
     @staticmethod
     def _clean(post: Post) -> PostStatus:
         cleaned = clean_html(post.raw_text, own_url=post.url_normalized)
-        post.title = clean_line(post.title)
+        post.title = clean_line(post.title) or title_from_text(cleaned.text)  # у Telegram заголовков нет
         post.text = cleaned.text or None
         post.links = cleaned.links
 

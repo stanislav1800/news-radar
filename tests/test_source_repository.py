@@ -39,11 +39,11 @@ async def test_mark_success_clears_error(session: AsyncSession, make_source: Mak
     source_id = await make_source(last_error="boom", last_error_at=JUST_NOW)
     repo = SourceRepository(session)
 
-    await repo.mark_success(source_id, etag='"v1"', last_modified=None)
+    await repo.mark_success(source_id, {"etag": '"v1"'})
 
     source = await repo.get(source_id)
     assert source is not None
     await session.refresh(source)
-    assert source.etag == '"v1"'
+    assert source.state == {"etag": '"v1"'}
     assert source.last_success_at is not None
     assert source.last_error is None

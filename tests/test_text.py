@@ -1,4 +1,6 @@
-from sito.utils.text import clean_html, clean_line
+import pytest
+
+from sito.utils.text import clean_html, clean_line, title_from_text
 
 HABR = (
     '<img src="https://habrastorage.org/x.jpg" />'
@@ -73,3 +75,26 @@ def test_empty_input() -> None:
 def test_clean_line() -> None:
     assert clean_line("«Акрон»\xa0— «Динамо»:\u200b счёт &amp; ход") == "«Акрон» — «Динамо»: счёт & ход"
     assert clean_line(None) == ""
+
+
+@pytest.mark.parametrize(
+    ("text", "title"),
+    [
+        ("Шахта «Распадская» возобновила добычу. Подробности позже.", "Шахта «Распадская» возобновила добычу"),
+        ("Срочно!\nВторая строка", "Срочно!"),
+        ("Что будет с углём? Разбираемся.", "Что будет с углём?"),
+        ("\n\n  Первая непустая строка без точки\nещё", "Первая непустая строка без точки"),
+        ("", ""),
+    ],
+)
+def test_title_from_text(text: str, title: str) -> None:
+    assert title_from_text(text) == title
+
+
+def test_long_title_is_cut_by_word() -> None:
+    text = "Очень " * 40 + "длинная первая фраза без точек"
+
+    title = title_from_text(text, max_chars=50)
+
+    assert len(title) <= 50 and title.endswith("…") and not title.endswith(" …")
+    assert title.removesuffix("…").split()[-1] == "Очень"

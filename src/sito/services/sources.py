@@ -62,5 +62,5 @@ class SourceService:
         if await self.repo.get_by_url(url):
             raise SourceError(f"Источник с адресом {url} уже есть")
         trial = await self.trial(url) if check else None
-        source = await self.repo.add(connector.id, connector.type, form.name, url, form.poll_interval)
+        source = await self.repo.add(connector.id, connector.type, form.name, url=url, poll_interval=form.poll_interval)
         return source, trial

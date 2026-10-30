@@ -11,6 +11,7 @@ dependencies = [
     "alembic>=1.20.1",
     "asyncpg>=0.32.0",
     "beautifulsoup4>=4.15.0",
+    "cryptography>=50.0.2",
     "fastapi>=0.162.0",
     "feedparser>=6.0.14",
     "httpx>=0.28.1",

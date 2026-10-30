@@ -1,6 +1,8 @@
 """Типы источников: что нужно подключению и источнику. По этим описаниям строятся формы в вебе.
 
-Новый тип (Telegram, VK) — это коллектор и описание здесь; страницы администратора не меняются.
+Новый тип (Telegram, VK) — это сборщик и описание здесь; страницы администратора не меняются.
+Поля SecretStr в форме подключения — секреты: хранятся зашифрованными и в вебе не показываются.
+У формы подключения обязательно поле name — название подключения.
 """
 
 from dataclasses import dataclass
@@ -28,8 +30,12 @@ class CollectorSpec:
     title: str
     description: str
     builtin: bool                    # встроенное подключение: есть всегда, без учётных данных
-    source_form: type[BaseModel]     # что нужно, чтобы добавить источник
-    trial_fetch: bool                # умеет пробный сбор перед сохранением
+    # Как приходят посты: polled — worker опрашивает источники по расписанию (RSS);
+    # иначе подключение слушает само и заводит источники с первым постом (Telegram)
+    polled: bool
+    source_form: type[BaseModel] | None = None     # источник добавляет администратор (RSS)
+    connector_form: type[BaseModel] | None = None  # подключение добавляет администратор (Telegram)
+    trial_fetch: bool = False        # умеет пробный сбор перед сохранением
 
 
 COLLECTORS: dict[SourceType, CollectorSpec] = {
@@ -38,6 +44,7 @@ COLLECTORS: dict[SourceType, CollectorSpec] = {
         title="RSS",
         description="Ленты RSS и Atom. Встроенное подключение, учётные данные не нужны.",
         builtin=True,
+        polled=True,
         source_form=RssSourceForm,
         trial_fetch=True,
     ),

@@ -1,6 +1,8 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sito.db.base import Base, IdMixin, TimestampMixin, str_enum
@@ -8,9 +10,18 @@ from sito.models.enums import SourceType
 
 
 class Source(IdMixin, TimestampMixin, Base):
+    """Источник постов внутри подключения: RSS-лента, Telegram-канал.
+
+    Как источник опознаётся, зависит от типа: у RSS это адрес ленты (url), у Telegram — id канала
+    (external_id). Источники опрашиваемых типов (RSS) добавляет администратор, источники
+    «слушающих» (Telegram) заводятся сами с первым постом.
+    """
+
     __tablename__ = "source"
     __table_args__ = (
-        CheckConstraint("poll_interval > 0", name="poll_interval_positive"),
+        UniqueConstraint("type", "external_id"),
+        CheckConstraint("poll_interval IS NULL OR poll_interval > 0", name="poll_interval_positive"),
+        CheckConstraint("url IS NOT NULL OR external_id IS NOT NULL", name="has_identity"),
     )
 
     # RESTRICT: подключение с источниками удалить нельзя, иначе вместе с ними пропали бы все посты
@@ -19,12 +30,15 @@ class Source(IdMixin, TimestampMixin, Base):
     )
     type: Mapped[SourceType] = mapped_column(str_enum(SourceType, "source_type"))  # совпадает с типом подключения
     name: Mapped[str]
-    url: Mapped[str] = mapped_column(unique=True)
+    url: Mapped[str | None] = mapped_column(unique=True)  # адрес ленты (RSS) или страницы источника
+    external_id: Mapped[str | None]                       # id у сервиса: канал Telegram
     enabled: Mapped[bool] = mapped_column(server_default="true")
-    poll_interval: Mapped[int] = mapped_column(server_default="300")
-    
-    etag: Mapped[str | None]
-    last_modified: Mapped[str | None]
+    poll_interval: Mapped[int | None]  # секунд; только у опрашиваемых типов
+
+    # Курсор сборщика, формат знает только он: у RSS — ETag и Last-Modified,
+    # у Telegram — номер последнего сохранённого сообщения (догрузка после простоя)
+    state: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+
     last_success_at: Mapped[datetime | None]
     last_error: Mapped[str | None]
     last_error_at: Mapped[datetime | None]

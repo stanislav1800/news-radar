@@ -11,9 +11,12 @@
 <body{% if user %} hx-headers='{"{{ CSRF_HEADER }}": "{{ csrf_token(request) }}"}'{% endif %}>
   {% if user %}
   <header class="topbar">
-    <a class="brand" href="/">Сито</a>
+    <a class="brand" href="/my">Сито</a>
     <nav>
-      <a href="/">Лента</a>
+      <a href="/my">Моя лента</a>
+      <a href="/">Все сюжеты</a>
+      <a href="/search">Поиск</a>
+      <a href="/topics">Темы</a>
       {% if user.is_admin %}
       <a href="/admin/connectors">Подключения</a>
       <a href="/admin/users">Пользователи</a>

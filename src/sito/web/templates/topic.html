@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% import "_form_fields.html" as form %}
+{% block title %}{{ topic.name }} · Темы · Сито{% endblock %}
+{% block content %}
+<a class="back" href="/topics">← Темы</a>
+<div class="feed-head">
+  <h1>{{ topic.name }}</h1>
+  {% if topic.paused %}<span class="badge">на паузе</span>{% else %}<a href="/my?topic={{ topic.id }}">Лента темы →</a>{% endif %}
+</div>
+<p class="muted">
+  {% if topic.query %}Сюжеты со словами <code>{{ topic.query }}</code>{% if likes %} и похожие на примеры 👍{% endif %}.
+  {% else %}Сюжеты, похожие на примеры 👍.{% endif %}
+  Сюжеты, похожие на 👎 больше, чем на 👍, в тему не попадают.
+</p>
+
+<h2>Примеры</h2>
+<div class="examples">
+  <div>
+    <h3>👍 Искать похожее</h3>
+    {% if likes %}
+    <ul>
+      {% for e in likes %}{% include "_example.html" %}{% endfor %}
+    </ul>
+    {% else %}<p class="muted small">Пока нет. Отмечайте 👍 подходящие сюжеты в ленте или ниже.</p>{% endif %}
+  </div>
+  <div>
+    <h3>👎 Не показывать такие</h3>
+    {% if dislikes %}
+    <ul>
+      {% for e in dislikes %}{% include "_example.html" %}{% endfor %}
+    </ul>
+    {% else %}<p class="muted small">Пока нет. Если в теме попадается не то — отметьте 👎.</p>{% endif %}
+  </div>
+</div>
+
+{% if not topic.paused %}
+<h2>Возможно, подойдёт</h2>
+{% if suggestions %}
+<p class="muted small">Свежие сюжеты, которых нет в теме, но они {{ "похожи на ваши 👍" if likes else "близки к запросу по смыслу" }}.
+  👍 — добавить в тему и искать похожее.</p>
+<div class="feed">
+  {% with stories=suggestions, divider_before=none, more_url=none %}{% include "_feed_items.html" %}{% endwith %}
+</div>
+{% else %}
+<p class="muted small">Подсказок нет: {{ "отметьте 👍 хотя бы один сюжет" if not topic.query else "близких сюжетов за неделю не нашлось" }}.</p>
+{% endif %}
+{% endif %}
+
+<h2>Настройки</h2>
+<section class="card settings">
+  <form class="stack" method="post" action="/topics/{{ topic.id }}">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    {{ form.render(fields) }}
+    <button type="submit">Сохранить</button>
+  </form>
+
+  <div class="setting">
+    <strong>RSS-лента темы</strong>
+    <p class="muted small">Для RSS-читалки. Адрес секретный: по нему лента открывается без пароля.</p>
+    <input class="rss-url" type="text" readonly value="{{ rss_url }}" aria-label="Адрес RSS-ленты" onclick="this.select()">
+    <form method="post" action="/topics/{{ topic.id }}/rss-token"
+          onsubmit='return confirm({{ "Старый адрес перестанет работать. Сменить?" | tojson }})'>
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <button class="link" type="submit">Сменить адрес</button>
+    </form>
+  </div>
+
+  <div class="setting row">
+    <form method="post" action="/topics/{{ topic.id }}/pause">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="paused" value="{{ 'false' if topic.paused else 'true' }}">
+      <button class="link" type="submit">{{ "Снять с паузы" if topic.paused else "Поставить на паузу" }}</button>
+    </form>
+    <form method="post" action="/topics/{{ topic.id }}/delete"
+          onsubmit='return confirm({{ ("Удалить тему «" ~ topic.name ~ "» вместе с примерами?") | tojson }})'>
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <button class="link danger" type="submit">Удалить тему</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

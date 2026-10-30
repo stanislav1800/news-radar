@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, ForeignKey
+from sqlalchemy import BigInteger, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sito.db.base import Base, IdMixin, TimestampMixin
@@ -15,6 +15,9 @@ class Story(IdMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "story"
+    # updated_at (из TimestampMixin) — когда сюжет изменился у нас; по нему worker находит
+    # сюжеты, которые надо заново сопоставить с темами
+    __table_args__ = (Index("ix_story_updated_at", "updated_at"),)
 
     title: Mapped[str]             # из самого свежего поста: в нём обычно последние данные
     lead: Mapped[str | None]       # анонс свежего поста, не длиннее ~300 знаков (ТЗ)

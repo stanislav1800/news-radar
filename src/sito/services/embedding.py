@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Self
 
@@ -62,6 +62,26 @@ class SentenceTransformerEmbedder(Embedder):
             show_progress_bar=False,
         )
         return vectors.tolist()
+
+
+class LazyEmbedder(Embedder):
+    """Модель, которая загружается при первом обращении: для веба, где она нужна только поиску."""
+
+    def __init__(self, load: Callable[[], Awaitable[Embedder]], name: str, dim: int) -> None:
+        self._load = load
+        self._embedder: Embedder | None = None
+        self._lock = asyncio.Lock()
+        self.name = name
+        self.dim = dim
+
+    async def get(self) -> Embedder:
+        async with self._lock:  # два первых поиска одновременно не грузят модель дважды
+            if self._embedder is None:
+                self._embedder = await self._load()
+            return self._embedder
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return await (await self.get()).embed(texts)
 
 
 def embedding_text(title: str, text: str | None, max_chars: int = 1000) -> str:

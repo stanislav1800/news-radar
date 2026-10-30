@@ -18,6 +18,7 @@ from sito.services.clustering import ClusteringRules, ClusteringService
 from sito.services.collector.rss import RssCollector
 from sito.services.embedding import EmbeddingService, SentenceTransformerEmbedder
 from sito.services.ingest import IngestService
+from sito.services.topics import TopicMatchingService, TopicRules
 
 logger = logging.getLogger("sito.worker")
 
@@ -133,6 +134,7 @@ async def main() -> None:
         clustering = ClusteringService(
             async_session, ClusteringRules.from_settings(settings), batch_size=settings.cluster_batch_size
         )
+        matching = TopicMatchingService(async_session, TopicRules.from_settings(settings))
         logger.info("worker запущен")
 
         async with asyncio.TaskGroup() as tasks:
@@ -141,6 +143,9 @@ async def main() -> None:
             tasks.create_task(embed_loop(stop))
             tasks.create_task(
                 drain_loop("склейка", clustering.process_batch, settings.cluster_tick_seconds, stop)
+            )
+            tasks.create_task(
+                drain_loop("темы", matching.process_batch, settings.topic_match_tick_seconds, stop)
             )
 
     await engine.dispose()

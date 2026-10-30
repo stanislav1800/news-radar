@@ -8,7 +8,7 @@
 import asyncio
 import os
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -123,14 +123,41 @@ def make_source(session_factory: async_sessionmaker[AsyncSession]) -> MakeSource
     return make
 
 
+class FakeEmbedder:
+    """Модель для тестов: вектор запроса задаёт тест (embedder.vectors["запрос"] = [...])."""
+
+    name = "fake"
+
+    def __init__(self) -> None:
+        from sito.models.post import EMBEDDING_DIM
+
+        self.dim = EMBEDDING_DIM
+        self.vectors: dict[str, list[float]] = {}
+        self.calls: list[str] = []
+
+    async def embed(self, texts: "Sequence[str]") -> list[list[float]]:
+        self.calls.extend(texts)
+        fallback = [0.0] * (self.dim - 1) + [1.0]  # последняя ось: ни на что в тестах не похоже
+        return [self.vectors.get(text, fallback) for text in texts]
+
+
 @pytest.fixture
-def app(session_factory: async_sessionmaker[AsyncSession]) -> "FastAPI":
+def embedder() -> FakeEmbedder:
+    return FakeEmbedder()
+
+
+@pytest.fixture
+def app(session_factory: async_sessionmaker[AsyncSession], embedder: FakeEmbedder) -> "FastAPI":
     from pydantic import SecretStr
 
     from sito.config import settings
     from sito.web.app import create_app
 
-    return create_app(session_factory, settings.model_copy(update={"secret_key": SecretStr("test-secret-key-0123")}))
+    return create_app(
+        session_factory,
+        settings.model_copy(update={"secret_key": SecretStr("test-secret-key-0123")}),
+        embedder,  # type: ignore[arg-type]
+    )
 
 
 @pytest.fixture

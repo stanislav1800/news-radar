@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{% if results.query %}{{ results.query }} · {% endif %}Поиск · Сито{% endblock %}
+{% block content %}
+<h1>Поиск</h1>
+<form class="search" method="get" action="/search" role="search">
+  <input type="search" name="q" value="{{ results.query }}" placeholder="например, уголь кузбасс" aria-label="Что искать" autofocus>
+  <select name="period" aria-label="За какой период">
+    {% for value, label in periods.items() %}
+    <option value="{{ value }}"{% if value == results.period %} selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Найти</button>
+</form>
+<p class="muted small">Слова через пробел — нужны все, <code>or</code> — любое из них, <code>-слово</code> — без него,
+  <code>"фраза в кавычках"</code>. Сюжеты без этих слов, но близкие по смыслу, — во втором разделе.</p>
+
+{% if results.query %}
+<form class="follow card" method="post" action="/topics">
+  <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+  <input type="hidden" name="query" value="{{ results.query }}">
+  <input type="hidden" name="name" value="{{ topic_name }}">
+  <div>
+    <strong>Следить за «{{ results.query }}»</strong>
+    <p class="muted small">В «Моей ленте» будут новые сюжеты с этими словами. Отмечайте 👍 сюжеты из второго раздела —
+      тема научится находить такие и без слов.</p>
+  </div>
+  <button type="submit">Следить</button>
+</form>
+
+<h2>Со словами запроса <span class="muted">· {{ results.by_words | length }}</span></h2>
+{% if results.by_words %}
+<div class="feed">
+  {% with stories=results.by_words, divider_before=none, more_url=none, reasons={} %}{% include "_feed_items.html" %}{% endwith %}
+</div>
+{% else %}
+<p class="muted">Сюжетов с этими словами за выбранный период нет.</p>
+{% endif %}
+
+<h2>Похожие по смыслу</h2>
+{% if results.meaning_unavailable %}
+<p class="muted">Поиск по смыслу сейчас недоступен (модель не загружена), показаны только совпадения по словам.</p>
+{% elif results.by_meaning %}
+<div class="feed">
+  {% with stories=results.by_meaning, divider_before=none, more_url=none, reasons={} %}{% include "_feed_items.html" %}{% endwith %}
+</div>
+{% else %}
+<p class="muted">Близких по смыслу сюжетов не нашлось.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

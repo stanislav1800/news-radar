@@ -1,0 +1,5 @@
+<form class="feed-actions" method="post" action="/feed/mark-all-read">
+  <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+  <input type="hidden" name="next" value="{{ next }}">
+  <button class="link" type="submit">Отметить всё прочитанным</button>
+</form>

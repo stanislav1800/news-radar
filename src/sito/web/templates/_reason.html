@@ -1,0 +1,25 @@
+{# Почему сюжет в теме и 👍/👎. r — TopicReason. HTMX заменяет весь блок ответом /topics/vote #}
+<div class="reason{% if not r.matched %} out{% endif %}">
+  <a class="topic-name" href="/my?topic={{ r.topic_id }}">{{ r.topic_name }}</a>
+  <span class="why">
+    {%- if not r.matched -%}
+      {{ "убран из темы, похожие тоже не попадут" if r.vote == "dislike" else "не в теме" }}
+    {%- elif r.vote == "like" -%}
+      вы отметили 👍
+    {%- elif r.example_title -%}
+      похож на «{{ r.example_title }}»
+    {%- elif r.by_words -%}
+      есть слова запроса
+    {%- endif -%}
+  </span>
+  <form class="votes" method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="closest .reason" hx-swap="outerHTML">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="topic_id" value="{{ r.topic_id }}">
+    <input type="hidden" name="story_id" value="{{ r.story_id }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="vote{% if r.vote == 'like' %} on{% endif %}" name="vote" value="{{ 'none' if r.vote == 'like' else 'like' }}"
+            title="{{ 'Снять отметку' if r.vote == 'like' else 'В тему: искать похожее' }}" aria-pressed="{{ 'true' if r.vote == 'like' else 'false' }}">👍</button>
+    <button class="vote{% if r.vote == 'dislike' %} on{% endif %}" name="vote" value="{{ 'none' if r.vote == 'dislike' else 'dislike' }}"
+            title="{{ 'Снять отметку' if r.vote == 'dislike' else 'Не то: убрать такие из темы' }}" aria-pressed="{{ 'true' if r.vote == 'dislike' else 'false' }}">👎</button>
+  </form>
+</div>

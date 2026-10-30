@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Моя лента · Сито{% endblock %}
+{% block content %}
+<div class="feed-head">
+  <h1>Моя лента</h1>
+  {% if topics %}
+  <nav class="chips" aria-label="Темы">
+    <a class="chip{% if filters.topic is none %} active{% endif %}"
+       href="/my{% if filters.unread %}?unread=true{% endif %}">Все темы</a>
+    {% for t in topics %}
+    <a class="chip{% if filters.topic == t.id %} active{% endif %}"
+       href="/my?topic={{ t.id }}{% if filters.unread %}&unread=true{% endif %}">{{ t.name }}</a>
+    {% endfor %}
+    <a class="chip{% if filters.unread %} active{% endif %}"
+       href="/my?{% if filters.topic is not none %}topic={{ filters.topic }}&{% endif %}{% if not filters.unread %}unread=true{% endif %}">Непрочитанные</a>
+  </nav>
+  {% endif %}
+</div>
+
+{% if not topics %}
+<div class="card empty">
+  <p><strong>Здесь будут сюжеты по вашим темам.</strong></p>
+  <p>Тема — это сохранённый поиск. Найдите, что вам интересно, в <a href="/search">поиске</a> и нажмите «Следить».
+     Или откройте интересный сюжет во <a href="/">всех сюжетах</a> и нажмите «Следить за такими».</p>
+  <p class="muted">Дальше отмечайте сюжеты 👍 и 👎: тема запомнит примеры и будет искать похожее на первые и непохожее на вторые.</p>
+</div>
+{% else %}
+{% include "_mark_all_read.html" %}
+{% if stories %}
+<div class="feed">
+  {% include "_feed_items.html" %}
+</div>
+{% elif filters.unread %}
+<p class="muted">Всё прочитано.</p>
+{% else %}
+<p class="muted">По {{ "этой теме" if filters.topic is not none else "вашим темам" }} пока ничего нет за последние дни.
+  Новые сюжеты появятся здесь, как только подойдут к теме.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

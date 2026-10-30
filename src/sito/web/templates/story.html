@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ story.title }} · Сито{% endblock %}
 {% block content %}
-<a class="back" href="/">← Лента</a>
+<a class="back" href="/my">← Лента</a>
 
 <article class="story">
   <h1>{{ story.title }}</h1>
@@ -14,6 +14,29 @@
     — {{ story.last_post_at | local_time(user.timezone, now) }}
     {% endif %}
   </p>
+
+  <section class="story-topics">
+    {% for r in reasons %}{% include "_reason.html" %}{% endfor %}
+    <div class="topic-actions">
+      <form method="post" action="/topics/follow">
+        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="story_id" value="{{ story.id }}">
+        <button class="link" type="submit">Следить за такими</button>
+      </form>
+      {% if other_topics %}
+      <form class="inline-form" method="post" action="/topics/vote">
+        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="story_id" value="{{ story.id }}">
+        <input type="hidden" name="vote" value="like">
+        <input type="hidden" name="next" value="{{ next }}">
+        <select name="topic_id" aria-label="Тема">
+          {% for t in other_topics %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+        </select>
+        <button class="link" type="submit">👍 Добавить в тему</button>
+      </form>
+      {% endif %}
+    </div>
+  </section>
 
   <h2>Хронология</h2>
   {# Свежее сверху: сначала видно, что известно сейчас, ниже — как развивалось событие #}

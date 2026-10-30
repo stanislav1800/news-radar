@@ -179,3 +179,63 @@ button.link.danger { color: var(--error-text); }
 .inline-form { display: flex; gap: .5rem; align-items: center; }
 .inline-form input { padding: .3rem .5rem; font-size: .88rem; width: 12rem; }
 .users .actions form { display: block; margin: 0 0 .2rem; }
+
+/* Темы и поиск */
+h3 { font-size: .95rem; margin: 0 0 .4rem; }
+select {
+  font: inherit; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem;
+}
+a.button {
+  display: inline-block; font-weight: 600; padding: .5rem .9rem; border-radius: 8px;
+  background: var(--accent); color: var(--accent-text);
+}
+a.button:hover { text-decoration: none; opacity: .9; }
+.card.empty p { margin: 0 0 .6rem; }
+.card.empty p:last-child { margin: 0; }
+
+.search { display: flex; gap: .5rem; margin: .75rem 0 .25rem; }
+.search input { flex: 1; min-width: 0; }
+.follow { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 1rem 0; padding: 1rem 1.1rem; }
+.follow p { margin: .2rem 0 0; }
+
+/* «Почему в теме» и 👍/👎 */
+.reason {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem;
+  margin-top: .55rem; padding-top: .5rem; border-top: 1px dashed var(--border);
+  font-size: .85rem; color: var(--muted);
+}
+.reason .topic-name { font-weight: 600; }
+.reason .why { flex: 1; min-width: 10rem; }
+.reason.out .topic-name { color: var(--muted); }
+.reason.error { color: var(--error-text); }
+.votes { display: flex; gap: .25rem; margin: 0; }
+button.vote {
+  background: none; border: 1px solid var(--border); border-radius: 999px;
+  padding: .1rem .55rem; font-size: .9rem; filter: grayscale(1); opacity: .7;
+}
+button.vote:hover { border-color: var(--accent); filter: none; opacity: 1; }
+button.vote.on { background: var(--notice-bg); border-color: var(--accent); filter: none; opacity: 1; }
+.htmx-request button.vote { opacity: .4; }
+
+.story-topics { margin: 1rem 0 0; }
+.story-topics .reason:first-child { border-top: 0; padding-top: 0; }
+.topic-actions { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; align-items: center; margin-top: .75rem; font-size: .9rem; }
+.topic-actions form { margin: 0; }
+.topic-actions select { padding: .25rem .4rem; font-size: .88rem; }
+
+.examples { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.examples ul { margin: 0; padding-left: 1.1rem; display: grid; gap: .35rem; font-size: .92rem; }
+.examples form.inline { display: inline; margin-left: .3rem; }
+.settings { display: grid; gap: 1.25rem; }
+.setting p { margin: .2rem 0 .5rem; }
+.setting.row { display: flex; gap: 1.5rem; }
+.setting form { margin: .4rem 0 0; }
+.rss-url { width: 100%; font-size: .85rem; }
+.topics td.muted { max-width: 280px; }
+
+@media (max-width: 560px) {
+  .examples { grid-template-columns: 1fr; }
+  .follow { flex-direction: column; align-items: stretch; }
+  .search { flex-wrap: wrap; }
+}

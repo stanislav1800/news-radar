@@ -32,9 +32,9 @@ class Stories:
 
     async def add(
         self, posts: list[tuple[str, str, timedelta]], embedding: list[float] | None = None,
-        url: str | None = None,
+        url: str | None = None, text: str | None = "Подробности по ссылке.",
     ) -> int:
-        """posts: (имя источника, заголовок, сколько времени назад)."""
+        """posts: (имя источника, заголовок, сколько времени назад). text=None — пост из одного заголовка."""
         async with self.factory() as session, session.begin():
             repo = StoryRepository(session)
             first_at = NOW - max(ago for _, _, ago in posts)
@@ -44,7 +44,7 @@ class Stories:
                 source_id = await self.make_source(name=source_name)
                 await session.execute(insert(Post).values(
                     source_id=source_id, external_id=f"id-{self.n}", url=url or f"https://news.example/{self.n}",
-                    url_normalized=f"https://news.example/{self.n}", title=title, content_hash=f"h{self.n}",
+                    url_normalized=f"https://news.example/{self.n}", title=title, text=text, content_hash=f"h{self.n}",
                     published_at=NOW - ago, status=PostStatus.CLUSTERED, story_id=story.id,
                     embedding=embedding or vec(self.n % EMBEDDING_DIM),
                 ))
@@ -101,7 +101,7 @@ async def test_feed_pagination(
 
     first = (await logged_in.get("/")).text
     assert len(titles(first)) == page_size
-    cursor = re.search(r'hx-get="/feed/items\?min_sources=1&(?:amp;)?cursor=([^"]+)"', first)
+    cursor = re.search(r'hx-get="/feed/items\?cursor=([^"]+)"', first)
     assert cursor, "нет ссылки «Показать ещё»"
 
     more = await logged_in.get(f"/feed/items?cursor={cursor.group(1)}", headers={"HX-Request": "true"})

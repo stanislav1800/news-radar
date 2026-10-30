@@ -3,7 +3,10 @@
 Запуск: uv run sito web   (или uvicorn sito.web.app:create_app --factory --proxy-headers)
 """
 
-from collections.abc import Awaitable, Callable
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from urllib.parse import quote
 
@@ -15,11 +18,15 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from sito.config import Settings, settings
 from sito.db.engine import async_session
+from sito.models.post import EMBEDDING_DIM
+from sito.services.embedding import Embedder, LazyEmbedder, SentenceTransformerEmbedder
 from sito.services.sources import http_trial_fetch
 from sito.web.deps import LoginRequired, verify_csrf
-from sito.web.routes import admin, admin_users, auth, stories
+from sito.web.routes import admin, admin_users, auth, stories, topics
 from sito.web.security import LoginLimiter
 from sito.web.templating import WEB_DIR
+
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "sito_session"
 
@@ -30,10 +37,32 @@ SECURITY_HEADERS = {
 }
 
 
+def _search_embedder(config: Settings) -> LazyEmbedder | None:
+    """Модель для поиска по смыслу: грузится при первом поиске (или заранее, см. lifespan)."""
+    if not config.search_by_meaning:
+        return None
+    return LazyEmbedder(
+        lambda: SentenceTransformerEmbedder.load(config.embedding_model, config.embedding_prefix),
+        config.embedding_model, EMBEDDING_DIM,
+    )
+
+
+async def _warm_up(embedder: LazyEmbedder) -> None:
+    try:
+        await embedder.get()
+    except Exception:
+        # Не страшно: поиск будет работать по словам, а модель попробует загрузиться при следующем поиске
+        logger.exception("модель для поиска по смыслу не загрузилась")
+    else:
+        logger.info("модель для поиска по смыслу загружена: %s", embedder.name)
+
+
 def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     app_settings: Settings | None = None,
+    embedder: Embedder | None = None,
 ) -> FastAPI:
+    """Веб-приложение. Параметры — для тестов: своя база, настройки и модель без загрузки с диска."""
     config = app_settings or settings
     if config.secret_key is None:
         raise RuntimeError(
@@ -41,13 +70,25 @@ def create_app(
             "Сгенерировать: python -c \"import secrets; print(secrets.token_urlsafe(32))\" и добавить в .env"
         )
 
+    search_embedder = embedder if embedder is not None else _search_embedder(config)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Модель грузится несколько секунд: начинаем сразу, чтобы первый поиск не ждал
+        task = asyncio.create_task(_warm_up(search_embedder)) if isinstance(search_embedder, LazyEmbedder) else None
+        yield
+        if task is not None:
+            task.cancel()
+
     app = FastAPI(
         title="Сито",
+        lifespan=lifespan,
         docs_url=None, redoc_url=None, openapi_url=None,  # JSON API пока нет, документация не нужна
         dependencies=[Depends(verify_csrf)],
     )
     app.state.settings = config
     app.state.session_factory = session_factory or async_session
+    app.state.embedder = search_embedder
     app.state.trial_fetch = http_trial_fetch(config)  # тесты подменяют, чтобы не ходить в сеть
     app.state.login_limiter = LoginLimiter(
         max_failures=config.login_max_failures,
@@ -80,6 +121,7 @@ def create_app(
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
     app.include_router(auth.router)
     app.include_router(stories.router)
+    app.include_router(topics.router)
     app.include_router(admin.router)
     app.include_router(admin_users.router)
     return app

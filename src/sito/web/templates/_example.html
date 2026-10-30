@@ -1,0 +1,7 @@
+<li>
+  {% if e.story_id %}<a href="/stories/{{ e.story_id }}">{{ e.title }}</a>{% else %}<span>{{ e.title }}</span>{% endif %}
+  <form class="inline" method="post" action="/topics/{{ topic.id }}/examples/{{ e.id }}/delete">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button class="link muted" type="submit" title="Убрать пример" aria-label="Убрать пример «{{ e.title }}»">✕</button>
+  </form>
+</li>

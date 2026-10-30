@@ -1,9 +1,13 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    ColumnElement,
     DateTime,
+    Select,
     bindparam,
     case,
     false,
@@ -17,8 +21,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sito.models import Post, Source, Story, StoryRead
-from sito.models.post import EMBEDDING_DIM, EVENT_AT_SQL
+from sito.models import Post, Source, Story, StoryRead, TopicMatch
+from sito.models.post import (
+    EMBEDDING_DIM,
+    EVENT_AT_SQL,
+    POST_FTS_SQL,
+    STORY_HAS_TEXT_SQL,
+)
 
 LEAD_MAX_CHARS = 300  # ТЗ: из чужих материалов показываем не больше первого абзаца, около 300 знаков
 HEADLINE_WINDOW = timedelta(hours=3)  # заголовок выбирается среди постов последних часов сюжета
@@ -145,6 +154,30 @@ _SIMILAR_SQL = text("""
 """)
 
 
+# Поиск по словам: сюжеты, у которых хотя бы один пост содержит слова запроса.
+# Выражение слов — POST_FTS_SQL, дословно как в индексе ix_post_fts.
+_SEARCH_WORDS_SQL = text(f"""
+    SELECT story.id FROM story
+    WHERE story.id IN (
+        SELECT post.story_id FROM post
+        WHERE {POST_FTS_SQL} @@ websearch_to_tsquery('russian', :query)
+    )
+      AND (CAST(:since AS timestamptz) IS NULL OR story.last_post_at >= :since)
+    ORDER BY story.started_at DESC, story.id DESC
+    LIMIT :limit
+""")
+
+_SEARCH_MEANING_SQL = text(f"""
+    SELECT story.id FROM story
+    WHERE story.centroid IS NOT NULL AND {STORY_HAS_TEXT_SQL}
+      AND (CAST(:since AS timestamptz) IS NULL OR story.last_post_at >= :since)
+      AND story.id <> ALL(CAST(:exclude AS bigint[]))
+      AND 1 - (story.centroid <=> :embedding) >= :min_similarity
+    ORDER BY story.centroid <=> :embedding
+    LIMIT :limit
+""").bindparams(bindparam("embedding", type_=Vector(EMBEDDING_DIM)))
+
+
 class StoryRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -190,20 +223,9 @@ class StoryRepository:
         })
         return [SimilarStory(**row._mapping) for row in result]
 
-    async def feed(
-        self,
-        limit: int,
-        *,
-        user_id: int,
-        read_all_before: datetime | None = None,
-        min_sources: int = 1,
-        before: tuple[datetime, int] | None = None,
-        unread_only: bool = False,
-    ) -> list[FeedStory]:
-        """Сюжеты, новые сверху (по времени первого поста), с отметками прочитанного для пользователя.
-
-        before — курсор для «Показать ещё». read_all_before — момент «Отметить всё прочитанным».
-        """
+    @staticmethod
+    def _cards(user_id: int, read_all_before: datetime | None) -> tuple[Select[Any], ColumnElement[str]]:
+        """Запрос карточек сюжетов с отметками прочитанного для пользователя и выражение read_state."""
         # Сравниваем с моментом, когда сюжет изменился у нас, а не со временем публикации:
         # пост, опубликованный до прочтения, но скачанный после, — тоже обновление
         read_at = StoryRead.read_at
@@ -220,7 +242,28 @@ class StoryRepository:
             )
             .outerjoin(Source, Source.id == Story.first_source_id)
             .outerjoin(StoryRead, (StoryRead.story_id == Story.id) & (StoryRead.user_id == user_id))
-            .where(Story.sources_count >= min_sources)
+        )
+        return query, read_state
+
+    async def feed(
+        self,
+        limit: int,
+        *,
+        user_id: int,
+        read_all_before: datetime | None = None,
+        min_sources: int = 1,
+        before: tuple[datetime, int] | None = None,
+        unread_only: bool = False,
+        topic_ids: Sequence[int] | None = None,
+    ) -> list[FeedStory]:
+        """Сюжеты, новые сверху (по времени первого поста), с отметками прочитанного для пользователя.
+
+        before — курсор для «Показать ещё». read_all_before — момент «Отметить всё прочитанным».
+        topic_ids — персональная лента: только сюжеты, которые подошли к этим темам.
+        """
+        query, read_state = self._cards(user_id, read_all_before)
+        query = (
+            query.where(Story.sources_count >= min_sources)
             .order_by(Story.started_at.desc(), Story.id.desc())
             .limit(limit)
         )
@@ -229,7 +272,44 @@ class StoryRepository:
             query = query.where(tuple_(Story.started_at, Story.id) < tuple_(*before))
         if unread_only:
             query = query.where(read_state != "read")
+        if topic_ids is not None:
+            matched = select(TopicMatch.story_id).where(
+                TopicMatch.story_id == Story.id, TopicMatch.topic_id.in_(topic_ids)
+            )
+            query = query.where(matched.exists())
         return [FeedStory(**row._mapping) for row in await self.session.execute(query)]
+
+    async def cards(
+        self, story_ids: Sequence[int], *, user_id: int, read_all_before: datetime | None = None
+    ) -> list[FeedStory]:
+        """Карточки сюжетов в порядке story_ids: для поиска и подсказок."""
+        if not story_ids:
+            return []
+        query, _ = self._cards(user_id, read_all_before)
+        rows = {row.id: FeedStory(**row._mapping) for row in await self.session.execute(
+            query.where(Story.id.in_(story_ids))
+        )}
+        return [rows[story_id] for story_id in story_ids if story_id in rows]
+
+    async def search_words(self, query: str, since: datetime | None, limit: int) -> list[int]:
+        """Сюжеты, в постах которых есть слова запроса. Свежие сверху.
+
+        Запрос в синтаксисе websearch: слова через пробел — все, «or» — любое, -слово — без него,
+        "фраза в кавычках" — подряд.
+        """
+        result = await self.session.execute(_SEARCH_WORDS_SQL, {"query": query, "since": since, "limit": limit})
+        return list(result.scalars())
+
+    async def search_meaning(
+        self, embedding: list[float], since: datetime | None, limit: int, min_similarity: float,
+        exclude: Sequence[int] = (),
+    ) -> list[int]:
+        """Сюжеты, близкие к запросу по смыслу. Самые похожие сверху. Сюжеты без текста не участвуют."""
+        result = await self.session.execute(_SEARCH_MEANING_SQL, {
+            "embedding": embedding, "since": since, "limit": limit,
+            "min_similarity": min_similarity, "exclude": list(exclude),
+        })
+        return list(result.scalars())
 
     async def mark_read(self, user_id: int, story_id: int) -> None:
         stmt = insert(StoryRead).values(user_id=user_id, story_id=story_id, read_at=func.clock_timestamp())

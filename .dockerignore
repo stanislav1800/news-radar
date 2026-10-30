@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+compose.override.yaml
+**/__pycache__
+.mypy_cache
+.pytest_cache
+.ruff_cache
+tests
+eval
+scripts
+docs

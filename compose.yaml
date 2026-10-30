@@ -1,13 +1,69 @@
+# Сито целиком: база, миграции, веб и worker.
+#   docker compose up -d          — всё
+#   docker compose up -d db       — только база (для разработки, веб и worker запускаются из исходников)
+# Настройки — в .env (пример: .env.example), обязателен SITO_SECRET_KEY.
+
+x-app: &app
+  build: .
+  image: sito:latest
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    # Внутри compose база доступна по имени сервиса; DATABASE_URL из .env (для разработки) здесь не нужен
+    DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-pass}@db:5432/sito
+  volumes:
+    - models:/home/sito/.cache/huggingface  # модель эмбеддингов (около 1 ГБ) скачивается один раз
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
 services:
   db:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: pass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pass}
       POSTGRES_DB: sito
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sito"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Применяет миграции и завершается; веб и worker стартуют после него
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    volumes: []
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    command: ["sito", "web"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-pass}@db:5432/sito
+      # Порт открыт только на этой машине (см. ports), поэтому доверять X-Forwarded-* можно любому
+      # отправителю — это обратный прокси на хосте. Открываете порт наружу — укажите адрес прокси.
+      FORWARDED_ALLOW_IPS: "*"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "sito.worker"]
+    stop_grace_period: 30s  # дать дописать текущую пачку
 
 volumes:
   pgdata:
+  models:

@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Any, ClassVar
 
 from sqlalchemy import BigInteger, DateTime, Enum, Identity, MetaData, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -14,7 +15,7 @@ NAMING_CONVENTION = {
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
-    type_annotation_map = {str: Text, datetime: DateTime(timezone=True)}
+    type_annotation_map: ClassVar[dict[Any, Any]] = {str: Text, datetime: DateTime(timezone=True)}
     
 
 class IdMixin:

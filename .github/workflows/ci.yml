@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: sito
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sito"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      # Тесты создают рядом отдельную базу sito_test и пересоздают её на каждый прогон
+      DATABASE_URL: postgresql+asyncpg://postgres:pass@localhost:5432/sito
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.24"
+          enable-cache: true
+      - name: Зависимости
+        run: uv sync --frozen
+      - name: ruff
+        run: uv run ruff check src tests
+      - name: mypy
+        run: uv run mypy src tests
+      - name: Тесты
+        run: uv run pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Образ собирается
+        run: docker build -t sito:ci .

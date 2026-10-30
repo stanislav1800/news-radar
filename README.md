@@ -18,36 +18,41 @@ RSS-ленты ──► сбор ──► очистка ──► векто�
 
 Регистрации нет: пользователей заводит администратор. Без входа видна только страница логина.
 
-## Быстрый старт
+## Быстрый старт (Docker)
 
-Нужны Python 3.13, [uv](https://docs.astral.sh/uv/) и Docker.
+Нужен Docker с Compose.
 
 ```bash
-# 1. База данных (PostgreSQL с pgvector)
-docker compose up -d db
-
-# 2. Настройки
+# 1. Настройки: обязателен ключ SITO_SECRET_KEY
 cp .env.example .env
-#    в .env: DATABASE_URL (порт — как в compose.yaml) и SITO_SECRET_KEY:
-python -c "import secrets; print(secrets.token_urlsafe(32))"
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # вставить в .env как SITO_SECRET_KEY=...
+#    и задайте свой пароль базы: POSTGRES_PASSWORD=... (в .env)
 
-# 3. Зависимости и схема базы
-uv sync
-uv run alembic upgrade head
+# 2. Запуск: база, миграции, веб и worker
+docker compose up -d
 
-# 4. Администратор (пароль спросит в консоли)
-uv run sito user create admin --admin
-
-# 5. Первые ленты (делает пробный сбор перед сохранением)
-uv run sito source add "ТАСС" https://tass.ru/rss/v2.xml
-uv run sito source add "Интерфакс" https://www.interfax.ru/rss
-
-# 6. Запуск: worker и веб в двух терминалах
-uv run python -m sito.worker
-uv run sito web
+# 3. Администратор (пароль спросит в консоли) и первые ленты
+docker compose exec web sito user create admin --admin
+docker compose exec web sito source add "ТАСС" https://tass.ru/rss/v2.xml
 ```
 
-Откройте http://127.0.0.1:8000. При первом запуске worker скачает модель эмбеддингов (около 1,1 ГБ, в `~/.cache/huggingface`); дальше она грузится из кэша за секунды. Веб загружает ту же модель для поиска по смыслу (около 1 ГБ памяти); если памяти мало, `SEARCH_BY_MEANING=false` оставит поиск только по словам.
+Откройте http://127.0.0.1:8000. Веб слушает только эту машину; открыть его в интернет — через обратный прокси, см. ниже. При первом запуске worker и веб скачают модель эмбеддингов (около 1,1 ГБ, том `models`), это несколько минут.
+
+Обновление: `git pull && docker compose up -d --build` — миграции применятся сами (сервис `migrate`).
+
+## Запуск из исходников (разработка)
+
+Нужны Python 3.13, [uv](https://docs.astral.sh/uv/) и Docker для базы.
+
+```bash
+docker compose up -d db          # только база
+cp .env.example .env             # DATABASE_URL (порт базы — см. compose) и SITO_SECRET_KEY
+uv sync
+uv run alembic upgrade head
+uv run sito user create admin --admin
+uv run python -m sito.worker     # в одном терминале
+uv run sito web                  # в другом
+```
 
 ## Команды
 

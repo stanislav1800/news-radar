@@ -69,3 +69,11 @@ torch = [{ index = "pytorch-cpu" }]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
+
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Библиотеки без аннотаций типов
+module = ["feedparser", "feedparser.*", "asyncpg", "asyncpg.*"]
+ignore_missing_imports = true

@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     cluster_same_source_min_similarity: float = 0.94
     cluster_max_gap_hours: float = 6
     cluster_min_story_similarity: float = 0.92  # и с центром сюжета: не даёт крупным сюжетам расползаться
+    # Пост, который ссылается на статью другого издания (или на который она ссылается), идёт в её сюжет,
+    # если между ними не больше стольких часов. Ссылки на своё же издание — «читайте также», не склеиваем
+    cluster_link_max_gap_hours: float = 24
     cluster_batch_size: int = 100
     cluster_tick_seconds: float = 5
 

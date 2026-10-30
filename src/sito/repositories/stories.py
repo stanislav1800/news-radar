@@ -101,6 +101,23 @@ _CANDIDATES_SQL = text(f"""
 # Сводка сюжета по его постам: счётчики, первый пост, средний вектор и пост для заголовка.
 # Заголовок — самый свежий пост среди «типичных» за последние часы: свежий, но про суть сюжета.
 # Просто самый свежий пост бывает боковым (реакция, соседний регион) и подменяет смысл сюжета.
+# Посты из сюжетов, связанные с новым постом ссылкой: он ссылается на них или они на него.
+# Только другие издания (своё издание ссылается на «читайте также») и только близко по времени.
+_LINK_CANDIDATES_SQL = text(f"""
+    SELECT post.id AS post_id, post.story_id, post.source_id,
+           1 - (post.embedding <=> :embedding) AS similarity,
+           NULL::float AS story_similarity,
+           {EVENT_AT_SQL} AS event_at
+    FROM post
+    WHERE post.story_id IS NOT NULL
+      AND post.embedding IS NOT NULL
+      AND post.id <> :post_id
+      AND post.source_id <> :source_id
+      AND (post.url_normalized = ANY(CAST(:links AS text[])) OR post.links @> ARRAY[CAST(:url AS text)])
+      AND {EVENT_AT_SQL} BETWEEN :since AND :until
+    ORDER BY post.embedding <=> :embedding
+""").bindparams(bindparam("embedding", type_=Vector(EMBEDDING_DIM)))
+
 _REFRESH_SQL = text(f"""
     WITH members AS (
         SELECT post.id, post.source_id, post.title, post.text, post.embedding, {EVENT_AT_SQL} AS event_at
@@ -202,6 +219,18 @@ class StoryRepository:
             "since": event_at - max_gap,
             "until": event_at + max_gap,
             "limit": limit,
+        })
+        return [MatchCandidate(**row._mapping) for row in result]
+
+    async def link_candidates(
+        self, post_id: int, source_id: int, url: str, links: Sequence[str],
+        embedding: list[float], event_at: datetime, max_gap: timedelta,
+    ) -> list[MatchCandidate]:
+        """Посты из сюжетов другого издания, связанные с постом ссылкой в ту или другую сторону."""
+        result = await self.session.execute(_LINK_CANDIDATES_SQL, {
+            "embedding": embedding, "post_id": post_id, "source_id": source_id,
+            "url": url, "links": list(links),
+            "since": event_at - max_gap, "until": event_at + max_gap,
         })
         return [MatchCandidate(**row._mapping) for row in result]
 

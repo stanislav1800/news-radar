@@ -35,6 +35,10 @@ class ClusteringRules:
     # Пост должен быть похож и на центр всего сюжета, а не только на ближайший пост в нём.
     # Иначе крупный сюжет «расползается» цепочкой: атака на Москву → итоги по России → Курская область.
     min_story_similarity: float = 0.92
+    # Ссылка на статью другого издания — то же событие, если они не дальше этого по времени
+    link_max_gap: timedelta = timedelta(hours=24)
+    # Страховка для ссылок: совсем непохожий пост не клеим даже по ссылке (в замере все пары ≥ 0.85)
+    link_min_similarity: float = 0.80
 
     @classmethod
     def from_settings(cls, config: Settings) -> "ClusteringRules":
@@ -43,6 +47,7 @@ class ClusteringRules:
             same_source_min_similarity=config.cluster_same_source_min_similarity,
             max_gap=timedelta(hours=config.cluster_max_gap_hours),
             min_story_similarity=config.cluster_min_story_similarity,
+            link_max_gap=timedelta(hours=config.cluster_link_max_gap_hours),
         )
 
     def accepts(self, post: Post, candidate: MatchCandidate) -> bool:
@@ -58,13 +63,17 @@ class ClusterBatchResult:
     attached: int = 0     # приклеены к существующему сюжету
     new_stories: int = 0
     errors: int = 0
+    by_link: int = 0      # из приклеенных — по ссылке
 
     @property
     def total(self) -> int:
         return self.attached + self.new_stories + self.errors
 
     def __str__(self) -> str:
-        return f"в сюжеты={self.attached} новых сюжетов={self.new_stories} ошибок={self.errors}"
+        return (
+            f"в сюжеты={self.attached} (по ссылке={self.by_link}) новых сюжетов={self.new_stories} "
+            f"ошибок={self.errors}"
+        )
 
 
 class ClusteringService:
@@ -79,7 +88,7 @@ class ClusteringService:
         self.batch_size = batch_size
 
     async def process_batch(self) -> ClusterBatchResult:
-        attached = new_stories = errors = 0
+        attached = new_stories = errors = by_link = 0
         async with self.session_factory() as session, session.begin():
             # Другой процесс сейчас склеивает — пропускаем круг, а не склеиваем параллельно
             if not await session.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": CLUSTERING_LOCK_KEY}):
@@ -92,7 +101,7 @@ class ClusteringService:
                 try:
                     # SAVEPOINT: ошибка одного поста не откатывает уже склеенные посты пачки
                     async with session.begin_nested():
-                        is_new = await self._cluster(stories, post)
+                        how = await self._cluster(stories, post)
                 except Exception as exc:
                     errors += 1
                     logger.exception("post=%s: ошибка склейки", post_id, extra={"post_id": post_id})
@@ -101,36 +110,45 @@ class ClusteringService:
                     await session.refresh(post)
                     record_post_error(post, exc)
                 else:
-                    new_stories += is_new
-                    attached += not is_new
+                    new_stories += how == "new"
+                    attached += how != "new"
+                    by_link += how == "link"
 
-        result = ClusterBatchResult(attached, new_stories, errors)
+        result = ClusterBatchResult(attached, new_stories, errors, by_link)
         if result.total:
             logger.info("склейка: %s", result, extra=asdict(result))
         return result
 
-    async def _cluster(self, stories: StoryRepository, post: Post) -> bool:
-        """Привязать пост к сюжету. Возвращает True, если сюжет новый."""
+    async def _cluster(self, stories: StoryRepository, post: Post) -> str:
+        """Привязать пост к сюжету. Возвращает, как: link, similar, new или edited."""
         if post.embedding is None:
             raise ValueError("у поста нет вектора")
         event_at = min(post.published_at or post.fetched_at, post.fetched_at)
 
-        is_new = False
+        how = "edited"
         if post.story_id is None:
-            candidates = await stories.match_candidates(post.id, post.embedding, event_at, self.rules.max_gap)
-            match = next((c for c in candidates if self.rules.accepts(post, c)), None)
-            if match:
-                post.story_id = match.story_id
+            # Ссылка между изданиями — самый надёжный признак: проверяем её первой
+            linked = await stories.link_candidates(
+                post.id, post.source_id, post.url_normalized, post.links, post.embedding,
+                event_at, self.rules.link_max_gap,
+            )
+            link = next((c for c in linked if c.similarity >= self.rules.link_min_similarity), None)
+            if link:
+                post.story_id, how = link.story_id, "link"
             else:
-                post.story_id = (await stories.create(post.title, event_at)).id
-                is_new = True
+                candidates = await stories.match_candidates(post.id, post.embedding, event_at, self.rules.max_gap)
+                match = next((c for c in candidates if self.rules.accepts(post, c)), None)
+                if match:
+                    post.story_id, how = match.story_id, "similar"
+                else:
+                    post.story_id, how = (await stories.create(post.title, event_at)).id, "new"
         # Если story_id уже есть, пост отредактировали: он остаётся в своём сюжете,
         # а сводку сюжета (заголовок, счётчики) нужно пересчитать.
 
         await stories.session.flush()
         await stories.refresh(post.story_id)
         mark_post_done(post, PostStatus.CLUSTERED)
-        return is_new
+        return how
 
     async def reset(self) -> int:
         """Снять со всех постов привязку к сюжетам и удалить сюжеты, чтобы склеить заново.

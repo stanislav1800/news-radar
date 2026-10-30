@@ -47,6 +47,8 @@ class Post(IdMixin, TimestampMixin, Base):
         # Время новости (см. EVENT_AT): склейка ищет соседей в окне по нему
         Index("ix_post_event_at", text("least(published_at, fetched_at)")),
         Index("ix_post_fts", text(POST_FTS_SQL), postgresql_using="gin"),
+        # Склейка по ссылкам: какие посты ссылаются на эту статью (links @> ARRAY[url])
+        Index("ix_post_links", "links", postgresql_using="gin"),
     )
     
     source_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("source.id", ondelete="CASCADE"))

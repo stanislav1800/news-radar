@@ -30,13 +30,14 @@ class Posts:
 
     async def add(
         self, source_id: int, embedding: list[float], at: datetime = T0, title: str | None = None,
-        text: str | None = None, story_id: int | None = None,
+        text: str | None = None, story_id: int | None = None, links: list[str] | None = None,
     ) -> int:
         self.n += 1
         async with self.factory() as session, session.begin():
             return (await session.execute(insert(Post).values(
                 source_id=source_id, external_id=f"id-{self.n}", url=f"https://news.example/{self.n}",
                 url_normalized=f"https://news.example/{self.n}", title=title or f"Пост {self.n}", text=text,
+                links=links or [],
                 content_hash=f"h{self.n}", published_at=at, embedding=embedding,
                 status=PostStatus.EMBEDDED, story_id=story_id,
             ).returning(Post.id))).scalar_one()
@@ -279,3 +280,56 @@ async def test_reset_and_recluster(
 
     assert (result.new_stories, result.attached) == (2, 1)
     assert await posts.story_of(first) == await posts.story_of(second)
+
+
+def url_of(post_id_n: int) -> str:
+    return f"https://news.example/{post_id_n}"
+
+
+async def test_post_linking_to_other_outlet_joins_its_story(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    """Канал пишет своими словами и ссылается на статью: сходство ниже порога, но это то же событие."""
+    tass, channel = await make_source(name="ТАСС"), await make_source(name="Канал")
+    posts = Posts(session_factory)
+    article = await posts.add(tass, vec(), at=T0)
+    await ClusteringService(session_factory).process_batch()
+
+    retelling = await posts.add(channel, vec(0.85), at=T0 + timedelta(hours=2), links=[url_of(1)])
+    result = await ClusteringService(session_factory).process_batch()
+
+    assert (result.attached, result.by_link) == (1, 1)
+    assert await posts.story_of(retelling) == await posts.story_of(article)
+
+
+async def test_article_joins_story_of_post_that_linked_it_earlier(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    """Пост канала пришёл раньше статьи, на которую ссылается: статья идёт в его сюжет."""
+    tass, channel = await make_source(name="ТАСС"), await make_source(name="Канал")
+    posts = Posts(session_factory)
+    retelling = await posts.add(channel, vec(0.85), at=T0, links=[url_of(2)])
+    await ClusteringService(session_factory).process_batch()
+
+    article = await posts.add(tass, vec(), at=T0 + timedelta(minutes=10))
+    await ClusteringService(session_factory).process_batch()
+
+    assert await posts.story_of(article) == await posts.story_of(retelling)
+
+
+async def test_links_within_one_outlet_and_old_links_do_not_join(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    """«Читайте также» на своё издание и ссылка на позавчерашнюю статью — другие события."""
+    outlet, other = await make_source(name="iXBT"), await make_source(name="РГ")
+    posts = Posts(session_factory)
+    await posts.add(outlet, vec(), at=T0)
+    await posts.add(other, vec(), at=T0, title="Старая статья")
+    await ClusteringService(session_factory).process_batch()
+
+    see_also = await posts.add(outlet, vec(0.85), at=T0 + timedelta(hours=1), links=[url_of(1)])
+    late = await posts.add(outlet, vec(0.85, axis=2), at=T0 + timedelta(hours=30), links=[url_of(2)])
+    result = await ClusteringService(session_factory).process_batch()
+
+    assert (result.new_stories, result.by_link) == (2, 0)
+    assert len({await posts.story_of(see_also), await posts.story_of(late)}) == 2

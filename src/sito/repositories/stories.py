@@ -314,6 +314,7 @@ class StoryRepository:
         before: tuple[datetime, int] | None = None,
         unread_only: bool = False,
         topic_ids: Sequence[int] | None = None,
+        after: datetime | None = None,
     ) -> list[FeedStory]:
         """Сюжеты, новые сверху (по времени первого поста), с отметками прочитанного для пользователя.
 
@@ -329,6 +330,8 @@ class StoryRepository:
         if before is not None:
             # Курсор по (время, id), а не OFFSET: новые сюжеты наверху не сдвигают уже показанные
             query = query.where(tuple_(Story.started_at, Story.id) < tuple_(*before))
+        if after is not None:
+            query = query.where(Story.started_at > after)
         if unread_only:
             query = query.where(read_state != "read")
         if topic_ids is not None:
@@ -337,20 +340,6 @@ class StoryRepository:
             )
             query = query.where(matched.exists())
         return [FeedStory(**row._mapping) for row in await self.session.execute(query)]
-
-    async def count_newer(
-        self, since: datetime, *, min_sources: int = 1, topic_ids: Sequence[int] | None = None,
-    ) -> int:
-        """Сколько сюжетов появилось после since: для плашки «Ещё N новых»."""
-        query = select(func.count()).select_from(Story).where(
-            Story.started_at > since, Story.sources_count >= min_sources
-        )
-        if topic_ids is not None:
-            query = query.where(
-                select(TopicMatch.story_id)
-                .where(TopicMatch.story_id == Story.id, TopicMatch.topic_id.in_(topic_ids)).exists()
-            )
-        return await self.session.scalar(query) or 0
 
     async def cards(
         self, story_ids: Sequence[int], *, user_id: int, read_all_before: datetime | None = None

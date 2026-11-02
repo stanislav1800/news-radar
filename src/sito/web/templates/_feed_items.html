@@ -1,7 +1,9 @@
 {# Карточки ленты. Отдельный файл: его же отдаёт /feed/items для «Показать ещё» #}
 {% import "_story_card.html" as cards with context %}
 {% for s in stories %}
+{% if loop.first and since and days_before.get(s.id) != "Сегодня" %}<div id="fresh"></div>{% endif %}
 {% if s.id in days_before %}<h2 class="day">{{ days_before[s.id] }}</h2>{% endif %}
+{% if loop.first and since and days_before.get(s.id) == "Сегодня" %}<div id="fresh"></div>{% endif %}
 {% if s.id == divider_before %}
 <div class="divider" role="separator">Вы были здесь {{ user.previous_visit_at | ago(user.timezone, now) }}</div>
 {% endif %}

@@ -181,3 +181,21 @@ async def test_titles_are_escaped(
 
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
+
+
+async def test_new_stories_arrive_without_reload(
+    logged_in: httpx.AsyncClient, session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    """Лента раз в минуту спрашивает новые сюжеты и получает сами карточки, а не кнопку «показать»."""
+    stories = Stories(session_factory, make_source)
+    await stories.add([("ТАСС", "Старый сюжет", timedelta(hours=2))])
+    page = (await logged_in.get("/?view=all")).text
+    since = re.search(r'since=(\d+)', page)
+    assert since and 'id="fresh"' in page
+    assert (await logged_in.get(f"/feed/newer?view=all&since={since.group(1)}")).text == ""
+
+    await stories.add([("РБК", "Свежий сюжет", timedelta(minutes=1))])
+    response = (await logged_in.get(f"/feed/newer?view=all&since={since.group(1)}")).text
+
+    assert titles(response) == ["Свежий сюжет"]
+    assert 'hx-swap-oob="true"' in response  # опросчик продолжает с новой отметки

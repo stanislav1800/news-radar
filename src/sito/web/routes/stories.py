@@ -200,21 +200,35 @@ async def feed_newer(
     request: Request, db: DbSession, user: CurrentUser,
     since: str, view: str | None = None, topic: int | None = None,
 ) -> HTMLResponse:
-    """Плашка «Ещё N новых»: лента раз в минуту спрашивает, не появилось ли новое сверху."""
+    """Новые сюжеты для начала ленты: лента раз в минуту спрашивает их и вставляет сама.
+
+    Вместе с карточками приходит обновлённый «опросчик» (hx-swap-oob) с новой отметкой since.
+    """
     config: Settings = request.app.state.settings
     moment = _parse_cursor(f"{since}-0")
     topics = await TopicRepository(db).list_for_user(user.id)
     feed_view = FeedView.parse(view, topic, topics)
-    count = 0
-    if moment is not None:
-        topic_ids = (
-            [t.id for t in topics if not t.paused] if feed_view.kind == "my"
-            else [feed_view.topic_id] if feed_view.topic_id is not None else None
-        )
-        count = await StoryRepository(db).count_newer(
-            moment[0], min_sources=config.top_min_sources if feed_view.kind == "top" else 1, topic_ids=topic_ids,
-        )
-    return templates.TemplateResponse(request, "_newer.html", {"count": count, "url": feed_view.url()})
+    if moment is None:
+        return HTMLResponse("")
+    topic_ids = (
+        [t.id for t in topics if not t.paused] if feed_view.kind == "my"
+        else [feed_view.topic_id] if feed_view.topic_id is not None else None
+    )
+    stories = await StoryRepository(db).feed(
+        config.feed_page_size, user_id=user.id, read_all_before=user.read_all_before,
+        min_sources=config.top_min_sources if feed_view.kind == "top" else 1,
+        topic_ids=topic_ids, after=moment[0],
+    )
+    if not stories:
+        return HTMLResponse("")
+    reasons = (
+        await TopicRepository(db).reasons(user.id, [s.id for s in stories], topic_ids=topic_ids)
+        if topic_ids else {}
+    )
+    return templates.TemplateResponse(request, "_newer.html", {
+        "user": user, "stories": stories, "reasons": reasons, "view": feed_view,
+        "since": int(stories[0].started_at.timestamp() * 1_000_000), "now": datetime.now(UTC),
+    })
 
 
 @router.get("/my")

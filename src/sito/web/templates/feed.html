@@ -14,7 +14,7 @@
 {% endif %}
 
 {% if stories %}
-{% if since %}<div id="newer" hx-get="{{ view.url('/feed/newer', since=since) }}" hx-trigger="every 60s" hx-swap="innerHTML"></div>{% endif %}
+{% if since %}{% include "_newer_poller.html" %}{% endif %}
 <div class="feed">
   {% include "_feed_items.html" %}
 </div>

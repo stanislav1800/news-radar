@@ -199,3 +199,13 @@ async def test_new_stories_arrive_without_reload(
 
     assert titles(response) == ["Свежий сюжет"]
     assert 'hx-swap-oob="true"' in response  # опросчик продолжает с новой отметки
+
+
+async def test_feed_remembers_last_tab_and_story_links_back(
+    logged_in: httpx.AsyncClient, session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    story = await Stories(session_factory, make_source).add([("ТАСС", "Сюжет", timedelta(hours=1))])
+    await logged_in.get("/?view=all")
+
+    assert 'class="tab active" href="/?view=all"' in (await logged_in.get("/")).text  # главная — та же вкладка
+    assert 'href="/?view=all#story-' + str(story) + '" data-back' in (await logged_in.get(f"/stories/{story}")).text

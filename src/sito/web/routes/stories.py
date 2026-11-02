@@ -6,7 +6,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -22,6 +22,9 @@ from sito.web.formatting import day_label
 from sito.web.templating import templates
 
 router = APIRouter()
+
+# Последняя открытая вкладка ленты (в сессии): на неё ведут главная и «← Лента» со страницы сюжета
+LAST_FEED_KEY = "feed"
 
 SUGGESTIONS_DAYS = 7
 
@@ -177,7 +180,14 @@ async def feed(
         ReadingService.register_visit(user)
         await db.commit()
     topics = await TopicRepository(db).list_for_user(user.id)
+    if view is None and topic is None:
+        # Просто «/» — открыть ту вкладку, где пользователь был в прошлый раз
+        last = parse_qs(str(request.session.get(LAST_FEED_KEY, "")))
+        view = last["view"][0] if last.get("view") else None
+        topic_raw = (last.get("topic") or [""])[0]
+        topic = int(topic_raw) if topic_raw.isdigit() else None
     feed_view = FeedView.parse(view, topic, topics)
+    request.session[LAST_FEED_KEY] = feed_view.query()
     context = await _feed_context(request, db, user, feed_view, topics, cursor)
     return templates.TemplateResponse(request, "feed.html", {
         "user": user, "topics": topics, **await _tabs(db, user, topics), **context,
@@ -258,7 +268,9 @@ async def story_page(request: Request, db: DbSession, user: CurrentUser, story_i
     ]
     await ReadingService(db).mark_read(user, story_id)
     await db.commit()
+    # Назад — на ту вкладку, откуда пришли, к карточке этого сюжета
+    back_url = f"/?{request.session.get(LAST_FEED_KEY, '')}#story-{story_id}"
     return templates.TemplateResponse(request, "story.html", {
         "user": user, "story": story, "timeline": timeline, "similar": similar,
-        "reasons": reasons, "next": f"/stories/{story_id}", "now": datetime.now(UTC),
+        "reasons": reasons, "next": f"/stories/{story_id}", "back_url": back_url, "now": datetime.now(UTC),
     })

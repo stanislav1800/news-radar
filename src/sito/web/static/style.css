@@ -373,3 +373,6 @@ h2.day:first-child { margin-top: 0; }
 #fresh:empty { display: none; }
 .fresh-item .story-card { animation: fresh 3s ease-out; }
 @keyframes fresh { from { box-shadow: 0 0 0 2px var(--accent); } to { box-shadow: 0 0 0 0 transparent; } }
+
+/* Переход к карточке (#story-…) не прячет её под закреплённой шапкой и вкладками */
+.story-card { scroll-margin-top: calc(var(--topbar-h) + 4rem); }

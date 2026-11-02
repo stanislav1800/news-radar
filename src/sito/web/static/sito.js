@@ -29,5 +29,17 @@
     revealActive(tabs);
   }
 
+  // «← Лента» на странице сюжета: если пришли из ленты Сито, вернуться браузерным «назад» —
+  // браузер восстановит ту же страницу и место прокрутки. Иначе — обычная ссылка на последнюю вкладку.
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("a[data-back]");
+    if (!link) return;
+    const from = document.referrer ? new URL(document.referrer) : null;
+    if (from && from.origin === location.origin && from.pathname === "/" && history.length > 1) {
+      event.preventDefault();
+      history.back();
+    }
+  });
+
   document.addEventListener("DOMContentLoaded", setup);
 })();

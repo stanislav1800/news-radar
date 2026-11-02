@@ -3,11 +3,14 @@
 import logging
 from dataclasses import asdict, dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import Post, PostStatus
+from sito.models.post import LEMMA_TEXT_MAX_CHARS
 from sito.repositories.posts import PostRepository
 from sito.services.pipeline import MAX_ATTEMPTS, mark_post_done, record_post_error
+from sito.utils.lemmas import lemma_text
 from sito.utils.text import clean_html, clean_line, title_from_text
 
 __all__ = ["MAX_ATTEMPTS", "CleanBatchResult", "CleaningService"]
@@ -27,6 +30,17 @@ class CleanBatchResult:
 
     def __str__(self) -> str:
         return f"очищено={self.cleaned} пропущено={self.skipped} ошибок={self.errors}"
+
+
+def set_lemmas(post: Post) -> None:
+    """Слова поста в начальной форме для поиска: заголовок и начало текста."""
+    post.title_lemmas = lemma_text(post.title)
+    post.text_lemmas = lemma_text((post.text or "")[:LEMMA_TEXT_MAX_CHARS])
+
+
+@dataclass(frozen=True, slots=True)
+class LemmaBatchResult:
+    total: int = 0
 
 
 class CleaningService:
@@ -57,12 +71,27 @@ class CleaningService:
             logger.info("очистка: %s", result, extra=asdict(result))
         return result
 
+    async def backfill_lemmas(self) -> LemmaBatchResult:
+        """Леммы для постов, очищенных до появления поиска по леммам. Пустой результат — всё готово."""
+        async with self.session_factory() as session, session.begin():
+            posts = list(await session.scalars(
+                select(Post)
+                .where(Post.title_lemmas.is_(None), Post.status != PostStatus.NEW)
+                .order_by(Post.id.desc())  # свежие нужнее в поиске
+                .limit(self.batch_size * 5)
+                .with_for_update(skip_locked=True)
+            ))
+            for post in posts:
+                set_lemmas(post)
+        return LemmaBatchResult(len(posts))
+
     @staticmethod
     def _clean(post: Post) -> PostStatus:
         cleaned = clean_html(post.raw_text, own_url=post.url_normalized)
         post.title = clean_line(post.title) or title_from_text(cleaned.text)  # у Telegram заголовков нет
         post.text = cleaned.text or None
         post.links = cleaned.links
+        set_lemmas(post)
 
         # Короткий пост без текста — не мусор: для склейки хватит заголовка
         junk = cleaned.is_ad or not (post.title or post.text)

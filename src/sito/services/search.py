@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sito.models import User
 from sito.repositories.stories import FeedStory, StoryRepository
 from sito.services.embedding import Embedder
+from sito.utils.lemmas import parse_query
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,20 @@ def meaning_text(query: str) -> str:
     return " ".join(w for w in words if w) or query
 
 
+MEANING_LIMIT = 10  # «по смыслу» — продолжение списка, а не его основа: модель плохо понимает короткие запросы
+
+
+@dataclass(frozen=True, slots=True)
+class SearchHit:
+    story: FeedStory
+    by_meaning: bool  # найден по смыслу, слов запроса в нём нет
+
+
 @dataclass(frozen=True, slots=True)
 class SearchResults:
     query: str
     period: int
-    by_words: list[FeedStory] = field(default_factory=list)
-    by_meaning: list[FeedStory] = field(default_factory=list)
+    hits: list[SearchHit] = field(default_factory=list)
     meaning_unavailable: bool = False  # модель не загрузилась или выключена: только по словам
 
 
@@ -52,22 +61,27 @@ class SearchService:
         return vector
 
     async def search(self, user: User, query: str, period: int) -> SearchResults:
+        """Один список: сначала сюжеты со словами запроса (в любой форме, самые подходящие сверху),
+        затем близкие по смыслу без этих слов. Пользователь пишет обычным текстом."""
         query = " ".join(query.split())
         period = period if period in PERIODS else DEFAULT_PERIOD
         if not query:
             return SearchResults(query, period)
         since = datetime.now(UTC) - timedelta(days=period) if period else None
         stories = StoryRepository(self.session)
+        parsed = parse_query(query)
 
-        word_ids = await stories.search_words(query, since, self.limit)
+        word_ids = await stories.search_words(parsed.words, parsed.excluded, since, self.limit)
         vector = await self.embed_query(query)
         meaning_ids = (
-            await stories.search_meaning(vector, since, self.limit, MEANING_MIN_SIMILARITY, exclude=word_ids)
+            await stories.search_meaning(vector, since, MEANING_LIMIT, MEANING_MIN_SIMILARITY, exclude=word_ids)
             if vector is not None else []
         )
-        return SearchResults(
-            query, period,
-            by_words=await stories.cards(word_ids, user_id=user.id, read_all_before=user.read_all_before),
-            by_meaning=await stories.cards(meaning_ids, user_id=user.id, read_all_before=user.read_all_before),
-            meaning_unavailable=vector is None,
-        )
+        cards = {
+            card.id: card for card in await stories.cards(
+                [*word_ids, *meaning_ids], user_id=user.id, read_all_before=user.read_all_before
+            )
+        }
+        hits = [SearchHit(cards[i], False) for i in word_ids if i in cards]
+        hits += [SearchHit(cards[i], True) for i in meaning_ids if i in cards]
+        return SearchResults(query, period, hits, meaning_unavailable=vector is None)

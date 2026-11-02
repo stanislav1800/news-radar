@@ -46,26 +46,61 @@ async def test_pages_need_login(client: httpx.AsyncClient) -> None:
         assert (await client.get(path)).status_code == 303, path
 
 
-async def test_search_by_words_and_meaning(
+async def test_search_one_list_words_then_meaning(
     logged_in: httpx.AsyncClient, stories: Stories, embedder: FakeEmbedder
 ) -> None:
-    await stories.add([("ТАСС", "Добыча угля в Кузбассе выросла", timedelta(hours=1))], embedding=direction(80))
+    """Обычный текст: сначала сюжеты, где совпало больше слов (в любой форме), ниже — по смыслу."""
+    await stories.add([("РБК", "Министр о добыче", timedelta(hours=2))], embedding=direction(1), text=None)
+    await stories.add([("ТАСС", "Добыча угля в Кузбассе выросла", timedelta(hours=3))], embedding=direction(80))
     await stories.add([("РБК", "Шахтёры перевыполнили план", timedelta(hours=2))], embedding=direction(5))
     await stories.add([("РБК", "Футбол", timedelta(hours=2))], embedding=direction(90, base=3, other=4))
     # Голый заголовок без текста: его вектор похож на любой короткий запрос, по смыслу не ищется
-    await stories.add([("Известия", "Министр о добыче", timedelta(hours=2))], embedding=direction(1), text=None)
-    embedder.vectors["добыча угля"] = direction(0)
+    await stories.add([("Известия", "Губернатор о главном", timedelta(hours=2))], embedding=direction(2), text=None)
+    embedder.vectors["добыча угля в кузбассе"] = direction(0)
 
-    html = (await logged_in.get("/search", params={"q": "  добыча   угля "})).text
-    words, meaning = html.split("Похожие по смыслу")
+    html = (await logged_in.get("/search", params={"q": "  добыча   угля в кузбассе "})).text
 
-    assert titles(words) == ["Добыча угля в Кузбассе выросла"]
-    assert titles(meaning) == ["Шахтёры перевыполнили план"]  # без слов, но близко по смыслу; футбол — нет
-    assert embedder.calls == ["добыча угля"]  # пробелы схлопнуты
+    assert titles(html) == ["Добыча угля в Кузбассе выросла", "Министр о добыче", "Шахтёры перевыполнили план"]
+    assert html.count("по смыслу</span>") == 1  # пометка только у найденного по смыслу
+    assert embedder.calls == ["добыча угля в кузбассе"]  # пробелы схлопнуты
+    assert "Следить за «добыча угля в кузбассе»" in html
+    assert "Как искать точнее" in html  # синтаксис — в свёрнутой подсказке, а не на виду
 
     await logged_in.get("/search", params={"q": 'добыча or "уголь" -нефть'})
     assert embedder.calls[-1] == "добыча уголь"  # синтаксис поиска по словам модели не передаётся
-    assert "Следить за «добыча угля»" in html
+
+
+async def test_rare_words_rank_higher(logged_in: httpx.AsyncClient, stories: Stories) -> None:
+    """«Уголь» встречается реже «Кузбасса»: сюжет про уголь выше сюжета про погоду в Кузбассе."""
+    for n in range(4):
+        await stories.add([("ТАСС", f"Кузбасс: новость {n}", timedelta(hours=5))])
+    await stories.add([("ТАСС", "Погода в Кузбассе", timedelta(hours=1))])
+    await stories.add([("ТАСС", "Цены на уголь", timedelta(hours=2))])
+
+    html = (await logged_in.get("/search", params={"q": "уголь в кузбассе"})).text
+
+    assert titles(html)[0] == "Цены на уголь"
+
+
+async def test_follow_with_examples_from_results(
+    logged_in: httpx.AsyncClient, stories: Stories, session_factory: async_sessionmaker[AsyncSession],
+    embedder: FakeEmbedder,
+) -> None:
+    """👍/👎 в результатах поиска уходят в тему первыми примерами вместе с «Следить»."""
+    from sito.models import TopicExample
+
+    good = await stories.add([("ТАСС", "Шахтёры перевыполнили план", timedelta(hours=2))], embedding=direction(0))
+    bad = await stories.add([("ТАСС", "Угольный утюг: обзор", timedelta(hours=2))], embedding=direction(90))
+    embedder.vectors["уголь"] = direction(0)
+
+    response = await post(logged_in, "/topics", query="уголь", like=str(good), dislike=str(bad))
+
+    assert response.status_code == 303
+    async with session_factory() as session:
+        votes = {(e.story_id, e.liked) for e in await session.scalars(select(TopicExample))}
+    assert votes == {(good, True), (bad, False)}
+    my = (await logged_in.get("/my")).text
+    assert "Шахтёры перевыполнили план" in titles(my) and "Угольный утюг: обзор" not in titles(my)
 
 
 async def test_search_works_without_model(logged_in: httpx.AsyncClient, stories: Stories, app: FastAPI) -> None:

@@ -11,6 +11,7 @@ from sito.config import settings
 from sito.models import Post, PostStatus
 from sito.models.post import EMBEDDING_DIM
 from sito.repositories.stories import StoryRepository
+from sito.utils.lemmas import lemma_text
 from tests.conftest import MakeSource
 
 NOW = datetime.now(UTC)
@@ -45,6 +46,7 @@ class Stories:
                 await session.execute(insert(Post).values(
                     source_id=source_id, external_id=f"id-{self.n}", url=url or f"https://news.example/{self.n}",
                     url_normalized=f"https://news.example/{self.n}", title=title, text=text, content_hash=f"h{self.n}",
+                    title_lemmas=lemma_text(title), text_lemmas=lemma_text(text),
                     published_at=NOW - ago, status=PostStatus.CLUSTERED, story_id=story.id,
                     embedding=embedding or vec(self.n % EMBEDDING_DIM),
                 ))

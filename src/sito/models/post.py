@@ -4,6 +4,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Computed,
     ForeignKey,
     Index,
     Text,
@@ -11,7 +12,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sito.db.base import Base, IdMixin, TimestampMixin, str_enum
@@ -21,16 +22,15 @@ from sito.models.enums import PostStatus
 # Некоторые ленты путают часовой пояс и ставят время из будущего. LEAST в Postgres пропускает NULL.
 EVENT_AT_SQL = "least(post.published_at, post.fetched_at)"
 
-# Слова поста для поиска и тем: заголовок и начало текста, как для вектора. Полный текст статьи
-# дал бы совпадения по случайному упоминанию в конце. Запрос должен повторять это выражение
-# дословно, иначе Postgres не возьмёт индекс ix_post_fts. Конфигурация с ::regconfig — чтобы
-# выражение было неизменяемым (immutable), этого требует индекс.
-POST_FTS_SQL = "to_tsvector('russian'::regconfig, post.title || ' ' || left(coalesce(post.text, ''), 1000))"
-# То же выражение в той записи, в какой его хранит Postgres: иначе alembic autogenerate каждый раз
-# считает индекс изменённым. Для Postgres записи равнозначны, запросы с POST_FTS_SQL берут индекс.
-_POST_FTS_INDEX_SQL = (
-    "to_tsvector('russian'::regconfig, (title || ' '::text) || \"left\"(COALESCE(text, ''::text), 1000))"
+# Поисковый вектор поста: леммы заголовка (вес A) и текста (вес B), см. sito.utils.lemmas.
+# Postgres слова не обрабатывает (конфигурация simple): они уже в начальной форме
+SEARCH_VECTOR_SQL = (
+    "setweight(to_tsvector('simple'::regconfig, coalesce(title_lemmas, '')), 'A') || "
+    "setweight(to_tsvector('simple'::regconfig, coalesce(text_lemmas, '')), 'B')"
 )
+# Сколько текста после заголовка учитывать: как для вектора. Полный текст статьи дал бы совпадения
+# по случайному упоминанию в конце
+LEMMA_TEXT_MAX_CHARS = 1000
 
 # У сюжета есть пост с текстом, а не один заголовок. Вектор голого короткого заголовка (видео,
 # «X о Y») похож на любой короткий запрос — такие сюжеты всплывали бы в поиске по смыслу всегда.
@@ -51,7 +51,7 @@ class Post(IdMixin, TimestampMixin, Base):
         ),
         # Время новости (см. EVENT_AT): склейка ищет соседей в окне по нему
         Index("ix_post_event_at", text("least(published_at, fetched_at)")),
-        Index("ix_post_fts", text(_POST_FTS_INDEX_SQL), postgresql_using="gin"),
+        Index("ix_post_search_vector", "search_vector", postgresql_using="gin"),
         # Склейка по ссылкам: какие посты ссылаются на эту статью (links @> ARRAY[url])
         Index("ix_post_links", "links", postgresql_using="gin"),
     )
@@ -66,6 +66,10 @@ class Post(IdMixin, TimestampMixin, Base):
     raw_text: Mapped[str | None]
     text: Mapped[str | None]       # очищенный, шаг 3
     links: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")  # ссылки из текста, шаг 3
+    # Слова в начальной форме для поиска (шаг 3). NULL у заголовка — пост ещё не обработан
+    title_lemmas: Mapped[str | None]
+    text_lemmas: Mapped[str | None]
+    search_vector: Mapped[str | None] = mapped_column(TSVECTOR, Computed(SEARCH_VECTOR_SQL, persisted=True))
     content_hash: Mapped[str]
 
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))  # шаг 4

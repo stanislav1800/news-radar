@@ -2,6 +2,7 @@
 
 import logging
 import secrets
+from collections.abc import Collection
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -43,8 +44,7 @@ class TopicForm(BaseModel):
     name: Annotated[str, StringConstraints(min_length=1, max_length=NAME_MAX)] = Field(title="Название")
     query: Annotated[str, StringConstraints(max_length=QUERY_MAX)] = Field(
         "", title="Слова запроса",
-        description="Сюжеты с этими словами попадают в тему. Слова через пробел — нужны все, "
-                    "«or» — любое из них, -слово — без него, \"фраза в кавычках\". "
+        description="Сюжеты, где есть все эти слова (в любой форме), попадают в тему. "
                     "Можно оставить пустым: тогда тема учится только на 👍.",
     )
 
@@ -79,10 +79,24 @@ class TopicService:
         self.rules = rules
         self.topics = TopicRepository(session)
 
-    async def create(self, user: User, name: str, query: str | None) -> Topic:
-        """Новая тема. Сразу собирает подходящие сюжеты за последние дни."""
+    async def create(
+        self, user: User, name: str, query: str | None,
+        likes: Collection[int] = (), dislikes: Collection[int] = (),
+    ) -> Topic:
+        """Новая тема. likes и dislikes — сюжеты, отмеченные 👍/👎 в поиске: тема сразу начинает с них.
+
+        Сразу собирает подходящие сюжеты за последние дни.
+        """
         topic = self.topics.add(user.id, name, query or None, secrets.token_urlsafe(24))
         await self.session.flush()
+        both = set(likes) & set(dislikes)  # отмечен и так и так — считаем, что не отмечен
+        for story_id, vote in [*((i, Vote.LIKE) for i in likes), *((i, Vote.DISLIKE) for i in dislikes)]:
+            if story_id in both:
+                continue
+            try:
+                await self._set_vote(topic, story_id, vote)
+            except TopicError:
+                continue  # сюжет исчез или ещё без вектора — без этого примера
         await self.rematch(topic)
         return topic
 

@@ -25,7 +25,6 @@ from sito.models import Post, Source, Story, StoryRead, TopicMatch
 from sito.models.post import (
     EMBEDDING_DIM,
     EVENT_AT_SQL,
-    POST_FTS_SQL,
     STORY_HAS_TEXT_SQL,
 )
 
@@ -172,16 +171,44 @@ _SIMILAR_SQL = text("""
 """)
 
 
-# Поиск по словам: сюжеты, у которых хотя бы один пост содержит слова запроса.
-# Выражение слов — POST_FTS_SQL, дословно как в индексе ix_post_fts.
-_SEARCH_WORDS_SQL = text(f"""
-    SELECT story.id FROM story
-    WHERE story.id IN (
-        SELECT post.story_id FROM post
-        WHERE {POST_FTS_SQL} @@ websearch_to_tsquery('russian', :query)
-    )
-      AND (CAST(:since AS timestamptz) IS NULL OR story.last_post_at >= :since)
-    ORDER BY story.started_at DESC, story.id DESC
+# Поиск по словам, ранжирование как в BM25 без частоты слова в тексте:
+#   — учитывается каждое слово запроса, все слова не обязательны;
+#   — вес слова — его редкость среди сюжетов периода (IDF): «уголь» весит больше, чем «Кузбасс»,
+#     поэтому сюжеты про уголь выше сюжетов про погоду в Кузбассе;
+#   — слово в заголовке весит в TITLE_BOOST раз больше, чем только в тексте;
+#   — при равенстве выше свежие.
+# Слова исключённые (-слово) отсекают сюжет целиком. Поиск идёт по индексу ix_post_search_vector.
+TITLE_BOOST = 1.5
+_SEARCH_WORDS_SQL = text("""
+    WITH q AS (
+        SELECT lemma, to_tsquery('simple', lemma) AS any_q, to_tsquery('simple', lemma || '\\:A') AS title_q  -- \\: — двоеточие, а не параметр
+        FROM unnest(CAST(:words AS text[])) AS lemma
+    ),
+    period AS (
+        SELECT id FROM story WHERE CAST(:since AS timestamptz) IS NULL OR story.last_post_at >= :since
+    ),
+    hits AS (
+        SELECT post.story_id, q.lemma, bool_or(post.search_vector @@ q.title_q) AS in_title
+        FROM q
+        JOIN post ON post.search_vector @@ q.any_q
+        JOIN period ON period.id = post.story_id
+        GROUP BY post.story_id, q.lemma
+    ),
+    excluded AS (
+        SELECT DISTINCT post.story_id FROM post JOIN period ON period.id = post.story_id
+        WHERE cardinality(CAST(:excluded AS text[])) > 0
+          AND post.search_vector @@ to_tsquery('simple', array_to_string(CAST(:excluded AS text[]), ' | '))
+    ),
+    df AS (SELECT lemma, count(*) AS n FROM hits GROUP BY lemma),
+    total AS (SELECT count(*) AS n FROM period)
+    SELECT hits.story_id,
+           sum(ln(1 + (total.n - df.n + 0.5) / (df.n + 0.5))
+               * CASE WHEN hits.in_title THEN :title_boost ELSE 1 END) AS score
+    FROM hits JOIN df USING (lemma) CROSS JOIN total
+    JOIN story ON story.id = hits.story_id
+    WHERE hits.story_id NOT IN (SELECT story_id FROM excluded)
+    GROUP BY hits.story_id, story.last_post_at
+    ORDER BY score DESC, story.last_post_at DESC
     LIMIT :limit
 """)
 
@@ -321,13 +348,16 @@ class StoryRepository:
         )}
         return [rows[story_id] for story_id in story_ids if story_id in rows]
 
-    async def search_words(self, query: str, since: datetime | None, limit: int) -> list[int]:
-        """Сюжеты, в постах которых есть слова запроса. Свежие сверху.
-
-        Запрос в синтаксисе websearch: слова через пробел — все, «or» — любое, -слово — без него,
-        "фраза в кавычках" — подряд.
-        """
-        result = await self.session.execute(_SEARCH_WORDS_SQL, {"query": query, "since": since, "limit": limit})
+    async def search_words(
+        self, words: Sequence[str], excluded: Sequence[str], since: datetime | None, limit: int,
+    ) -> list[int]:
+        """Сюжеты со словами запроса (леммами), самые подходящие сверху. Все слова не обязательны."""
+        if not words:
+            return []
+        result = await self.session.execute(_SEARCH_WORDS_SQL, {
+            "words": list(words), "excluded": list(excluded), "since": since, "limit": limit,
+            "title_boost": TITLE_BOOST,
+        })
         return list(result.scalars())
 
     async def search_meaning(

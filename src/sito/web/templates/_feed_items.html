@@ -1,26 +1,14 @@
 {# Карточки сюжетов. Отдельный файл: его же отдаёт /feed/items для «Показать ещё» #}
+{% import "_story_card.html" as cards with context %}
 {% for s in stories %}
 {% if s.id == divider_before %}
 <div class="divider" role="separator">
   Вы были здесь {{ user.previous_visit_at | ago(user.timezone, now) }}
 </div>
 {% endif %}
-<article class="story-card {{ s.read_state }}">
-  <a class="story-title" href="/stories/{{ s.id }}">{{ s.title }}</a>
-  {% if s.lead %}<p class="lead">{{ s.lead }}</p>{% endif %}
-  <div class="meta">
-    {% if s.read_state == "updated" %}<span class="badge updated">есть обновления</span>{% endif %}
-    {% if s.sources_count > 1 %}
-    <span class="badge">{{ s.sources_count | plural("издание", "издания", "изданий") }}</span>
-    {% endif %}
-    {% if s.first_source_name %}<span>{{ s.first_source_name }}</span> ·{% endif %}
-    <time datetime="{{ s.started_at.isoformat() }}">{{ s.started_at | ago(user.timezone, now) }}</time>
-    {% if (s.last_post_at - s.started_at).total_seconds() > 600 %}
-    · <span>обновлено {{ s.last_post_at | ago(user.timezone, now) }}</span>
-    {% endif %}
-  </div>
+{% call cards.story_card(s) %}
   {% for r in (reasons or {}).get(s.id, []) %}{% include "_reason.html" %}{% endfor %}
-</article>
+{% endcall %}
 {% endfor %}
 
 {% if more_url %}

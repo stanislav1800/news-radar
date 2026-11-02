@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from sito.models import Story, Topic, TopicExample, TopicMatch
-from sito.models.post import EMBEDDING_DIM, POST_FTS_SQL, STORY_HAS_TEXT_SQL
+from sito.models.post import EMBEDDING_DIM, STORY_HAS_TEXT_SQL
+from sito.utils.lemmas import parse_query
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,11 +42,11 @@ class TopicStats:
 
 # Правило совпадения (шаг 7). Сюжет подходит к теме, если:
 #   — пользователь сам отметил его 👍; или
-#   — в нём есть слова запроса, или он похож на 👍-пример не меньше :min_similarity,
+#   — в нём есть все слова запроса (в любой форме, по леммам), или он похож на 👍-пример не меньше :min_similarity,
 #     и при этом он не 👎 сам и не похож на 👎-пример (от :dislike_min_similarity) сильнее, чем на лучший 👍.
 # Просматриваются сюжеты, изменённые после :updated_after и живые после :active_after.
 # Для них совпадения пересчитываются: новые добавляются, переставшие подходить удаляются.
-_REMATCH_SQL = text(f"""
+_REMATCH_SQL = text("""
     WITH ex AS (
         SELECT id, story_id, liked, embedding FROM topic_example WHERE topic_id = :topic_id
     ),
@@ -55,7 +56,7 @@ _REMATCH_SQL = text(f"""
     ),
     words AS (
         SELECT DISTINCT post.story_id FROM post JOIN cand ON cand.id = post.story_id
-        WHERE :query <> '' AND {POST_FTS_SQL} @@ websearch_to_tsquery('russian', :query)
+        WHERE :words <> '' AND post.search_vector @@ to_tsquery('simple', :words)
     ),
     scored AS (
         SELECT cand.id AS story_id,
@@ -223,7 +224,8 @@ class TopicRepository:
         """Пересчитать совпадения темы для сюжетов, изменённых после updated_after."""
         row = (await self.session.execute(_REMATCH_SQL, {
             "topic_id": topic.id,
-            "query": topic.query or "",
+            # Все слова запроса в любой форме: «уголь в кузбассе» → уголь & кузбасс
+            "words": parse_query(topic.query).tsquery_all() or "" if topic.query else "",
             "updated_after": updated_after,
             "active_after": active_after,
             "min_similarity": min_similarity,

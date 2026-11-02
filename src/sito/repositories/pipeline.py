@@ -82,7 +82,8 @@ class PipelineRepository:
         return await self.session.get(Heartbeat, name)
 
     async def purge_old_texts(self, before: datetime, limit: int) -> int:
-        """Убрать тексты и векторы постов старше before (ТЗ: храним 90 дней). Заголовок и ссылка остаются.
+        """Убрать тексты и векторы постов старше before (ТЗ: храним 90 дней). Заголовок, его леммы
+        (поиск по старым сюжетам идёт по заголовкам) и ссылка остаются.
 
         Пачками по limit: одна огромная транзакция надолго заблокировала бы таблицу.
         """
@@ -90,13 +91,14 @@ class PipelineRepository:
             select(Post.id)
             .where(
                 Post.fetched_at < before,
-                (Post.raw_text.is_not(None)) | (Post.text.is_not(None)) | (Post.embedding.is_not(None)),
+                (Post.raw_text.is_not(None)) | (Post.text.is_not(None)) | (Post.text_lemmas.is_not(None))
+                | (Post.embedding.is_not(None)),
             )
             .limit(limit)
             .scalar_subquery()
         )
         result = await self.session.execute(
-            update(Post).where(Post.id.in_(batch)).values(raw_text=None, text=None, embedding=None)
+            update(Post).where(Post.id.in_(batch)).values(raw_text=None, text=None, text_lemmas=None, embedding=None)
             .execution_options(synchronize_session=False)
         )
         return result.rowcount  # type: ignore[attr-defined, no-any-return]

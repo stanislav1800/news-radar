@@ -1,9 +1,10 @@
 {% extends "base.html" %}
+{% import "_story_card.html" as cards with context %}
 {% block title %}{% if results.query %}{{ results.query }} · {% endif %}Поиск · Сито{% endblock %}
 {% block content %}
 <h1>Поиск</h1>
 <form class="search" method="get" action="/search" role="search">
-  <input type="search" name="q" value="{{ results.query }}" placeholder="например, уголь кузбасс" aria-label="Что искать" autofocus>
+  <input type="search" name="q" value="{{ results.query }}" placeholder="например, уголь в Кузбассе" aria-label="Что искать" autofocus>
   <select name="period" aria-label="За какой период">
     {% for value, label in periods.items() %}
     <option value="{{ value }}"{% if value == results.period %} selected{% endif %}>{{ label }}</option>
@@ -11,40 +12,53 @@
   </select>
   <button type="submit">Найти</button>
 </form>
-<p class="muted small">Слова через пробел — нужны все, <code>or</code> — любое из них, <code>-слово</code> — без него,
-  <code>"фраза в кавычках"</code>. Сюжеты без этих слов, но близкие по смыслу, — во втором разделе.</p>
 
 {% if results.query %}
-<form class="follow card" method="post" action="/topics">
+{# Отметки 👍/👎 у результатов принадлежат этой форме (атрибут form) и уходят в тему первыми примерами #}
+<form id="follow" class="follow card" method="post" action="/topics">
   <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
   <input type="hidden" name="query" value="{{ results.query }}">
   <input type="hidden" name="name" value="{{ topic_name }}">
   <div>
     <strong>Следить за «{{ results.query }}»</strong>
-    <p class="muted small">В «Моей ленте» будут новые сюжеты с этими словами. Отмечайте 👍 сюжеты из второго раздела —
-      тема научится находить такие и без слов.</p>
+    <p class="muted small">Новые сюжеты будут приходить в «Мою ленту». Отметьте ниже 👍 то, что подходит, и 👎 лишнее —
+      тема начнёт с этих примеров и будет искать похожее.</p>
   </div>
   <button type="submit">Следить</button>
 </form>
 
-<h2>Со словами запроса <span class="muted">· {{ results.by_words | length }}</span></h2>
-{% if results.by_words %}
+{% if results.hits %}
 <div class="feed">
-  {% with stories=results.by_words, divider_before=none, more_url=none, reasons={} %}{% include "_feed_items.html" %}{% endwith %}
+  {% for h in results.hits %}
+  {% call cards.story_card(h.story, "по смыслу" if h.by_meaning else none) %}
+  <div class="pick" role="group" aria-label="Пример для темы">
+    <label class="vote-toggle" title="Подходит: искать похожее">
+      <input type="checkbox" name="like" value="{{ h.story.id }}" form="follow"><span>👍</span>
+    </label>
+    <label class="vote-toggle" title="Не то: такие в тему не брать">
+      <input type="checkbox" name="dislike" value="{{ h.story.id }}" form="follow"><span>👎</span>
+    </label>
+  </div>
+  {% endcall %}
+  {% endfor %}
 </div>
+<p class="follow-again"><button type="submit" form="follow">Следить с отмеченными примерами</button></p>
 {% else %}
-<p class="muted">Сюжетов с этими словами за выбранный период нет.</p>
+<p class="muted">Ничего не нашлось{% if results.period %} за этот период — попробуйте период длиннее{% endif %}.</p>
+{% endif %}
+{% if results.meaning_unavailable %}
+<p class="muted small">Поиск по смыслу сейчас недоступен (модель не загружена), найдено только по словам.</p>
+{% endif %}
 {% endif %}
 
-<h2>Похожие по смыслу</h2>
-{% if results.meaning_unavailable %}
-<p class="muted">Поиск по смыслу сейчас недоступен (модель не загружена), показаны только совпадения по словам.</p>
-{% elif results.by_meaning %}
-<div class="feed">
-  {% with stories=results.by_meaning, divider_before=none, more_url=none, reasons={} %}{% include "_feed_items.html" %}{% endwith %}
-</div>
-{% else %}
-<p class="muted">Близких по смыслу сюжетов не нашлось.</p>
-{% endif %}
-{% endif %}
+<details class="search-help">
+  <summary>Как искать точнее</summary>
+  <p class="small muted">Пишите обычным текстом, форма слов не важна: «уголь в Кузбассе» найдёт и «добычу угля в Кузбассе».
+    Сверху — сюжеты, где совпало больше слов и слова реже; ниже — близкие по смыслу без этих слов.</p>
+  <ul class="small muted">
+    <li><code>-слово</code> — без этого слова: <code>уголь -экспорт</code></li>
+    <li><code>"слова в кавычках"</code> — именно в таком порядке: <code>"ключевая ставка"</code></li>
+    <li><code>or</code> — любое из слов, для темы: <code>уголь or шахта</code></li>
+  </ul>
+</details>
 {% endblock %}

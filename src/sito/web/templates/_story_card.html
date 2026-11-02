@@ -1,0 +1,21 @@
+{# Карточка сюжета. Импорт: {% import "_story_card.html" as cards with context %} — нужны user и now.
+   note — пометка в строке под заголовком; содержимое {% call %} — под карточкой (почему в теме, 👍/👎) #}
+{% macro story_card(s, note=none) %}
+<article class="story-card {{ s.read_state }}">
+  <a class="story-title" href="/stories/{{ s.id }}">{{ s.title }}</a>
+  {% if s.lead %}<p class="lead">{{ s.lead }}</p>{% endif %}
+  <div class="meta">
+    {% if note %}<span class="badge quiet">{{ note }}</span>{% endif %}
+    {% if s.read_state == "updated" %}<span class="badge updated">есть обновления</span>{% endif %}
+    {% if s.sources_count > 1 %}
+    <span class="badge">{{ s.sources_count | plural("издание", "издания", "изданий") }}</span>
+    {% endif %}
+    {% if s.first_source_name %}<span>{{ s.first_source_name }}</span> ·{% endif %}
+    <time datetime="{{ s.started_at.isoformat() }}">{{ s.started_at | ago(user.timezone, now) }}</time>
+    {% if (s.last_post_at - s.started_at).total_seconds() > 600 %}
+    · <span>обновлено {{ s.last_post_at | ago(user.timezone, now) }}</span>
+    {% endif %}
+  </div>
+  {% if caller is defined %}{{ caller() }}{% endif %}
+</article>
+{% endmacro %}

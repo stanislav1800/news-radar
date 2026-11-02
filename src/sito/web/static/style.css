@@ -253,3 +253,20 @@ button.vote.on { background: var(--notice-bg); border-color: var(--accent); filt
 .stat { display: grid; gap: .15rem; align-content: start; }
 .stat strong { font-size: 1.4rem; }
 .problems { margin: 0; padding-left: 1.1rem; display: grid; gap: .6rem; }
+
+/* Поиск: отметки примеров для темы */
+.badge.quiet { background: none; border: 1px solid var(--border); color: var(--muted); font-weight: 500; }
+.pick { display: flex; gap: .35rem; margin-top: .55rem; }
+.vote-toggle { display: inline-flex; cursor: pointer; }
+.vote-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.vote-toggle span {
+  border: 1px solid var(--border); border-radius: 999px; padding: .1rem .6rem; font-size: .9rem;
+  filter: grayscale(1); opacity: .7;
+}
+.vote-toggle:hover span { border-color: var(--accent); filter: none; opacity: 1; }
+.vote-toggle input:checked + span { background: var(--notice-bg); border-color: var(--accent); filter: none; opacity: 1; }
+.vote-toggle input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.follow-again { text-align: center; margin: 1rem 0; }
+.search-help { margin-top: 1.5rem; }
+.search-help summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+.search-help ul { padding-left: 1.1rem; }

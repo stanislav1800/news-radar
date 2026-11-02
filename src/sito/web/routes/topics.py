@@ -84,18 +84,21 @@ async def topics_page(request: Request, db: DbSession, user: CurrentUser) -> HTM
 async def create_topic(
     request: Request, db: DbSession, user: CurrentUser,
     name: Annotated[str, Form()] = "", query: Annotated[str, Form()] = "",
+    like: Annotated[list[int] | None, Form()] = None, dislike: Annotated[list[int] | None, Form()] = None,
 ) -> Response:
-    """«Следить» из поиска: запрос становится темой."""
+    """«Следить» из поиска: запрос становится темой, отмеченные в результатах 👍/👎 — её первыми примерами."""
     try:
         form = TopicForm(name=name or topic_name_from(query), query=query)
     except ValidationError:
-        flash(request, "Чтобы следить, введите слова для поиска")
+        flash(request, "Чтобы следить, введите, что искать")
         return _redirect("/search")
-    topic = await _service(request, db).create(user, form.name, form.query)
+    topic = await _service(request, db).create(user, form.name, form.query, like or [], dislike or [])
     await db.commit()
     count = await TopicRepository(db).matched_count(topic.id)
-    flash(request, f"Тема «{topic.name}» создана. Сейчас в ней сюжетов: {count}. "
-                   "Отмечайте 👍 и 👎 — тема будет точнее.")
+    examples = len(like or []) + len(dislike or [])
+    flash(request, f"Тема «{topic.name}» создана. Сейчас в ней сюжетов: {count}"
+                   + (f", примеров: {examples}." if examples else ".")
+                   + " Отмечайте 👍 и 👎 в ленте — тема будет точнее.")
     return _redirect(f"/topics/{topic.id}")
 
 

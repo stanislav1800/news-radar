@@ -61,22 +61,23 @@ async def vote(factory: async_sessionmaker[AsyncSession], user: User, topic_id: 
         await TopicService(session, RULES).vote(user, topic_id, story_id, v)
 
 
-async def test_words_of_query(
+async def test_words_of_query_in_any_form(
     session_factory: async_sessionmaker[AsyncSession], stories: Stories, owner: User
 ) -> None:
+    """Тема ловит сюжеты, где есть все слова запроса в любой форме; предлоги не нужны."""
     coal = await stories.add([("ТАСС", "В Кузбассе выросла добыча угля", timedelta(hours=1))])
     weather = await stories.add([("ТАСС", "В Кузбассе похолодает", timedelta(hours=1))])
-    # Другие формы слов тоже находятся: поиск по основам
-    plural = await stories.add([("РБК", "Кузбасские шахты увеличили добычу", timedelta(hours=2))])
+    mines = await stories.add([("РБК", "Шахты увеличили добычу", timedelta(hours=2))])
+    gadget = await stories.add([("РБК", "Угол обзора нового смартфона", timedelta(hours=2))])
 
-    topic_id = await create(session_factory, owner, "добыча кузбасс")
+    topic_id = await create(session_factory, owner, "уголь в кузбассе")
 
-    assert await matched(session_factory, topic_id) == {coal}
-    assert weather not in await matched(session_factory, topic_id)
-    assert plural not in await matched(session_factory, topic_id)  # «кузбасские» ≠ «кузбасс»: ограничение стеммера
+    assert await matched(session_factory, topic_id) == {coal}  # «угля» — это «уголь»; погода без угля — нет
+    assert gadget not in await matched(session_factory, topic_id)  # «угол» — другое слово
 
-    or_topic = await create(session_factory, owner, "уголь or шахты")
-    assert await matched(session_factory, or_topic) == {plural}  # «угля» и «уголь» стеммер не связывает
+    or_topic = await create(session_factory, owner, "уголь or шахта -похолодание")
+    assert await matched(session_factory, or_topic) == {coal, mines}
+    assert weather not in await matched(session_factory, or_topic)
 
 
 async def test_like_finds_similar_stories(
@@ -118,10 +119,11 @@ async def test_dislike_reaches_wider_than_like(
     session_factory: async_sessionmaker[AsyncSession], stories: Stories, owner: User
 ) -> None:
     """👎 на сюжете, попавшем по случайному совпадению слов, убирает и его соседей послабее (0.85–0.88)."""
-    gadget = await stories.add([("ТАСС", "Смартфон: угол обзора стал шире", timedelta(hours=3))], embedding=direction(90))
-    other_gadget = await stories.add([("ТАСС", "Монитор: угол обзора 178°", timedelta(hours=2))], embedding=direction(60))
-    coal = await stories.add([("ТАСС", "Уголь подорожал", timedelta(hours=1))], embedding=direction(0))
-    topic_id = await create(session_factory, owner, "уголь")  # «уголь» и «угол» — одна основа у стеммера
+    # «Разрез» — и угольный разрез, и разрез на платье
+    gadget = await stories.add([("ТАСС", "Платье с разрезом снова в моде", timedelta(hours=3))], embedding=direction(90))
+    other_gadget = await stories.add([("ТАСС", "Юбки с разрезом этой осенью", timedelta(hours=2))], embedding=direction(60))
+    coal = await stories.add([("ТАСС", "Разрез нарастил добычу", timedelta(hours=1))], embedding=direction(0))
+    topic_id = await create(session_factory, owner, "разрез")
     assert await matched(session_factory, topic_id) == {gadget, other_gadget, coal}
 
     await vote(session_factory, owner, topic_id, gadget, Vote.DISLIKE)

@@ -25,6 +25,16 @@
 <ul class="examples-list">{% for e in dislikes %}<li>{% include "_example.html" %}</li>{% endfor %}</ul>
 {% endif %}
 
+{% if topic.min_similarity is not none %}
+<p class="muted small">
+  {%- if topic.min_similarity < default_similarity -%}
+  По вашим отметкам тема стала шире: берёт и сюжеты, похожие на добавленные чуть меньше обычного.
+  {%- else -%}
+  По вашим отметкам тема стала строже: берёт только сюжеты, очень похожие на добавленные.
+  {%- endif %} Уберите отметку, и тема подстроится заново.
+</p>
+{% endif %}
+
 <h2>Управление</h2>
 <section class="card settings">
   <div class="setting row">

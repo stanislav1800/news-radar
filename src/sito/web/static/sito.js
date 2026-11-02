@@ -63,7 +63,12 @@
       requestAnimationFrame(() => {
         Object.assign(el.style, { height: "0", marginTop: "0", marginBottom: "0", paddingTop: "0", paddingBottom: "0", borderWidth: "0" });
       });
-      setTimeout(() => el.remove(), 350);
+      setTimeout(() => {
+        const block = el.closest(".ask");
+        el.remove();
+        // Ответили на все вопросы «Подходит?» — убрать и сам блок
+        if (block && !block.querySelector(".story-card")) block.remove();
+      }, 350);
     }, 400);
   }
 

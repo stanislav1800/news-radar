@@ -350,6 +350,11 @@ h2.day:first-child { margin-top: 0; }
 .suggestions { margin-top: 1.5rem; display: grid; gap: .75rem; }
 .suggestions h2 { margin: 0; }
 .suggestions > p { margin: -.5rem 0 0; }
+.card-action { display: flex; gap: 1rem; align-items: center; }
+/* «Подходит к теме?» посреди ленты темы */
+.ask { display: grid; gap: .6rem; padding: .75rem; border: 1px dashed var(--accent); border-radius: 12px; }
+.ask h2 { margin: 0; font-size: 1rem; }
+.ask > p { margin: -.4rem 0 0; }
 .examples-list { padding-left: 1.1rem; display: grid; gap: .35rem; }
 
 @media (max-width: 560px) {

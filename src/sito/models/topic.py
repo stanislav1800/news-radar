@@ -25,6 +25,8 @@ class Topic(IdMixin, TimestampMixin, Base):
     rss_token: Mapped[str] = mapped_column(unique=True)
     # До какого story.updated_at worker уже сопоставил сюжеты с темой
     matched_until: Mapped[datetime | None]
+    # Свой порог похожести на 👍-примеры, подстроенный по отметкам пользователя; None — общий
+    min_similarity: Mapped[float | None]
 
 
 class TopicExample(IdMixin, Base):

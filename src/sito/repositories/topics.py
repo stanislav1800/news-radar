@@ -107,28 +107,58 @@ _REMATCH_SQL = text("""
            (SELECT max(updated_at) FROM story WHERE updated_at > :updated_after) AS last_updated
 """)
 
-# «Возможно, подойдёт»: свежие сюжеты не из темы, ближайшие к 👍-примерам (или к запросу, пока примеров нет)
-_SUGGESTIONS_BY_EXAMPLES_SQL = text("""
-    SELECT story.id FROM story
+# «Ещё может подойти»: свежие сюжеты не из темы, ближайшие к 👍-примерам (или к запросу, пока примеров нет).
+# Похожие на 👎-пример сильнее, чем на 👍, не предлагаются: «Не подходит» на подсказке убирает и такие
+_NEGATIVE_SQL = """
+    CROSS JOIN LATERAL (
+        SELECT max(1 - (ex.embedding <=> story.centroid)) AS similarity FROM topic_example AS ex
+        WHERE ex.topic_id = :topic_id AND NOT ex.liked
+    ) AS neg
+"""
+_FRESH_NOT_IN_TOPIC_SQL = """
+    story.centroid IS NOT NULL AND story.last_post_at >= :since
+      AND story.id NOT IN (SELECT story_id FROM topic_match WHERE topic_id = :topic_id)
+      AND story.id NOT IN (SELECT story_id FROM topic_example WHERE topic_id = :topic_id AND story_id IS NOT NULL)
+"""
+
+_SUGGESTIONS_BY_EXAMPLES_SQL = text(f"""
+    SELECT story.id, 1 - nearest.distance AS similarity FROM story
     CROSS JOIN LATERAL (
         SELECT min(ex.embedding <=> story.centroid) AS distance FROM topic_example AS ex
         WHERE ex.topic_id = :topic_id AND ex.liked
     ) AS nearest
-    WHERE story.centroid IS NOT NULL AND story.last_post_at >= :since
-      AND story.id NOT IN (SELECT story_id FROM topic_match WHERE topic_id = :topic_id)
-      AND story.id NOT IN (SELECT story_id FROM topic_example WHERE topic_id = :topic_id AND story_id IS NOT NULL)
+    {_NEGATIVE_SQL}
+    WHERE {_FRESH_NOT_IN_TOPIC_SQL}
+      AND NOT (coalesce(neg.similarity, -1) >= :dislike_min_similarity
+               AND neg.similarity > 1 - nearest.distance)
     ORDER BY nearest.distance
     LIMIT :limit
 """)
 
 _SUGGESTIONS_BY_QUERY_SQL = text(f"""
-    SELECT story.id FROM story
-    WHERE story.centroid IS NOT NULL AND story.last_post_at >= :since AND {STORY_HAS_TEXT_SQL}
-      AND story.id NOT IN (SELECT story_id FROM topic_match WHERE topic_id = :topic_id)
-      AND story.id NOT IN (SELECT story_id FROM topic_example WHERE topic_id = :topic_id AND story_id IS NOT NULL)
+    SELECT story.id, 1 - (story.centroid <=> :embedding) AS similarity FROM story
+    {_NEGATIVE_SQL}
+    WHERE {_FRESH_NOT_IN_TOPIC_SQL} AND {STORY_HAS_TEXT_SQL}
+      AND coalesce(neg.similarity, -1) < :dislike_min_similarity
     ORDER BY story.centroid <=> :embedding
     LIMIT :limit
 """).bindparams(bindparam("embedding", type_=Vector(EMBEDDING_DIM)))
+
+# Насколько каждый пример темы похож на другие 👍-примеры: по этому подстраивается порог темы
+_EXAMPLE_SIMILARITIES_SQL = text("""
+    SELECT ex.liked, (
+        SELECT max(1 - (other.embedding <=> ex.embedding)) FROM topic_example AS other
+        WHERE other.topic_id = ex.topic_id AND other.liked AND other.id <> ex.id
+    ) AS similarity
+    FROM topic_example AS ex WHERE ex.topic_id = :topic_id
+""")
+
+
+@dataclass(frozen=True, slots=True)
+class Suggestion:
+    story_id: int
+    similarity: float
+    by_examples: bool  # похожесть на 👍-примеры (сравнима с порогом темы), а не на текст запроса
 
 
 class TopicRepository:
@@ -276,20 +306,32 @@ class TopicRepository:
         return reasons
 
     async def suggestions(
-        self, topic: Topic, since: datetime, limit: int, query_embedding: list[float] | None = None,
-    ) -> list[int]:
-        """Свежие сюжеты не из темы, которые на неё похожи: кандидаты в 👍."""
+        self, topic: Topic, since: datetime, limit: int, *, dislike_min_similarity: float,
+        query_embedding: list[float] | None = None,
+    ) -> list[Suggestion]:
+        """Свежие сюжеты не из темы, которые на неё похожи: кандидаты в 👍, самые похожие первыми."""
         has_likes = await self.session.scalar(
             select(TopicExample.id).where(TopicExample.topic_id == topic.id, TopicExample.liked).limit(1)
         )
-        params: dict[str, object] = {"topic_id": topic.id, "since": since, "limit": limit}
+        params: dict[str, object] = {
+            "topic_id": topic.id, "since": since, "limit": limit, "dislike_min_similarity": dislike_min_similarity,
+        }
         if has_likes:
             result = await self.session.execute(_SUGGESTIONS_BY_EXAMPLES_SQL, params)
         elif query_embedding is not None:
             result = await self.session.execute(_SUGGESTIONS_BY_QUERY_SQL, {**params, "embedding": query_embedding})
         else:
             return []
-        return list(result.scalars())
+        return [Suggestion(row.id, row.similarity, bool(has_likes)) for row in result]
+
+    async def example_similarities(self, topic_id: int) -> tuple[list[float], list[float]]:
+        """Похожесть каждого 👍 и каждого 👎 темы на остальные 👍-примеры (для подстройки порога)."""
+        likes: list[float] = []
+        dislikes: list[float] = []
+        for liked, similarity in await self.session.execute(_EXAMPLE_SIMILARITIES_SQL, {"topic_id": topic_id}):
+            if similarity is not None:
+                (likes if liked else dislikes).append(similarity)
+        return likes, dislikes
 
     async def new_counts(self, user_id: int, since: datetime) -> tuple[dict[int, int], int]:
         """Сколько сюжетов появилось в каждой активной теме после since и сколько всего (без повторов)."""

@@ -1,6 +1,6 @@
 {# Карточка сюжета. Импорт: {% import "_story_card.html" as cards with context %} — нужны user и now.
    reasons — темы, в которых сюжет (метки и «Не по теме» в меню «⋯»);
-   suggest — тема, в которую сюжет можно добавить (кнопка «Добавить в тему»);
+   suggest — тема, к которой сюжет предлагается (кнопки «Подходит» / «Не подходит»);
    note — пометка в строке под заголовком («по смыслу»); содержимое {% call %} — под карточкой. #}
 {% macro why(r) -%}
   {%- if r.vote == "like" %}вы добавили этот сюжет
@@ -50,10 +50,10 @@
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
     <input type="hidden" name="topic_id" value="{{ suggest.topic_id }}">
     <input type="hidden" name="story_id" value="{{ s.id }}">
-    <input type="hidden" name="vote" value="like">
     <input type="hidden" name="mode" value="suggest">
     <input type="hidden" name="next" value="/?topic={{ suggest.topic_id }}">
-    <button class="secondary" type="submit">Добавить в тему</button>
+    <button class="secondary" name="vote" value="like" title="Добавить в тему: она будет находить похожие">Подходит</button>
+    <button class="link" name="vote" value="dislike" title="Тема перестанет предлагать такие">Не подходит</button>
   </form>
   {% endif %}
   {% if caller is defined %}{{ caller() }}{% endif %}

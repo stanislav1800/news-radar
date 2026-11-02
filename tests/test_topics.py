@@ -18,6 +18,7 @@ from sito.services.topics import (
     TopicRules,
     TopicService,
     Vote,
+    calibrate_threshold,
 )
 from sito.services.users import UserService
 from tests.conftest import MakeSource
@@ -253,3 +254,38 @@ async def test_follow_story(
     assert saved is not None and saved.query is None
     assert len(saved.name) <= 100 and saved.name.endswith("…")
     assert await matched(session_factory, topic.id) == {story, similar}
+
+
+def test_threshold_follows_user_marks() -> None:
+    """👍 ниже порога опускает его, 👎 выше — поднимает; отметки ниже нижней границы не в счёт."""
+    def calibrate(likes: list[float], dislikes: list[float]) -> float:
+        return calibrate_threshold(0.88, likes, dislikes, floor=0.83, ceiling=0.95)
+
+    assert calibrate([], []) == 0.88
+    assert calibrate([0.85], []) == 0.85
+    assert calibrate([], [0.9]) == 0.905
+    assert calibrate([0.7], [0.8]) == 0.88  # другое направление темы, а не сигнал про порог
+    assert calibrate([0.85, 0.86], [0.855]) == 0.86  # меньше всего ошибок, ближе к общему
+
+
+async def test_like_below_threshold_widens_topic(
+    session_factory: async_sessionmaker[AsyncSession], stories: Stories, owner: User
+) -> None:
+    """«Подходит» на сюжете, который тема сама не взяла, делает тему шире и для других таких."""
+    example = await stories.add([("ТАСС", "Пример", timedelta(hours=3))], embedding=direction(0))
+    borderline = await stories.add([("ТАСС", "Почти", timedelta(hours=2))], embedding=direction(30))  # 0.866
+    # 0.870 к примеру, к borderline далеко: попадает только из-за нового порога темы
+    other = await stories.add([("РБК", "Другой", timedelta(hours=1))], embedding=direction(29.5, other=2))
+    topic_id = await create(session_factory, owner, None)
+    await vote(session_factory, owner, topic_id, example, Vote.LIKE)
+    assert await matched(session_factory, topic_id) == {example}
+
+    await vote(session_factory, owner, topic_id, borderline, Vote.LIKE)
+
+    assert await matched(session_factory, topic_id) == {example, borderline, other}
+    async with session_factory() as session:
+        topic = await session.get(Topic, topic_id)
+    assert topic is not None and topic.min_similarity == pytest.approx(0.866, abs=0.001)
+
+    await vote(session_factory, owner, topic_id, borderline, Vote.NONE)  # отмена — порог снова общий
+    assert await matched(session_factory, topic_id) == {example}

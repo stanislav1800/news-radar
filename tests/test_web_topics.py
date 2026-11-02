@@ -205,7 +205,24 @@ async def test_topic_page_suggestions(
     suggestions = html.split("Ещё может подойти")[1]
 
     assert titles(suggestions) == ["Шахтёры вышли на смену"]
-    assert "Добавить в тему" in suggestions
+    assert "Не подходит" in suggestions
+
+
+async def test_topic_feed_asks_about_borderline_stories(
+    logged_in: httpx.AsyncClient, stories: Stories, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Сюжет чуть ниже порога темы спрашивается «Подходит?» прямо в ленте, после третьей карточки."""
+    first = await stories.add([("ТАСС", "Пожар 1", timedelta(hours=1))], embedding=direction(0))
+    for n in range(2, 6):
+        await stories.add([("ТАСС", f"Пожар {n}", timedelta(hours=n))], embedding=direction(n))
+    await stories.add([("РБК", "Спорный", timedelta(hours=30))], embedding=direction(32))  # 0.848
+    await post(logged_in, "/topics/follow", page=f"/stories/{first}", story_id=first)
+    [topic] = await topics_of(session_factory)
+
+    html = (await logged_in.get(f"/?topic={topic.id}")).text
+
+    assert "Подходит к теме" in html
+    assert titles(html)[:5] == ["Пожар 1", "Пожар 2", "Пожар 3", "Спорный", "Пожар 4"]
 
 
 async def test_someone_elses_topic_is_not_found(

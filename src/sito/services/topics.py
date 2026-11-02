@@ -51,9 +51,12 @@ class TopicForm(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class TopicRules:
-    min_similarity: float          # сходство с 👍-примером, с которого сюжет попадает в тему
+    min_similarity: float          # сходство с 👍-примером, с которого сюжет попадает в тему (порог по умолчанию)
     dislike_min_similarity: float  # сходство с 👎-примером, с которого сюжет убирается (если он не ближе к 👍)
     backfill: timedelta            # за сколько дней пересчитать сюжеты после изменения темы
+    # В каких пределах порог темы подстраивается под отметки пользователя (calibrate_threshold)
+    similarity_floor: float = 0.83
+    similarity_ceiling: float = 0.95
 
     @classmethod
     def from_settings(cls, config: Settings) -> Self:
@@ -61,7 +64,45 @@ class TopicRules:
             config.topic_example_min_similarity,
             config.topic_dislike_min_similarity,
             timedelta(days=config.topic_backfill_days),
+            config.topic_similarity_floor,
+            config.topic_similarity_ceiling,
         )
+
+    def threshold(self, topic: Topic) -> float:
+        """Порог похожести этой темы: подстроенный по отметкам или общий."""
+        return topic.min_similarity if topic.min_similarity is not None else self.min_similarity
+
+
+# Шаг подстройки над 👎-примером: порог встаёт чуть выше его похожести, чтобы такие не проходили
+THRESHOLD_STEP = 0.005
+
+
+def calibrate_threshold(
+    default: float, likes: Collection[float], dislikes: Collection[float], floor: float, ceiling: float,
+) -> float:
+    """Порог похожести темы по отметкам пользователя (подстройка порога, как в адаптивной фильтрации TREC).
+
+    likes и dislikes — насколько каждый отмеченный сюжет похож на другие 👍-примеры темы.
+    👍 ниже порога значит «тема слишком строгая»: такой сюжет она сама бы не нашла. 👎 выше порога —
+    «слишком широкая»: сюжет прошёл по похожести, а он не нужен. Порог выбирается так, чтобы
+    ошибок по отметкам было меньше всего; при равенстве — ближе к общему.
+
+    Отметки ниже floor не учитываются: такой 👍 — это другое направление темы, а не сигнал опустить
+    порог для всего, а такой 👎 тема и так бы не взяла. Порог не выходит за [floor, ceiling].
+    """
+    likes = [s for s in likes if s >= floor]
+    dislikes = [s for s in dislikes if s >= floor]
+    if not likes and not dislikes:
+        return default
+    candidates = {default, *likes, *(s + THRESHOLD_STEP for s in dislikes)}
+    candidates = {min(max(c, floor), ceiling) for c in candidates}
+
+    def cost(threshold: float) -> tuple[int, float]:
+        errors = sum(s < threshold for s in likes) + sum(s >= threshold for s in dislikes)
+        return errors, abs(threshold - default)
+
+    best: float = min(candidates, key=cost)
+    return round(best, 4)
 
 
 # Тема из сюжета называется началом его заголовка: название живёт на вкладке и должно быть коротким
@@ -101,7 +142,7 @@ class TopicService:
                 await self._set_vote(topic, story_id, vote)
             except TopicError:
                 continue  # сюжет исчез или ещё без вектора — без этого примера
-        await self.rematch(topic)
+        await self.relearn(topic)
         return topic
 
     async def follow_story(self, user: User, story_id: int) -> Topic:
@@ -112,19 +153,19 @@ class TopicService:
         topic = self.topics.add(user.id, topic_name_from(story.title, STORY_NAME_MAX), None, secrets.token_urlsafe(24))
         await self.session.flush()
         await self._set_vote(topic, story_id, Vote.LIKE)
-        await self.rematch(topic)
+        await self.relearn(topic)
         return topic
 
     async def vote(self, user: User, topic_id: int, story_id: int, vote: Vote) -> MatchResult:
         """👍/👎 на сюжете в теме (или снять отметку). Тема сразу пересчитывается."""
         topic = await self.owned(user, topic_id, lock=True)
         await self._set_vote(topic, story_id, vote)
-        return await self.rematch(topic)
+        return await self.relearn(topic)
 
     async def remove_example(self, user: User, topic_id: int, example_id: int) -> MatchResult:
         topic = await self.owned(user, topic_id, lock=True)
         await self.topics.delete_example(topic.id, example_id)
-        return await self.rematch(topic)
+        return await self.relearn(topic)
 
     async def update(self, user: User, topic_id: int, form: TopicForm) -> Topic:
         topic = await self.owned(user, topic_id, lock=True)
@@ -160,13 +201,22 @@ class TopicService:
             raise TopicError("Тема не найдена")
         return topic
 
+    async def relearn(self, topic: Topic) -> MatchResult:
+        """Примеры темы изменились: подстроить её порог и пересчитать совпадения."""
+        likes, dislikes = await self.topics.example_similarities(topic.id)
+        threshold = calibrate_threshold(
+            self.rules.min_similarity, likes, dislikes, self.rules.similarity_floor, self.rules.similarity_ceiling,
+        )
+        topic.min_similarity = None if threshold == self.rules.min_similarity else threshold
+        return await self.rematch(topic)
+
     async def rematch(self, topic: Topic, updated_after: datetime = NEVER) -> MatchResult:
         """Пересчитать совпадения темы за последние rules.backfill дней."""
         result = await self.topics.rematch(
             topic,
             updated_after=updated_after,
             active_after=datetime.now(UTC) - self.rules.backfill,
-            min_similarity=self.rules.min_similarity,
+            min_similarity=self.rules.threshold(topic),
             dislike_min_similarity=self.rules.dislike_min_similarity,
         )
         if result.last_updated and (topic.matched_until is None or result.last_updated > topic.matched_until):

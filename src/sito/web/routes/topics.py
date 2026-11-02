@@ -190,6 +190,7 @@ async def _render_topic(
         "words": parse_query(topic.query).words if topic.query else [],
         "fields": form_fields(TopicForm, form_values, errors), "form_open": errors is not None,
         "rss_url": f"{request.base_url}rss/{topic.rss_token}",
+        "default_similarity": request.app.state.settings.topic_example_min_similarity,
         "next": f"/topics/{topic.id}",
         "now": datetime.now(UTC),
     }, status_code=status_code)

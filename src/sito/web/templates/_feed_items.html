@@ -8,6 +8,13 @@
 <div class="divider" role="separator">Вы были здесь {{ user.previous_visit_at | ago(user.timezone, now) }}</div>
 {% endif %}
 {{ cards.story_card(s, reasons=(reasons or {}).get(s.id, [])) }}
+{% if s.id == ask_after %}
+<section class="ask">
+  <h2>Подходит к теме «{{ ask_topic.name }}»?</h2>
+  <p class="muted small">Тема не уверена в этих сюжетах. Ответ научит её решать такое самой.</p>
+  {% for a in ask %}{{ cards.story_card(a, suggest=(suggestion_reasons.get(a.id) or [none])[0]) }}{% endfor %}
+</section>
+{% endif %}
 {% endfor %}
 
 {% if more_url %}
@@ -16,7 +23,7 @@
 {% elif suggestions %}
 <section class="suggestions">
   <h2>Ещё может подойти</h2>
-  <p class="muted small">Свежие сюжеты, похожие на эту тему. Добавьте подходящие — тема будет находить такие сама.</p>
+  <p class="muted small">Свежие сюжеты, похожие на эту тему. Отметьте, подходят ли они, — тема научится находить такие сама.</p>
   {% for s in suggestions %}
   {% set r = (suggestion_reasons.get(s.id) or [none])[0] %}
   {{ cards.story_card(s, suggest=r) }}

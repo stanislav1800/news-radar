@@ -27,6 +27,8 @@ router = APIRouter()
 LAST_FEED_KEY = "feed"
 
 SUGGESTIONS_DAYS = 7
+# После какой по счёту карточки первой страницы темы спросить «Подходит?» о спорных сюжетах
+ASK_AFTER = 3
 
 
 def _cursor(story: FeedStory) -> str:
@@ -124,11 +126,18 @@ async def _feed_context(
     if topic_ids:
         reasons = await TopicRepository(db).reasons(user.id, [s.id for s in stories], topic_ids=topic_ids)
 
+    # Подсказки темы: спорные сюжеты спрашиваются прямо в ленте («Подходит?»), остальные — в её конце
+    ask: list[FeedStory] = []
     suggestions: list[FeedStory] = []
     suggestion_reasons: dict[int, list[TopicReason]] = {}
     topic = next((t for t in topics if t.id == view.topic_id), None)
-    if topic is not None and not has_more and not topic.paused:
-        suggestions, suggestion_reasons = await _suggestions(request, db, user, topic)
+    first_page = before is None
+    if topic is not None and not topic.paused and (first_page or not has_more):
+        ask, suggestions, suggestion_reasons = await _suggestions(request, db, user, topic)
+        if not first_page or len(stories) <= ASK_AFTER:
+            ask = []  # вопросы — только среди карточек первой страницы; на следующих они уже были
+        if has_more:
+            suggestions = []
 
     after = before[0] if before else None
     return {
@@ -141,6 +150,9 @@ async def _feed_context(
         "days_before": _days_before(stories, user, now, after),
         "suggestions": suggestions,
         "suggestion_reasons": suggestion_reasons,
+        "ask": ask,
+        "ask_after": stories[ASK_AFTER - 1].id if ask else None,
+        "ask_topic": topic,
         # С какого момента плашка «Ещё N новых» считает новое: самый свежий показанный сюжет
         "since": int(stories[0].started_at.timestamp() * 1_000_000) if stories and before is None else None,
         "now": now,
@@ -149,18 +161,29 @@ async def _feed_context(
 
 async def _suggestions(
     request: Request, db: DbSession, user: User, topic: Topic,
-) -> tuple[list[FeedStory], dict[int, list[TopicReason]]]:
-    """«Ещё может подойти» в конце ленты темы: свежие сюжеты не из темы, похожие на неё."""
+) -> tuple[list[FeedStory], list[FeedStory], dict[int, list[TopicReason]]]:
+    """Свежие сюжеты не из темы, похожие на неё: (спросить в ленте, «Ещё может подойти», причины).
+
+    Спрашиваются самые спорные: чуть не дотянули до порога темы, но не дальше нижней границы,
+    до которой порог может опуститься. Ответ на них сильнее всего подстраивает тему.
+    """
     config: Settings = request.app.state.settings
     repo = TopicRepository(db)
     vector = None
     if topic.query:
         vector = await SearchService(db, request.app.state.embedder, config.search_limit).embed_query(topic.query)
-    ids = await repo.suggestions(
-        topic, datetime.now(UTC) - timedelta(days=SUGGESTIONS_DAYS), config.topic_suggestions_limit, vector
+    found = await repo.suggestions(
+        topic, datetime.now(UTC) - timedelta(days=SUGGESTIONS_DAYS), config.topic_suggestions_limit,
+        dislike_min_similarity=config.topic_dislike_min_similarity, query_embedding=vector,
     )
-    cards = await StoryRepository(db).cards(ids, user_id=user.id, read_all_before=user.read_all_before)
-    return cards, await repo.reasons(user.id, ids, topic_ids=[topic.id], include_unmatched=True)
+    ask_ids = [
+        f.story_id for f in found if f.by_examples and f.similarity >= config.topic_similarity_floor
+    ][: config.topic_ask_inline]
+    ids = [f.story_id for f in found]
+    cards = {c.id: c for c in await StoryRepository(db).cards(ids, user_id=user.id, read_all_before=user.read_all_before)}
+    ask = [cards[i] for i in ask_ids if i in cards]
+    rest = [cards[i] for i in ids if i in cards and i not in ask_ids]
+    return ask, rest, await repo.reasons(user.id, ids, topic_ids=[topic.id], include_unmatched=True)
 
 
 async def _tabs(db: DbSession, user: User, topics: list[Topic]) -> dict[str, object]:

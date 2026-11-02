@@ -17,11 +17,14 @@
 
   <section class="story-topics">
     <div id="topic-lines">{% for r in reasons %}{% include "_reason.html" %}{% endfor %}</div>
-    <form method="post" action="/topics/follow" hx-post="/topics/follow" hx-target="#topic-lines" hx-swap="beforeend">
+    {% if not reasons | selectattr("matched") | list %}
+    <form method="post" action="/topics/follow" hx-post="/topics/follow" hx-target="#topic-lines" hx-swap="beforeend"
+          hx-on::after-request="this.remove()">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
       <input type="hidden" name="story_id" value="{{ story.id }}">
       <button class="secondary" type="submit" title="Новая тема: в ленте будут сюжеты, похожие на этот">Следить за похожими</button>
     </form>
+    {% endif %}
   </section>
 
   <h2>Хронология</h2>

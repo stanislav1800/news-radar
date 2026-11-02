@@ -9,10 +9,7 @@
     {%- elif done == "like" and r.matched -%}
       Добавлено в тему {{ topic_link }}{% if others %}, и ещё {{ others | plural("похожий сюжет", "похожих сюжета", "похожих сюжетов") }}{% endif %}.
     {%- elif r.matched -%}
-      В теме {{ topic_link }} ·
-      {% if r.vote == "like" %}вы добавили этот сюжет
-      {%- elif r.example_title %}похоже на «{{ r.example_title }}»
-      {%- elif r.by_words %}есть слова: {{ r.words | join(", ") }}{% endif %}
+      <span title="{% if r.vote == 'like' %}Вы добавили этот сюжет{% elif r.example_title %}Похоже на «{{ r.example_title }}»{% elif r.by_words %}Есть слова: {{ r.words | join(', ') }}{% endif %}">Из темы {{ topic_link }}</span>
     {%- elif r.vote == "dislike" -%}
       Убрано из темы {{ topic_link }}: похожие не попадают.
     {%- else -%}

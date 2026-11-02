@@ -2,11 +2,12 @@
 {% import "_story_card.html" as cards with context %}
 {% block title %}{% if results.query %}{{ results.query }} · {% endif %}Поиск · Сито{% endblock %}
 {% block content %}
+<a class="back" href="/">← К ленте</a>
 {% if not results.query %}
 <div class="card intro">
   <strong>Новая тема</strong>
   <p>Напишите в строке поиска вверху, о чём хотите знать, — например, «уголь в Кузбассе» или «Python».
-     Посмотрите, что нашлось, и нажмите «Следить»: появится ваша лента по этой теме.</p>
+     Посмотрите, что нашлось, и нажмите «Следить»: появится вкладка с лентой по этой теме.</p>
 </div>
 {% else %}
 <form class="follow card" method="post" action="/topics">

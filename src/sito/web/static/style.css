@@ -361,3 +361,5 @@ h2.day:first-child { margin-top: 0; }
 .tab { display: inline-flex; align-items: center; }
 .tab-name { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
 .tag { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabs-sep { flex: 0 0 1px; background: var(--border); margin: .2rem .3rem; }
+.tab-about { margin: -.5rem 0 .9rem; }

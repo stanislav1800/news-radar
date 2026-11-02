@@ -1,13 +1,21 @@
-{# Вкладки ленты: мои темы, каждая тема, главное, все новости. Число — новых с прошлого визита #}
+{# Вкладки ленты: сначала общие (главное, все новости), потом свои темы. Число — новых с прошлого визита #}
 <nav class="tabs" aria-label="Ленты">
+  <a class="tab{% if view.kind == 'top' %} active{% endif %}" href="/?view=top">Главное</a>
+  <a class="tab{% if view.kind == 'all' %} active{% endif %}" href="/?view=all">Все новости</a>
   {% if topics %}
+  <span class="tabs-sep" aria-hidden="true"></span>
   <a class="tab{% if view.kind == 'my' %} active{% endif %}" href="/?view=my">Мои темы{% if new_total %} <span class="count">{{ new_total }}</span>{% endif %}</a>
   {% for t in topics %}
   <a class="tab{% if view.topic_id == t.id %} active{% endif %}{% if t.paused %} paused{% endif %}" href="/?topic={{ t.id }}"
      title="{{ t.name }}{% if t.paused %} — на паузе: новые сюжеты не добавляются{% endif %}"><span class="tab-name">{{ t.name }}</span>{% if new_counts.get(t.id) %} <span class="count">{{ new_counts[t.id] }}</span>{% endif %}</a>
   {% endfor %}
   {% endif %}
-  <a class="tab{% if view.kind == 'top' %} active{% endif %}" href="/?view=top" title="Сюжеты, которые подхватили много изданий">Главное</a>
-  <a class="tab{% if view.kind == 'all' %} active{% endif %}" href="/?view=all">Все новости</a>
-  <a class="tab add" href="/search" title="Новая тема: найдите, что интересно, и нажмите «Следить»">＋ Тема</a>
 </nav>
+<p class="tab-about muted small">
+  {%- if view.kind == "top" %}О чём написали 5 и больше изданий.
+  {%- elif view.kind == "all" %}Все сюжеты подряд, со всех источников.
+  {%- elif view.kind == "my" %}Сюжеты по всем вашим темам.
+  {%- else %}{% set current = topics | selectattr("id", "equalto", view.topic_id) | first %}
+    {%- if current.paused %}Тема на паузе: новые сюжеты не добавляются. {% endif %}<a href="/topics/{{ view.topic_id }}">Настроить тему</a>
+  {%- endif -%}
+</p>

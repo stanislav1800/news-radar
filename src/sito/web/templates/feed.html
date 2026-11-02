@@ -3,14 +3,6 @@
 {% block content %}
 {% include "_tabs.html" %}
 
-{% if view.kind == "topic" %}
-{% set current = topics | selectattr("id", "equalto", view.topic_id) | first %}
-<div class="tab-tools">
-  {% if current.paused %}<span class="muted small">Тема на паузе: новые сюжеты не добавляются.</span>{% endif %}
-  <a class="small" href="/topics/{{ view.topic_id }}">Настроить тему</a>
-</div>
-{% endif %}
-
 {% if not topics %}
 <div class="card intro">
   <strong>О чём вы хотите знать?</strong>

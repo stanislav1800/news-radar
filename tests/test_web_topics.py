@@ -164,7 +164,7 @@ async def test_vote_with_htmx_returns_fragment(
     response = await post(logged_in, "/topics/vote", page="/", topic_id=topic_id, story_id=good,
                           vote="like", next=f"/stories/{good}")
     assert response.status_code == 303 and response.headers["location"] == f"/stories/{good}"
-    assert "вы добавили этот сюжет" in (await logged_in.get(f"/stories/{good}")).text
+    assert "Вы добавили этот сюжет" in (await logged_in.get(f"/stories/{good}")).text
 
 
 async def test_vote_redirect_stays_inside_app(logged_in: httpx.AsyncClient, stories: Stories) -> None:

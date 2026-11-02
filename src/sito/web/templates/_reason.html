@@ -1,14 +1,32 @@
 {# Строка «тема ↔ сюжет»: в теме ли сюжет, почему и что с ним сделать. r — TopicReason.
    Сразу после действия: done — like/dislike, others — сколько похожих сюжетов изменилось вместе с этим.
+   Сообщение о действии с «Отменить» через несколько секунд сменяется обычным видом строки (data-settle).
    HTMX заменяет всю строку ответом /topics/vote. #}
 {% set topic_link %}<a class="topic-name" href="/?topic={{ r.topic_id }}">«{{ r.topic_name }}»</a>{% endset %}
-<div class="reason{% if not r.matched %} out{% endif %}">
-  <span class="why">
+{% macro vote_form(vote, label, title="") %}
+  <form class="votes" method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="closest .reason" hx-swap="outerHTML">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="topic_id" value="{{ r.topic_id }}">
+    <input type="hidden" name="story_id" value="{{ r.story_id }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="link" name="vote" value="{{ vote }}"{% if title %} title="{{ title }}"{% endif %}>{{ label }}</button>
+  </form>
+{% endmacro %}
+<div class="reason{% if not r.matched %} out{% endif %}"{% if done %} data-settle="8"{% endif %}>
+  {% if done %}
+  <span class="why transient">
     {%- if done == "dislike" -%}
       Убрано из темы {{ topic_link }}{% if others %} вместе с {{ others | plural("похожим", "похожими", "похожими") }}{% endif %}. Такие больше не попадут.
-    {%- elif done == "like" and r.matched -%}
-      Добавлено в тему {{ topic_link }}{% if others %}, и ещё {{ others | plural("похожий сюжет", "похожих сюжета", "похожих сюжетов") }}{% endif %}.
     {%- elif r.matched -%}
+      Добавлено в тему {{ topic_link }}{% if others %}, и ещё {{ others | plural("похожий сюжет", "похожих сюжета", "похожих сюжетов") }}{% endif %}.
+    {%- else -%}
+      Не в теме {{ topic_link }}
+    {%- endif -%}
+  </span>
+  <span class="transient">{{ vote_form("none", "Отменить") }}</span>
+  {% endif %}
+  <span class="why{% if done %} settled-only{% endif %}">
+    {%- if r.matched -%}
       <span title="{% if r.vote == 'like' %}Вы добавили этот сюжет{% elif r.example_title %}Похоже на «{{ r.example_title }}»{% elif r.by_words %}Есть слова: {{ r.words | join(', ') }}{% endif %}">Из темы {{ topic_link }}</span>
     {%- elif r.vote == "dislike" -%}
       Убрано из темы {{ topic_link }}: похожие не попадают.
@@ -16,17 +34,13 @@
       Не в теме {{ topic_link }}
     {%- endif -%}
   </span>
-  <form class="votes" method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="closest .reason" hx-swap="outerHTML">
-    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <input type="hidden" name="topic_id" value="{{ r.topic_id }}">
-    <input type="hidden" name="story_id" value="{{ r.story_id }}">
-    <input type="hidden" name="next" value="{{ next }}">
-    {% if done or (r.vote == "dislike" and not r.matched) %}
-    <button class="link" name="vote" value="none">Отменить</button>
-    {% elif r.matched %}
-    <button class="link" name="vote" value="dislike" title="Убрать из темы этот сюжет и похожие на него">Не по теме</button>
-    {% else %}
-    <button class="link" name="vote" value="like" title="Добавить сюжет в тему: она будет находить похожие">Добавить в тему</button>
-    {% endif %}
-  </form>
+  <span{% if done %} class="settled-only"{% endif %}>
+    {%- if r.vote == "dislike" and not r.matched -%}
+      {{ vote_form("none", "Вернуть") }}
+    {%- elif r.matched -%}
+      {{ vote_form("dislike", "Не по теме", "Убрать из темы этот сюжет и похожие на него") }}
+    {%- else -%}
+      {{ vote_form("like", "Добавить в тему", "Добавить сюжет в тему: она будет находить похожие") }}
+    {%- endif -%}
+  </span>
 </div>

@@ -1,5 +1,6 @@
-{# Карточка после «Не по теме» или «Добавить в тему»: что изменилось и «Отменить» #}
-<article class="story-card result" id="story-{{ r.story_id }}">
+{# Карточка после «Не по теме» или «Добавить в тему»: что изменилось и «Отменить».
+   Через несколько секунд исчезает сама (data-autohide), пока на ней курсор — ждёт. #}
+<article class="story-card result" id="story-{{ r.story_id }}" data-autohide="8">
   <span>
     {% if done == "dislike" %}Убрано из темы «{{ r.topic_name }}»{% if others %} вместе с {{ others | plural("похожим", "похожими", "похожими") }}{% endif %}. Такие больше не попадут.
     {% else %}Добавлено в тему «{{ r.topic_name }}»{% if others %}, и ещё {{ others | plural("похожий сюжет", "похожих сюжета", "похожих сюжетов") }}{% endif %}.{% endif %}

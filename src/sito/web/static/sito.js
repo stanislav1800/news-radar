@@ -41,5 +41,46 @@
     }
   });
 
-  document.addEventListener("DOMContentLoaded", setup);
+  // Временные сообщения («Убрано из темы… Отменить», «Пароль изменён»): через data-autohide секунд
+  // плавно исчезают, через data-settle — сменяются обычным видом. Пока курсор на сообщении — ждут.
+  function expire(el) {
+    if (!el.isConnected) return;
+    if (el.matches(":hover, :focus-within")) {
+      setTimeout(() => expire(el), 1500);
+      return;
+    }
+    if (el.dataset.settle) {
+      el.classList.add("settled");
+      return;
+    }
+    el.classList.add("fading");
+    setTimeout(() => {
+      if (!el.isConnected) return;
+      // Схлопнуть место плавно, чтобы лента под сообщением не прыгала
+      el.style.overflow = "hidden";
+      el.style.height = `${el.offsetHeight}px`;
+      el.style.transition = "height .3s ease, margin .3s ease, padding .3s ease";
+      requestAnimationFrame(() => {
+        Object.assign(el.style, { height: "0", marginTop: "0", marginBottom: "0", paddingTop: "0", paddingBottom: "0", borderWidth: "0" });
+      });
+      setTimeout(() => el.remove(), 350);
+    }, 400);
+  }
+
+  function scheduleExpiry(root) {
+    const found = root.querySelectorAll ? [...root.querySelectorAll("[data-autohide], [data-settle]")] : [];
+    if (root.matches && root.matches("[data-autohide], [data-settle]")) found.push(root);
+    for (const el of found) {
+      if (el.dataset.timed) continue;
+      el.dataset.timed = "1";
+      const seconds = Number(el.dataset.autohide || el.dataset.settle) || 8;
+      setTimeout(() => expire(el), seconds * 1000);
+    }
+  }
+
+  document.addEventListener("htmx:load", (event) => scheduleExpiry(event.target));
+  document.addEventListener("DOMContentLoaded", () => {
+    setup();
+    scheduleExpiry(document);
+  });
 })();

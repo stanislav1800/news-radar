@@ -1,11 +1,13 @@
-{# Ответ на «Следить за такими» с HTMX: тема создана, страница сюжета остаётся на месте #}
-<div class="reason">
-  <span class="why">
-    Создана тема <a class="topic-name" href="/?topic={{ topic.id }}">«{{ topic.name }}»</a>: похожие сюжеты будут в «Моей ленте»
+{# Ответ на «Следить за такими» с HTMX: тема создана, страница сюжета остаётся на месте.
+   Через несколько секунд сообщение с «Отменить» сменяется обычной строкой темы (data-settle). #}
+<div class="reason" data-settle="8">
+  <span class="why settled-only">Из темы <a class="topic-name" href="/?topic={{ topic.id }}">«{{ topic.name }}»</a></span>
+  <span class="why transient">
+    Создана тема <a class="topic-name" href="/?topic={{ topic.id }}">«{{ topic.name }}»</a>: похожие сюжеты будут в «Моих темах»
     {%- if count > 1 %}, уже нашлось {{ count | plural("сюжет", "сюжета", "сюжетов") }}{% endif %}.
   </span>
   <a class="small" href="/topics/{{ topic.id }}">Настроить</a>
-  <form class="votes" method="post" action="/topics/{{ topic.id }}/delete"
+  <form class="votes transient" method="post" action="/topics/{{ topic.id }}/delete"
         hx-post="/topics/{{ topic.id }}/delete" hx-target="closest .reason" hx-swap="outerHTML">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
     <button class="link" type="submit">Отменить</button>

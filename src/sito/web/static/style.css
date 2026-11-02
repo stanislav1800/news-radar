@@ -376,3 +376,8 @@ h2.day:first-child { margin-top: 0; }
 
 /* Переход к карточке (#story-…) не прячет её под закреплённой шапкой и вкладками */
 .story-card { scroll-margin-top: calc(var(--topbar-h) + 4rem); }
+
+/* Временные сообщения: data-autohide исчезает целиком, data-settle сменяется обычным видом */
+[data-autohide] { transition: opacity .4s ease; }
+[data-autohide].fading { opacity: 0; }
+[data-settle]:not(.settled) .settled-only, [data-settle].settled .transient { display: none; }

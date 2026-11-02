@@ -31,7 +31,7 @@
   </header>
   {% endif %}
   <main class="{% block main_class %}page{% endblock %}">
-    {% if user %}{% set message = pop_flash(request) %}{% if message %}<div class="flash" role="status">{{ message }}</div>{% endif %}{% endif %}
+    {% if user %}{% set message = pop_flash(request) %}{% if message %}<div class="flash" role="status" data-autohide="6">{{ message }}</div>{% endif %}{% endif %}
     {% block content %}{% endblock %}
   </main>
 </body>

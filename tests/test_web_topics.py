@@ -320,3 +320,19 @@ async def test_story_page_timeline_and_follow_in_place(logged_in: httpx.AsyncCli
                                     headers={"HX-Request": "true", "X-CSRF-Token": token})
 
     assert "Создана тема" in response.text and "Отменить" in response.text and "<html" not in response.text
+
+
+async def test_word_topic_asks_about_stories_like_its_matches(
+    logged_in: httpx.AsyncClient, stories: Stories, embedder: FakeEmbedder
+) -> None:
+    """Тема по словам без примеров спрашивает о сюжетах, похожих на найденное по словам, но сама их не берёт."""
+    for n in range(1, 5):
+        await stories.add([("ТАСС", f"ДТП на трассе {n}", timedelta(hours=n))], embedding=direction(n))
+    await stories.add([("РБК", "Лобовое столкновение", timedelta(hours=30))], embedding=direction(25))  # 0.91
+    embedder.vectors["дтп"] = direction(0)
+    topic_id = await follow_search(logged_in, "дтп")
+
+    html = (await logged_in.get(f"/?topic={topic_id}")).text
+
+    assert "Подходит к теме" in html
+    assert titles(html) == ["ДТП на трассе 1", "ДТП на трассе 2", "ДТП на трассе 3", "Лобовое столкновение", "ДТП на трассе 4"]

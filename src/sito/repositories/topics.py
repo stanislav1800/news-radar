@@ -121,14 +121,22 @@ _FRESH_NOT_IN_TOPIC_SQL = """
       AND story.id NOT IN (SELECT story_id FROM topic_example WHERE topic_id = :topic_id AND story_id IS NOT NULL)
 """
 
-_SUGGESTIONS_BY_EXAMPLES_SQL = text(f"""
+# Опоры подсказок: 👍-примеры темы, а пока их нет — сюжеты, найденные по словам (последние WORD_ANCHORS).
+# Похожие на найденное по словам в тему сами не попадают: замер на живых данных (2.11) показал, что мусор
+# лежит к ним так же близко, как нужное (у «золота» реставрация храма — 0.95). Поэтому только как вопрос
+_SUGGESTIONS_BY_ANCHORS_SQL = text(f"""
+    WITH anchor AS (
+        SELECT embedding AS v FROM topic_example WHERE topic_id = :topic_id AND liked AND NOT :by_words
+        UNION ALL
+        (SELECT story.centroid FROM topic_match JOIN story ON story.id = topic_match.story_id
+         WHERE :by_words AND topic_match.topic_id = :topic_id AND topic_match.by_words
+           AND story.centroid IS NOT NULL
+         ORDER BY story.started_at DESC LIMIT :word_anchors)
+    )
     SELECT story.id, 1 - nearest.distance AS similarity FROM story
-    CROSS JOIN LATERAL (
-        SELECT min(ex.embedding <=> story.centroid) AS distance FROM topic_example AS ex
-        WHERE ex.topic_id = :topic_id AND ex.liked
-    ) AS nearest
+    CROSS JOIN LATERAL (SELECT min(anchor.v <=> story.centroid) AS distance FROM anchor) AS nearest
     {_NEGATIVE_SQL}
-    WHERE {_FRESH_NOT_IN_TOPIC_SQL}
+    WHERE {_FRESH_NOT_IN_TOPIC_SQL} AND nearest.distance IS NOT NULL
       AND NOT (coalesce(neg.similarity, -1) >= :dislike_min_similarity
                AND neg.similarity > 1 - nearest.distance)
     ORDER BY nearest.distance
@@ -154,11 +162,17 @@ _EXAMPLE_SIMILARITIES_SQL = text("""
 """)
 
 
+# Сколько последних найденных по словам сюжетов берётся опорами подсказок
+WORD_ANCHORS = 50
+
+
 @dataclass(frozen=True, slots=True)
 class Suggestion:
     story_id: int
     similarity: float
-    by_examples: bool  # похожесть на 👍-примеры (сравнима с порогом темы), а не на текст запроса
+    # С чем сравнивали: examples — 👍-примеры, words — найденное по словам, query — текст запроса.
+    # Похожесть на текст запроса другая по масштабу: короткая фраза против целого сюжета
+    basis: str
 
 
 class TopicRepository:
@@ -316,13 +330,20 @@ class TopicRepository:
         params: dict[str, object] = {
             "topic_id": topic.id, "since": since, "limit": limit, "dislike_min_similarity": dislike_min_similarity,
         }
-        if has_likes:
-            result = await self.session.execute(_SUGGESTIONS_BY_EXAMPLES_SQL, params)
+        has_word_matches = not has_likes and await self.session.scalar(
+            select(TopicMatch.story_id).where(TopicMatch.topic_id == topic.id, TopicMatch.by_words).limit(1)
+        )
+        if has_likes or has_word_matches:
+            basis = "examples" if has_likes else "words"
+            result = await self.session.execute(_SUGGESTIONS_BY_ANCHORS_SQL, {
+                **params, "by_words": basis == "words", "word_anchors": WORD_ANCHORS,
+            })
         elif query_embedding is not None:
+            basis = "query"
             result = await self.session.execute(_SUGGESTIONS_BY_QUERY_SQL, {**params, "embedding": query_embedding})
         else:
             return []
-        return [Suggestion(row.id, row.similarity, bool(has_likes)) for row in result]
+        return [Suggestion(row.id, row.similarity, basis) for row in result]
 
     async def example_similarities(self, topic_id: int) -> tuple[list[float], list[float]]:
         """Похожесть каждого 👍 и каждого 👎 темы на остальные 👍-примеры (для подстройки порога)."""

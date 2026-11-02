@@ -164,8 +164,8 @@ async def _suggestions(
 ) -> tuple[list[FeedStory], list[FeedStory], dict[int, list[TopicReason]]]:
     """Свежие сюжеты не из темы, похожие на неё: (спросить в ленте, «Ещё может подойти», причины).
 
-    Спрашиваются самые спорные: чуть не дотянули до порога темы, но не дальше нижней границы,
-    до которой порог может опуститься. Ответ на них сильнее всего подстраивает тему.
+    Спрашиваются ближайшие к теме: к 👍-примерам (чуть не дотянули до порога темы — ответ сильнее всего
+    его подстраивает) или, пока примеров нет, к найденному по словам. Не дальше нижней границы порога.
     """
     config: Settings = request.app.state.settings
     repo = TopicRepository(db)
@@ -177,7 +177,7 @@ async def _suggestions(
         dislike_min_similarity=config.topic_dislike_min_similarity, query_embedding=vector,
     )
     ask_ids = [
-        f.story_id for f in found if f.by_examples and f.similarity >= config.topic_similarity_floor
+        f.story_id for f in found if f.basis != "query" and f.similarity >= config.topic_similarity_floor
     ][: config.topic_ask_inline]
     ids = [f.story_id for f in found]
     cards = {c.id: c for c in await StoryRepository(db).cards(ids, user_id=user.id, read_all_before=user.read_all_before)}

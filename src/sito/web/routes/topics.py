@@ -1,6 +1,7 @@
 """Поиск, темы, 👍/👎 и RSS-лента темы."""
 
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from html import escape
 from typing import Annotated
@@ -66,11 +67,34 @@ async def search_page(
 ) -> HTMLResponse:
     config: Settings = request.app.state.settings
     results = await SearchService(db, request.app.state.embedder, config.search_limit).search(user, q, period)
+    # Что найдёт тема по этим словам, если нажать «Следить»: поиск показывает и частичные совпадения,
+    # а тема берёт только сюжеты со всеми словами
+    preview = None
+    if results.query:
+        since = datetime.now(UTC) - timedelta(days=config.topic_backfill_days)
+        preview = TopicPreview(
+            found=await TopicRepository(db).preview(results.query, since),
+            days=config.topic_backfill_days,
+            single_word=parse_query(results.query).single_word is not None,
+            wide_after=config.topic_wide_per_day * config.topic_backfill_days,
+        )
     return templates.TemplateResponse(request, "search.html", {
-        "user": user, "results": results, "search_query": results.query,
+        "user": user, "results": results, "search_query": results.query, "preview": preview,
         "topic_name": topic_name_from(results.query) if results.query else "",
         "now": datetime.now(UTC),
     })
+
+
+@dataclass(frozen=True, slots=True)
+class TopicPreview:
+    found: int         # сколько сюжетов тема нашла бы за days дней
+    days: int
+    single_word: bool  # запрос из одного слова: у слова бывает несколько значений
+    wide_after: float  # с какого числа найденного тема считается широкой
+
+    @property
+    def wide(self) -> bool:
+        return self.found >= self.wide_after
 
 
 # --- Список тем и создание -----------------------------------------------------------------------

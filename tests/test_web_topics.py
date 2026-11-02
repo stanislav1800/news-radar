@@ -336,3 +336,14 @@ async def test_word_topic_asks_about_stories_like_its_matches(
 
     assert "Подходит к теме" in html
     assert titles(html) == ["ДТП на трассе 1", "ДТП на трассе 2", "ДТП на трассе 3", "Лобовое столкновение", "ДТП на трассе 4"]
+
+
+async def test_search_shows_what_topic_would_find(logged_in: httpx.AsyncClient, stories: Stories) -> None:
+    """Перед «Следить» видно, сколько сюжетов со всеми словами есть, и если ни одного — предупреждение."""
+    await stories.add([("ТАСС", "Добыча угля в Кузбассе", timedelta(hours=1))])
+
+    found = (await logged_in.get("/search", params={"q": "уголь кузбасс"})).text
+    empty = (await logged_in.get("/search", params={"q": "уголь кузбасс экспорт"})).text
+
+    assert "за 30 дней таких 1" in " ".join(found.split())
+    assert "все эти слова, за 30 дней нет" in " ".join(empty.split())

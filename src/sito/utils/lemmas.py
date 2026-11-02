@@ -79,6 +79,23 @@ class SearchQuery:
     def excluded(self) -> list[str]:
         return [lemma for g in self.groups for t in g if t.negated for lemma in t.lemmas]
 
+    @property
+    def single_word(self) -> list[str] | None:
+        """Запрос — одно слово (или его варианты через or): леммы этих вариантов, иначе None.
+
+        Такую тему проверяют строже: одно слово часто просто мелькает в тексте или значит другое.
+        """
+        required = [[t for t in g if not t.negated] for g in self.groups]
+        required = [g for g in required if g]
+        if len(required) != 1 or any(len(t.lemmas) > 1 for t in required[0]):
+            return None
+        return [t.lemmas[0] for t in required[0]]
+
+    def tsquery_title(self) -> str | None:
+        """Запрос «слово в заголовке» для темы из одного слова: уголь:A | угли:A."""
+        words = self.single_word
+        return " | ".join(f"{w}:A" for w in words) if words else None
+
     def tsquery_all(self) -> str | None:
         """Запрос Postgres «есть все слова» (для темы): уголь & кузбасс. None — искать нечего."""
         if not self.words:

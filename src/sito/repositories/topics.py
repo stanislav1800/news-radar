@@ -41,13 +41,42 @@ class TopicStats:
     dislikes: int
 
 
+# Пост подходит к словам темы: в нём есть все слова запроса. Если запрос — одно слово, строже:
+# слово в заголовке или хотя бы дважды в тексте. Иначе тема «золото» ловит статью, где «золотой»
+# мелькнул один раз (замер 2.11: так в «золото» и «уголь» попадали программирование и отключения света)
+_WORD_MATCH_SQL = """
+    post.search_vector @@ to_tsquery('simple', :words)
+    AND (:title_words = ''
+         OR post.search_vector @@ to_tsquery('simple', :title_words)
+         OR EXISTS (
+             SELECT 1 FROM unnest(CAST(:single_words AS text[])) AS w
+             WHERE regexp_count(coalesce(post.text_lemmas, ''), '(^| )' || w || '(?= |$)') >= 2
+         ))
+"""
+
+_PREVIEW_SQL = text(f"""
+    SELECT count(DISTINCT post.story_id) FROM post JOIN story ON story.id = post.story_id
+    WHERE story.last_post_at >= :since AND {_WORD_MATCH_SQL}
+""")
+
+
+def _word_params(query: str | None) -> dict[str, object]:
+    """Параметры _WORD_MATCH_SQL: все слова запроса в любой форме («уголь в кузбассе» → уголь & кузбасс)."""
+    parsed = parse_query(query) if query else None
+    return {
+        "words": (parsed.tsquery_all() or "") if parsed else "",
+        "title_words": (parsed.tsquery_title() or "") if parsed else "",
+        "single_words": (parsed.single_word or []) if parsed else [],
+    }
+
+
 # Правило совпадения (шаг 7). Сюжет подходит к теме, если:
 #   — пользователь сам отметил его 👍; или
 #   — в нём есть все слова запроса (в любой форме, по леммам), или он похож на 👍-пример не меньше :min_similarity,
 #     и при этом он не 👎 сам и не похож на 👎-пример (от :dislike_min_similarity) сильнее, чем на лучший 👍.
 # Просматриваются сюжеты, изменённые после :updated_after и живые после :active_after.
 # Для них совпадения пересчитываются: новые добавляются, переставшие подходить удаляются.
-_REMATCH_SQL = text("""
+_REMATCH_SQL = text(f"""
     WITH ex AS (
         SELECT id, story_id, liked, embedding FROM topic_example WHERE topic_id = :topic_id
     ),
@@ -57,7 +86,7 @@ _REMATCH_SQL = text("""
     ),
     words AS (
         SELECT DISTINCT post.story_id FROM post JOIN cand ON cand.id = post.story_id
-        WHERE :words <> '' AND post.search_vector @@ to_tsquery('simple', :words)
+        WHERE :words <> '' AND {_WORD_MATCH_SQL}
     ),
     scored AS (
         SELECT cand.id AS story_id,
@@ -269,8 +298,7 @@ class TopicRepository:
         """Пересчитать совпадения темы для сюжетов, изменённых после updated_after."""
         row = (await self.session.execute(_REMATCH_SQL, {
             "topic_id": topic.id,
-            # Все слова запроса в любой форме: «уголь в кузбассе» → уголь & кузбасс
-            "words": parse_query(topic.query).tsquery_all() or "" if topic.query else "",
+            **_word_params(topic.query),
             "updated_after": updated_after,
             "active_after": active_after,
             "min_similarity": min_similarity,
@@ -344,6 +372,13 @@ class TopicRepository:
         else:
             return []
         return [Suggestion(row.id, row.similarity, basis) for row in result]
+
+    async def preview(self, query: str, since: datetime) -> int:
+        """Сколько сюжетов с since тема с таким запросом нашла бы по словам: до того, как её создать."""
+        params = _word_params(query)
+        if not params["words"]:
+            return 0
+        return await self.session.scalar(_PREVIEW_SQL, {**params, "since": since}) or 0
 
     async def example_similarities(self, topic_id: int) -> tuple[list[float], list[float]]:
         """Похожесть каждого 👍 и каждого 👎 темы на остальные 👍-примеры (для подстройки порога)."""

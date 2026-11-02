@@ -85,6 +85,8 @@ button.link:hover { text-decoration: underline; }
 .error, .notice { border-radius: 8px; padding: .6rem .8rem; font-size: .92rem; }
 .error { background: var(--error-bg); color: var(--error-text); }
 .notice { background: var(--notice-bg); }
+.warn { color: #9a5b00; margin: .3rem 0 0; }
+@media (prefers-color-scheme: dark) { .warn { color: #e0a64a; } }
 .notice code { display: block; margin-top: .4rem; background: var(--surface); }
 
 /* Лента */

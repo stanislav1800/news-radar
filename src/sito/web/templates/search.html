@@ -16,7 +16,21 @@
   <input type="hidden" name="name" value="{{ topic_name }}">
   <div>
     <strong>{{ results.hits | length | plural("сюжет", "сюжета", "сюжетов") }} по запросу «{{ results.query }}»</strong>
-    <p class="muted small">Нажмите «Следить» — новые сюжеты с этими словами будут приходить в вашу ленту.</p>
+    {% if preview.found == 0 %}
+    <p class="warn small">Сюжетов, где есть все эти слова, за {{ preview.days | plural("день", "дня", "дней") }} нет.
+      Тема берёт только сюжеты со всеми словами — уберите лишние, иначе она будет пустой.</p>
+    {% else %}
+    <p class="muted small">Тема берёт сюжеты, где есть все эти слова: за {{ preview.days | plural("день", "дня", "дней") }}
+      таких {{ preview.found }}{% if not preview.wide %} — новые будут приходить в ленту темы{% endif %}.</p>
+    {% if preview.wide %}
+    <p class="warn small">Тема получится широкой — около {{ (preview.found / preview.days) | round | int }} сюжетов в день.
+      Добавьте уточняющее слово или создайте как есть и убирайте лишнее кнопкой «Не по теме».</p>
+    {% endif %}
+    {% if preview.single_word %}
+    <p class="muted small">Одно слово — тема возьмёт сюжеты, где оно в заголовке или не раз в тексте.
+      Если у слова несколько значений («золото» — и металл, и медали), уточните запрос.</p>
+    {% endif %}
+    {% endif %}
   </div>
   <button type="submit">Следить</button>
 </form>

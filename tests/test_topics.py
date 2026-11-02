@@ -81,6 +81,22 @@ async def test_words_of_query_in_any_form(
     assert weather not in await matched(session_factory, or_topic)
 
 
+async def test_single_word_must_be_in_title_or_repeated(
+    session_factory: async_sessionmaker[AsyncSession], stories: Stories, owner: User
+) -> None:
+    """Тема из одного слова не берёт сюжет, где слово один раз мелькнуло в тексте; из двух слов — берёт."""
+    in_title = await stories.add([("ТАСС", "Цены на золото упали", timedelta(hours=1))])
+    repeated = await stories.add(
+        [("ТАСС", "Старатели сдали добычу", timedelta(hours=1))], text="Сдали золото. Золото ушло в банк.",
+    )
+    mentioned = await stories.add(
+        [("РБК", "Новый линтер для новелл", timedelta(hours=1))], text="Золото правило для кода и банк.",
+    )
+
+    assert await matched(session_factory, await create(session_factory, owner, "золото")) == {in_title, repeated}
+    assert mentioned in await matched(session_factory, await create(session_factory, owner, "золото банк"))
+
+
 async def test_like_finds_similar_stories(
     session_factory: async_sessionmaker[AsyncSession], stories: Stories, owner: User
 ) -> None:

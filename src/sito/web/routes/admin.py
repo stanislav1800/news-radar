@@ -331,12 +331,16 @@ async def _render_login(
     request: Request, db: DbSession, user: User, connector: Connector, *,
     error: str | None = None, status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
+    service = _login_service(request, db)
+    delivery: tuple[str | None, str | None] = (None, None)
     try:
-        step = _login_service(request, db).step(connector)
+        step = service.step(connector)
+        delivery = service.delivery(connector)
     except ConnectorError as exc:
         step, error = "start", str(exc)
     return templates.TemplateResponse(request, "admin/telegram_login.html", {
         "user": user, "connector": connector, "step": step, "error": error,
+        "delivery": delivery[0], "next_delivery": delivery[1],
     }, status_code=status_code)
 
 

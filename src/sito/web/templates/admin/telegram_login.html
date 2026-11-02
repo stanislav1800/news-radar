@@ -15,8 +15,8 @@
     <label>Код из Telegram
       <input name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus>
     </label>
-    <p class="muted small">Код пришёл сообщением от Telegram в приложение, где открыт этот аккаунт (не СМС).
-      Никому его не пересылайте: Telegram заблокирует вход, если код отправить в чат.</p>
+    <p class="small">Telegram отправил код {{ delivery or "в приложение, где открыт этот аккаунт" }}.</p>
+    <p class="muted small">Никому его не пересылайте: Telegram заблокирует вход, если код отправить в чат.</p>
     <button type="submit">Войти</button>
   </form>
 {% elif step == "password" %}
@@ -39,7 +39,9 @@
   <form method="post" action="/admin/connectors/{{ connector.id }}/login/send-code">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
     <button {% if step != "start" %}class="link"{% endif %} type="submit">
-      {%- if step == "start" %}Прислать код{% elif step == "code" %}Прислать код заново{% else %}Войти заново{% endif -%}
+      {%- if step == "start" %}Прислать код
+      {%- elif step == "code" %}Код не пришёл — прислать {{ next_delivery or "ещё раз" }}
+      {%- else %}Войти заново{% endif -%}
     </button>
   </form>
 {% endif %}

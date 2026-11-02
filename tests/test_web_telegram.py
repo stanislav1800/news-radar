@@ -24,7 +24,12 @@ class FakeLogin:
 
     async def send_code(self, api_id: int, api_hash: str, phone: str) -> CodeSent:
         self.calls.append(f"code {api_id} {api_hash} {phone}")
-        return CodeSent("half-session", "hash-1")
+        return CodeSent("half-session", "hash-1", "сообщением в приложение", "СМС на телефон")
+
+    async def resend_code(self, api_id: int, api_hash: str, session: str, phone: str,
+                          phone_code_hash: str) -> CodeSent:
+        self.calls.append(f"resend {phone_code_hash}")
+        return CodeSent("half-session", "hash-1", "СМС на телефон", None)
 
     async def sign_in_code(self, api_id: int, api_hash: str, session: str, phone: str, code: str,
                            phone_code_hash: str) -> SignIn:
@@ -83,8 +88,13 @@ async def test_login_with_code_and_password(
     assert "Прислать код" in (await admin.get(login_page)).text
 
     await post(admin, f"{login_page}/send-code")
-    assert fake_login.calls == ["code 12345 secret-hash +79990001122"]
-    assert "Код из Telegram" in (await admin.get(login_page)).text
+    page = (await admin.get(login_page)).text
+    assert "Код из Telegram" in page and "отправил код сообщением в приложение" in page
+    assert "прислать СМС на телефон" in page
+
+    await post(admin, f"{login_page}/send-code")  # код не пришёл — тот же запрос, следующим способом
+    assert fake_login.calls == ["code 12345 secret-hash +79990001122", "resend hash-1"]
+    assert "отправил код СМС на телефон" in (await admin.get(login_page)).text
 
     wrong = await post(admin, f"{login_page}/code", code="99999")
     assert wrong.status_code == 400 and "Код неверный" in wrong.text

@@ -17,11 +17,14 @@ from sito.utils.crypto import SecretBox
 __all__ = ["LoginApi", "LoginError", "TelegramLoginService"]
 
 # Ключи секретов мастера: убираются, когда вход закончен
-LOGIN_KEYS = ("login_session", "phone_code_hash", "login_step")
+LOGIN_KEYS = ("login_session", "phone_code_hash", "login_step", "login_delivery", "login_next")
 
 
 class LoginApi(Protocol):
     async def send_code(self, api_id: int, api_hash: str, phone: str) -> CodeSent: ...
+
+    async def resend_code(self, api_id: int, api_hash: str, session: str, phone: str,
+                          phone_code_hash: str) -> CodeSent: ...
 
     async def sign_in_code(self, api_id: int, api_hash: str, session: str, phone: str, code: str,
                            phone_code_hash: str) -> SignIn: ...
@@ -44,10 +47,21 @@ class TelegramLoginService:
         return "start"
 
     async def send_code(self, connector: Connector) -> None:
+        """Прислать код. Если код уже запрошен — прислать ещё раз следующим способом (СМС, звонок)."""
         secrets = self.connectors.current_secrets(connector)
-        sent = await self.api.send_code(*self._app(connector, secrets), str(connector.settings["phone"]))
+        phone = str(connector.settings["phone"])
+        if secrets.get("login_step") == "code":
+            sent = await self.api.resend_code(*self._app(connector, secrets), str(secrets["login_session"]), phone,
+                                              str(secrets["phone_code_hash"]))
+        else:
+            sent = await self.api.send_code(*self._app(connector, secrets), phone)
         self._save(connector, secrets, login_session=sent.session, phone_code_hash=sent.phone_code_hash,
-                   login_step="code")
+                   login_step="code", login_delivery=sent.delivery, login_next=sent.next_delivery)
+
+    def delivery(self, connector: Connector) -> tuple[str | None, str | None]:
+        """Куда пришёл код и как придёт, если попросить ещё раз."""
+        secrets = self.connectors.current_secrets(connector)
+        return secrets.get("login_delivery"), secrets.get("login_next")
 
     async def enter_code(self, connector: Connector, code: str) -> bool:
         """True — вошли; False — нужен ещё облачный пароль."""

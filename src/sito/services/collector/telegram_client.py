@@ -15,6 +15,7 @@ from typing import Any
 
 from telethon import TelegramClient, errors, events
 from telethon.sessions import StringSession
+from telethon.tl.functions.auth import ResendCodeRequest
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.types import Channel as TlChannel
 from telethon.tl.types import PeerChannel
@@ -140,6 +141,48 @@ class LoginError(Exception):
 class CodeSent:
     session: str           # незавершённая сессия: тот же ключ нужен для следующего шага
     phone_code_hash: str
+    delivery: str = ""     # куда Telegram отправил код: «сообщением в приложение Telegram…»
+    next_delivery: str | None = None  # как придёт код, если попросить ещё раз
+
+
+# Куда Telegram отправляет код: он выбирает сам, по типу ответа
+_DELIVERY: dict[str, str] = {
+    "SentCodeTypeApp": "сообщением от «Telegram» в приложение, где этот аккаунт уже открыт (телефон, компьютер)",
+    "SentCodeTypeSms": "СМС на телефон",
+    "SentCodeTypeSmsWord": "СМС на телефон",
+    "SentCodeTypeSmsPhrase": "СМС на телефон",
+    "SentCodeTypeFirebaseSms": "СМС на телефон",
+    "SentCodeTypeCall": "звонком: код продиктуют",
+    "SentCodeTypeFlashCall": "сброшенным звонком: код — последние цифры номера",
+    "SentCodeTypeMissedCall": "пропущенным звонком: код — последние цифры номера",
+    "SentCodeTypeFragmentSms": "через Fragment (анонимный номер)",
+    "SentCodeTypeEmailCode": "на почту, привязанную к аккаунту",
+    "CodeTypeSms": "СМС на телефон",
+    "CodeTypeCall": "звонком",
+    "CodeTypeFlashCall": "сброшенным звонком",
+    "CodeTypeMissedCall": "пропущенным звонком",
+    "CodeTypeFragmentSms": "через Fragment",
+}
+
+
+def _code_sent(client: TelegramClient, sent: Any) -> CodeSent:
+    """Ответ Telegram на запрос кода → куда пришёл код. Случаи, когда кода не будет, — LoginError."""
+    kind = type(sent).__name__
+    if kind == "SentCodeSuccess":
+        return CodeSent(_save(client), "", "вход уже выполнен")
+    if kind == "SentCodePaymentRequired":
+        raise LoginError("Telegram требует оплатить СМС для входа с этого номера. Войдите в аккаунт "
+                         "в приложении Telegram на любом устройстве — тогда код придёт туда бесплатно")
+    sent_type = type(sent.type).__name__
+    logger.info("telegram: код запрошен, способ=%s, следующий=%s", sent_type, type(sent.next_type).__name__)
+    if sent_type == "SentCodeTypeSetUpEmailRequired":
+        raise LoginError("Telegram просит сначала привязать к аккаунту почту для входа: в приложении "
+                         "Telegram → Настройки → Конфиденциальность → Почта для входа. Затем запросите код снова")
+    delivery = _DELIVERY.get(sent_type, sent_type)
+    if sent_type == "SentCodeTypeEmailCode" and getattr(sent.type, "email_pattern", None):
+        delivery = f"на почту {sent.type.email_pattern}"
+    following = _DELIVERY.get(type(sent.next_type).__name__) if sent.next_type is not None else None
+    return CodeSent(_save(client), sent.phone_code_hash, delivery, following)
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +198,7 @@ _LOGIN_ERRORS: dict[type[Exception], str] = {
     errors.PhoneNumberUnoccupiedError: "На этот номер нет аккаунта Telegram",
     errors.PhoneCodeInvalidError: "Код неверный",
     errors.PhoneCodeExpiredError: "Код устарел: запросите новый",
+    errors.SendCodeUnavailableError: "Все способы прислать код уже использованы: подождите и запросите код заново",
     errors.PasswordHashInvalidError: "Пароль неверный",
 }
 
@@ -178,8 +222,13 @@ class TelethonLogin:
 
     async def send_code(self, api_id: int, api_hash: str, phone: str) -> CodeSent:
         async with _login_client(api_id, api_hash, "") as client:
-            sent = await client.send_code_request(phone)
-            return CodeSent(_save(client), sent.phone_code_hash)
+            return _code_sent(client, await client.send_code_request(phone))
+
+    async def resend_code(self, api_id: int, api_hash: str, session: str, phone: str,
+                          phone_code_hash: str) -> CodeSent:
+        """Прислать код ещё раз — следующим способом (например, СМС вместо сообщения в приложении)."""
+        async with _login_client(api_id, api_hash, session) as client:
+            return _code_sent(client, await client(ResendCodeRequest(phone, phone_code_hash)))
 
     async def sign_in_code(self, api_id: int, api_hash: str, session: str, phone: str, code: str,
                            phone_code_hash: str) -> SignIn:

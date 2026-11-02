@@ -9,7 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import Connector, ConnectorStatus, Source
-from sito.services.collector.telegram_client import CodeSent, LoginError, SignIn
+from sito.services.collector.telegram_client import (
+    CodeSent,
+    CodeUnavailable,
+    LoginError,
+    SignIn,
+)
 from sito.services.users import UserService
 from sito.utils.crypto import SecretBox
 from tests.web import PASSWORD, csrf_from, login
@@ -20,6 +25,7 @@ BOX = SecretBox("test-secret-key-0123")
 @dataclass
 class FakeLogin:
     password: str | None = None  # облачный пароль, если включена двухэтапная проверка
+    resend_exhausted: bool = False
     calls: list[str] = field(default_factory=list)
 
     async def send_code(self, api_id: int, api_hash: str, phone: str) -> CodeSent:
@@ -29,6 +35,8 @@ class FakeLogin:
     async def resend_code(self, api_id: int, api_hash: str, session: str, phone: str,
                           phone_code_hash: str) -> CodeSent:
         self.calls.append(f"resend {phone_code_hash}")
+        if self.resend_exhausted:
+            raise CodeUnavailable("Все способы прислать код уже использованы")
         return CodeSent("half-session", "hash-1", "СМС на телефон", None)
 
     async def sign_in_code(self, api_id: int, api_hash: str, session: str, phone: str, code: str,
@@ -147,3 +155,17 @@ async def test_add_channel_by_link(
         [source] = list(await session.scalars(select(Source).where(Source.connector_id == connector_id)))
     assert (source.name, source.url, source.external_id) == ("@ilyaseredyuk", "https://t.me/ilyaseredyuk", None)
     assert "ждёт подписки" in (await admin.get("/admin/connectors")).text
+
+
+async def test_resend_falls_back_to_new_code(
+    admin: httpx.AsyncClient, fake_login: FakeLogin, session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Старый запрос кода исчерпан (прошло много времени) — «прислать ещё раз» запрашивает новый код."""
+    page = await add_account(admin)
+    await post(admin, f"{page}/send-code")
+    fake_login.resend_exhausted = True
+
+    response = await post(admin, f"{page}/send-code")
+
+    assert response.status_code == 303
+    assert [c.split()[0] for c in fake_login.calls] == ["code", "resend", "code"]

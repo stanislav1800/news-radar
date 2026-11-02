@@ -137,6 +137,10 @@ class LoginError(Exception):
     """Шаг входа не прошёл; текст — для человека."""
 
 
+class CodeUnavailable(LoginError):
+    """Прежний запрос кода исчерпан или устарел: переотправить нельзя, нужен новый запрос."""
+
+
 @dataclass(frozen=True, slots=True)
 class CodeSent:
     session: str           # незавершённая сессия: тот же ключ нужен для следующего шага
@@ -211,6 +215,8 @@ async def _login_client(api_id: int, api_hash: str, session: str) -> AsyncIterat
         yield client
     except errors.FloodWaitError as exc:
         raise LoginError(f"Telegram просит подождать {exc.seconds} с перед следующей попыткой") from exc
+    except (errors.SendCodeUnavailableError, errors.PhoneCodeExpiredError) as exc:
+        raise CodeUnavailable(_LOGIN_ERRORS[type(exc)]) from exc
     except tuple(_LOGIN_ERRORS) as exc:
         raise LoginError(_LOGIN_ERRORS[type(exc)]) from exc
     finally:

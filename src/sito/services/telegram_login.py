@@ -10,7 +10,12 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sito.models import Connector, ConnectorStatus
-from sito.services.collector.telegram_client import CodeSent, LoginError, SignIn
+from sito.services.collector.telegram_client import (
+    CodeSent,
+    CodeUnavailable,
+    LoginError,
+    SignIn,
+)
 from sito.services.connectors import ConnectorError, ConnectorService
 from sito.utils.crypto import SecretBox
 
@@ -50,10 +55,14 @@ class TelegramLoginService:
         """Прислать код. Если код уже запрошен — прислать ещё раз следующим способом (СМС, звонок)."""
         secrets = self.connectors.current_secrets(connector)
         phone = str(connector.settings["phone"])
+        sent = None
         if secrets.get("login_step") == "code":
-            sent = await self.api.resend_code(*self._app(connector, secrets), str(secrets["login_session"]), phone,
-                                              str(secrets["phone_code_hash"]))
-        else:
+            try:
+                sent = await self.api.resend_code(*self._app(connector, secrets), str(secrets["login_session"]),
+                                                  phone, str(secrets["phone_code_hash"]))
+            except CodeUnavailable:
+                sent = None  # прежний запрос исчерпан — просто запросить новый код
+        if sent is None:
             sent = await self.api.send_code(*self._app(connector, secrets), phone)
         self._save(connector, secrets, login_session=sent.session, phone_code_hash=sent.phone_code_hash,
                    login_step="code", login_delivery=sent.delivery, login_next=sent.next_delivery)

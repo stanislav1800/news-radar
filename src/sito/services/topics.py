@@ -64,13 +64,17 @@ class TopicRules:
         )
 
 
-def topic_name_from(text: str) -> str:
-    """Название по запросу или заголовку сюжета: не длиннее NAME_MAX, без обрезанного слова."""
+# Тема из сюжета называется началом его заголовка: название живёт на вкладке и должно быть коротким
+STORY_NAME_MAX = 40
+
+
+def topic_name_from(text: str, max_chars: int = NAME_MAX) -> str:
+    """Название по запросу или заголовку сюжета: не длиннее max_chars, без обрезанного слова."""
     text = " ".join(text.split())
-    if len(text) <= NAME_MAX:
+    if len(text) <= max_chars:
         return text
-    cut = text.rfind(" ", 0, NAME_MAX - 1)
-    return text[: cut if cut > 0 else NAME_MAX - 1] + "…"
+    cut = text.rfind(" ", 0, max_chars - 1)
+    return text[: cut if cut > 0 else max_chars - 1].rstrip(" ,:;—-") + "…"
 
 
 class TopicService:
@@ -105,7 +109,7 @@ class TopicService:
         story = await StoryRepository(self.session).get(story_id)
         if story is None:
             raise TopicError("Сюжет не найден")
-        topic = self.topics.add(user.id, topic_name_from(story.title), None, secrets.token_urlsafe(24))
+        topic = self.topics.add(user.id, topic_name_from(story.title, STORY_NAME_MAX), None, secrets.token_urlsafe(24))
         await self.session.flush()
         await self._set_vote(topic, story_id, Vote.LIKE)
         await self.rematch(topic)

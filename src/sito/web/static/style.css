@@ -356,3 +356,8 @@ h2.day:first-child { margin-top: 0; }
 @media (max-width: 560px) {
   .top-search input::placeholder { color: transparent; }
 }
+
+/* Длинные названия тем не растягивают вкладки и метки */
+.tab { display: inline-flex; align-items: center; }
+.tab-name { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
+.tag { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

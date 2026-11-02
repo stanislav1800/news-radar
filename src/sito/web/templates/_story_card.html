@@ -43,7 +43,7 @@
     {% if (s.last_post_at - s.started_at).total_seconds() > 600 %}
     · <span>обновлено {{ s.last_post_at | ago(user.timezone, now) }}</span>
     {% endif %}
-    {% for r in reasons %}<a class="tag" href="/?topic={{ r.topic_id }}" title="{{ why(r) }}">{{ r.topic_name }}</a>{% endfor %}
+    {% for r in reasons %}<a class="tag" href="/?topic={{ r.topic_id }}" title="{{ r.topic_name }}: {{ why(r) }}">{{ r.topic_name }}</a>{% endfor %}
   </div>
   {% if suggest %}
   <form class="card-action" method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="#story-{{ s.id }}" hx-swap="outerHTML">

@@ -131,7 +131,7 @@ async def test_follow_search_and_personal_feed(
     assert "Тема «уголь» создана. Сейчас в ней сюжетов: 1" in page.text
     my = (await logged_in.get("/my")).text
     assert titles(my) == ["Уголь подорожал"]
-    assert "есть слова запроса" in my
+    assert "есть слова: уголь" in my and "Не по теме" in my
     [topic] = await topics_of(session_factory)
     assert topic.name == "уголь" and topic.query == "уголь"
 
@@ -157,14 +157,15 @@ async def test_vote_with_htmx_returns_fragment(
 
     assert response.status_code == 200
     assert "<html" not in response.text
-    assert "убран из темы" in response.text and 'class="reason out"' in response.text
+    assert "Убрано из темы" in response.text and "Отменить" in response.text
+    assert 'class="reason out"' in response.text
     assert titles((await logged_in.get("/my")).text) == ["Уголь: добыча выросла"]
 
     # 👍 без HTMX — обычная форма: переход обратно
     response = await post(logged_in, "/topics/vote", page="/my", topic_id=topic_id, story_id=good,
                           vote="like", next=f"/stories/{good}")
     assert response.status_code == 303 and response.headers["location"] == f"/stories/{good}"
-    assert "вы отметили 👍" in (await logged_in.get(f"/stories/{good}")).text
+    assert "вы добавили этот сюжет" in (await logged_in.get(f"/stories/{good}")).text
 
 
 async def test_vote_redirect_stays_inside_app(logged_in: httpx.AsyncClient, stories: Stories) -> None:
@@ -190,7 +191,7 @@ async def test_follow_story_from_story_page(
     [topic] = await topics_of(session_factory)
     assert topic.name == "Запуск ракеты Ангара" and topic.query is None
     topic_page = (await logged_in.get(response.headers["location"])).text
-    assert "👍 Искать похожее" in topic_page and "Запуск ракеты Ангара" in topic_page
+    assert "Что попадает в тему" in topic_page and "«Запуск ракеты Ангара»" in topic_page
 
 
 async def test_topic_page_suggestions(
@@ -205,7 +206,7 @@ async def test_topic_page_suggestions(
     suggestions = html.split("Возможно, подойдёт")[1]
 
     assert titles(suggestions) == ["Шахтёры вышли на смену"]
-    assert "не в теме" in suggestions and "👍" in suggestions
+    assert "Не в теме" in suggestions and "Добавить в тему" in suggestions
 
 
 async def test_someone_elses_topic_is_not_found(
@@ -289,3 +290,17 @@ async def test_vote_requires_csrf(logged_in: httpx.AsyncClient, stories: Stories
 
     assert response.status_code == 403
     assert titles((await logged_in.get("/my")).text) == ["Уголь"]
+
+
+async def test_story_page_timeline_and_follow_in_place(logged_in: httpx.AsyncClient, stories: Stories) -> None:
+    story = await stories.add([("ТАСС", "Запуск ракеты", timedelta(hours=1))], embedding=direction(0),
+                              text="Ракета стартовала с Восточного.\nВторой абзац не показываем.")
+    page = (await logged_in.get(f"/stories/{story}")).text
+    assert "Ракета стартовала с Восточного." in page and "Второй абзац" not in page
+    assert "Читать в источнике" in page
+
+    token = await csrf_from(logged_in, f"/stories/{story}")
+    response = await logged_in.post("/topics/follow", data={"story_id": str(story)},
+                                    headers={"HX-Request": "true", "X-CSRF-Token": token})
+
+    assert "Создана тема" in response.text and "Отменить" in response.text and "<html" not in response.text

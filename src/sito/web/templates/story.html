@@ -16,24 +16,31 @@
   </p>
 
   <section class="story-topics">
-    {% for r in reasons %}{% include "_reason.html" %}{% endfor %}
+    <div id="topic-lines">{% for r in reasons %}{% include "_reason.html" %}{% endfor %}</div>
     <div class="topic-actions">
-      <form method="post" action="/topics/follow">
+      <form method="post" action="/topics/follow" hx-post="/topics/follow" hx-target="#topic-lines" hx-swap="beforeend">
         <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
         <input type="hidden" name="story_id" value="{{ story.id }}">
-        <button class="link" type="submit">Следить за такими</button>
+        <button class="secondary" type="submit" title="Новая тема: в «Моей ленте» будут сюжеты, похожие на этот">Следить за такими</button>
       </form>
       {% if other_topics %}
-      <form class="inline-form" method="post" action="/topics/vote">
-        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-        <input type="hidden" name="story_id" value="{{ story.id }}">
-        <input type="hidden" name="vote" value="like">
-        <input type="hidden" name="next" value="{{ next }}">
-        <select name="topic_id" aria-label="Тема">
-          {% for t in other_topics %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
-        </select>
-        <button class="link" type="submit">👍 Добавить в тему</button>
-      </form>
+      <details class="menu">
+        <summary>Добавить в тему…</summary>
+        <div class="menu-body">
+          <p class="muted small">Сюжет станет примером для темы: она будет находить похожие.</p>
+          {% for t in other_topics %}
+          <form method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="#topic-lines" hx-swap="beforeend"
+                hx-on::after-request="this.remove()">
+            <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+            <input type="hidden" name="story_id" value="{{ story.id }}">
+            <input type="hidden" name="topic_id" value="{{ t.id }}">
+            <input type="hidden" name="vote" value="like">
+            <input type="hidden" name="next" value="{{ next }}">
+            <button class="link" type="submit">{{ t.name }}</button>
+          </form>
+          {% endfor %}
+        </div>
+      </details>
       {% endif %}
     </div>
   </section>
@@ -44,11 +51,18 @@
     {% for p in timeline | reverse %}
     <li{% if p.id == story.first_post_id %} class="first"{% endif %}>
       <time datetime="{{ p.event_at.isoformat() }}">{{ p.event_at | local_time(user.timezone, now) }}</time>
-      <div>
-        <span class="source">{{ p.source_name }}</span>
-        {% if p.id == story.first_post_id %}<span class="badge">первым</span>{% endif %}
-        <a href="{{ p.url | safe_url }}" target="_blank" rel="noopener noreferrer">{{ p.title }}</a>
-      </div>
+      {# Пост раскрывается на месте: начало текста и ссылка на оригинал #}
+      <details class="post">
+        <summary>
+          <span class="source">{{ p.source_name }}</span>
+          {% if p.id == story.first_post_id %}<span class="badge">первым</span>{% endif %}
+          <span class="post-title">{{ p.title }}</span>
+        </summary>
+        <div class="post-body">
+          {% if p.lead %}<p>{{ p.lead }}</p>{% else %}<p class="muted small">Текста нет — только заголовок.</p>{% endif %}
+          <a href="{{ p.url | safe_url }}" target="_blank" rel="noopener noreferrer">Читать в источнике ↗</a>
+        </div>
+      </details>
     </li>
     {% endfor %}
   </ol>

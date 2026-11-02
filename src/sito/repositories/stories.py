@@ -78,6 +78,7 @@ class TimelinePost:
     url: str
     source_name: str
     event_at: datetime
+    lead: str | None  # первый абзац, не длиннее LEAD_MAX_CHARS
 
 
 _vector = bindparam("embedding", type_=Vector(EMBEDDING_DIM))
@@ -381,7 +382,12 @@ class StoryRepository:
         """Посты сюжета по времени: как развивалось событие."""
         event_at = literal_column(EVENT_AT_SQL, DateTime(timezone=True))
         query = (
-            select(Post.id, Post.title, Post.url, Source.name.label("source_name"), event_at.label("event_at"))
+            select(
+                Post.id, Post.title, Post.url, Source.name.label("source_name"), event_at.label("event_at"),
+                func.nullif(
+                    func.left(func.split_part(func.coalesce(Post.text, ""), "\n", 1), LEAD_MAX_CHARS), ""
+                ).label("lead"),
+            )
             .join(Source, Source.id == Post.source_id)
             .where(Post.story_id == story_id)
             .order_by(event_at, Post.id)

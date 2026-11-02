@@ -1,0 +1,13 @@
+{# Ответ на «Следить за такими» с HTMX: тема создана, страница сюжета остаётся на месте #}
+<div class="reason">
+  <span class="why">
+    Создана тема <a class="topic-name" href="/my?topic={{ topic.id }}">«{{ topic.name }}»</a>: похожие сюжеты будут в «Моей ленте»
+    {%- if count > 1 %}, уже нашлось {{ count | plural("сюжет", "сюжета", "сюжетов") }}{% endif %}.
+  </span>
+  <a class="small" href="/topics/{{ topic.id }}">Настроить</a>
+  <form class="votes" method="post" action="/topics/{{ topic.id }}/delete"
+        hx-post="/topics/{{ topic.id }}/delete" hx-target="closest .reason" hx-swap="outerHTML">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button class="link" type="submit">Отменить</button>
+  </form>
+</div>

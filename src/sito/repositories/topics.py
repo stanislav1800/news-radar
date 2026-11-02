@@ -30,6 +30,7 @@ class TopicReason:
     by_words: bool
     example_title: str | None  # на какой 👍-пример похож
     vote: str | None           # like, dislike или None
+    words: tuple[str, ...] = ()  # слова запроса темы в начальной форме: «есть слова: уголь, кузбасс»
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +248,8 @@ class TopicRepository:
         vote = aliased(TopicExample)
         query = (
             select(
-                Topic.id.label("topic_id"), Topic.name.label("topic_name"), Story.id.label("story_id"),
+                Topic.id.label("topic_id"), Topic.name.label("topic_name"), Topic.query.label("topic_query"),
+                Story.id.label("story_id"),
                 TopicMatch.story_id.is_not(None).label("matched"),
                 func.coalesce(TopicMatch.by_words, False).label("by_words"),
                 example.title.label("example_title"),
@@ -267,7 +269,10 @@ class TopicRepository:
             query = query.where(TopicMatch.story_id.is_not(None))
         reasons: dict[int, list[TopicReason]] = {}
         for row in await self.session.execute(query):
-            reasons.setdefault(row.story_id, []).append(TopicReason(**row._mapping))
+            fields = dict(row._mapping)
+            topic_query = fields.pop("topic_query")
+            words = tuple(parse_query(topic_query).words) if topic_query else ()
+            reasons.setdefault(row.story_id, []).append(TopicReason(**fields, words=words))
         return reasons
 
     async def suggestions(

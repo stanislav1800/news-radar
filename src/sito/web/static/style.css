@@ -270,3 +270,33 @@ button.vote.on { background: var(--notice-bg); border-color: var(--accent); filt
 .search-help { margin-top: 1.5rem; }
 .search-help summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 .search-help ul { padding-left: 1.1rem; }
+
+/* Действия с темами на странице сюжета */
+button.secondary { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); padding: .35rem .8rem; }
+button.secondary:hover { background: var(--notice-bg); }
+details.menu { position: relative; }
+details.menu summary { cursor: pointer; color: var(--accent); list-style: none; }
+details.menu summary::-webkit-details-marker { display: none; }
+details.menu summary::after { content: " ▾"; }
+.menu-body {
+  position: absolute; z-index: 5; margin-top: .3rem; min-width: 16rem; max-width: 22rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: .6rem .8rem; display: grid; gap: .35rem; box-shadow: 0 4px 16px rgb(0 0 0 / .08);
+}
+.menu-body p { margin: 0 0 .2rem; }
+.menu-body form { margin: 0; }
+.menu-body button.link { text-align: left; }
+
+/* Хронология: пост раскрывается на месте */
+.timeline details.post summary { cursor: pointer; list-style: none; }
+.timeline details.post summary::-webkit-details-marker { display: none; }
+.timeline .post-title { color: var(--text); }
+.timeline details.post[open] .post-title, .timeline details.post summary:hover .post-title { color: var(--accent); }
+.post-body { margin: .4rem 0 .2rem; padding: .5rem .75rem; background: var(--bg); border-radius: 8px; font-size: .92rem; }
+.post-body p { margin: 0 0 .4rem; }
+
+/* Страница темы: что попадает и что нет */
+.rules { display: grid; gap: 1rem; margin-top: 1rem; }
+.rules ul { margin: 0; padding-left: 1.1rem; display: grid; gap: .35rem; }
+.example form.inline { display: inline; margin-left: .3rem; }
+.pick { display: inline-flex; align-items: center; gap: .4rem; margin-top: .55rem; font-size: .88rem; color: var(--muted); cursor: pointer; }

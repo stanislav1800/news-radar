@@ -6,14 +6,14 @@
   <h1>Темы</h1>
   <a class="button" href="/search">Новая тема — через поиск</a>
 </div>
-<p class="muted">Тема — сохранённый поиск, который учится на ваших 👍 и 👎. Новые сюжеты по темам — в <a href="/my">Моей ленте</a>.</p>
+<p class="muted">Тема — сохранённый поиск, который учится на примерах: что вы добавили в тему и что убрали. Новые сюжеты по темам — в <a href="/my">Моей ленте</a>.</p>
 
 {% if stats %}
 <section class="card">
   <div class="table-wrap">
     <table class="sources topics">
       <thead>
-        <tr><th>Тема</th><th>Слова запроса</th><th class="num">За неделю</th><th class="num">👍 / 👎</th><th></th></tr>
+        <tr><th>Тема</th><th>Слова запроса</th><th class="num">За неделю</th><th class="num">Примеров: + / −</th><th></th></tr>
       </thead>
       <tbody>
         {% for row in stats %}

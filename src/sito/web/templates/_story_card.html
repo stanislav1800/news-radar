@@ -1,5 +1,5 @@
 {# Карточка сюжета. Импорт: {% import "_story_card.html" as cards with context %} — нужны user и now.
-   note — пометка в строке под заголовком; содержимое {% call %} — под карточкой (почему в теме, 👍/👎) #}
+   note — пометка в строке под заголовком; содержимое {% call %} — под карточкой (почему в теме и что сделать) #}
 {% macro story_card(s, note=none) %}
 <article class="story-card {{ s.read_state }}">
   <a class="story-title" href="/stories/{{ s.id }}">{{ s.title }}</a>

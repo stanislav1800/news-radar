@@ -7,42 +7,33 @@
   <h1>{{ topic.name }}</h1>
   {% if topic.paused %}<span class="badge">на паузе</span>{% else %}<a href="/my?topic={{ topic.id }}">Лента темы →</a>{% endif %}
 </div>
-<p class="muted">
-  {% if topic.query %}Сюжеты со словами <code>{{ topic.query }}</code>{% if likes %} и похожие на примеры 👍{% endif %}.
-  {% else %}Сюжеты, похожие на примеры 👍.{% endif %}
-  Сюжеты, похожие на 👎 больше, чем на 👍, в тему не попадают.
-</p>
-
-<h2>Примеры</h2>
-<div class="examples">
+<section class="card rules">
   <div>
-    <h3>👍 Искать похожее</h3>
-    {% if likes %}
+    <h3>Что попадает в тему</h3>
     <ul>
-      {% for e in likes %}{% include "_example.html" %}{% endfor %}
+      {% if words %}<li>сюжеты, где есть слова: <strong>{{ words | join(", ") }}</strong> <span class="muted small">(в любой форме)</span></li>{% endif %}
+      {% for e in likes %}<li>похожие на {% include "_example.html" %}</li>{% endfor %}
     </ul>
-    {% else %}<p class="muted small">Пока нет. Отмечайте 👍 подходящие сюжеты в ленте или ниже.</p>{% endif %}
+    {% if not words and not likes %}<p class="muted small">Пока ничего: добавьте в тему подходящие сюжеты ниже.</p>{% endif %}
   </div>
+  {% if dislikes %}
   <div>
-    <h3>👎 Не показывать такие</h3>
-    {% if dislikes %}
-    <ul>
-      {% for e in dislikes %}{% include "_example.html" %}{% endfor %}
-    </ul>
-    {% else %}<p class="muted small">Пока нет. Если в теме попадается не то — отметьте 👎.</p>{% endif %}
+    <h3>Что не попадает</h3>
+    <ul>{% for e in dislikes %}<li>похожие на {% include "_example.html" %}</li>{% endfor %}</ul>
   </div>
-</div>
+  {% endif %}
+</section>
 
 {% if not topic.paused %}
 <h2>Возможно, подойдёт</h2>
 {% if suggestions %}
-<p class="muted small">Свежие сюжеты, которых нет в теме, но они {{ "похожи на ваши 👍" if likes else "близки к запросу по смыслу" }}.
-  👍 — добавить в тему и искать похожее.</p>
+<p class="muted small">Свежие сюжеты, которых нет в теме, но они {{ "похожи на её примеры" if likes else "близки к запросу по смыслу" }}.
+  «Добавить в тему» — и тема будет находить похожие.</p>
 <div class="feed">
   {% with stories=suggestions, divider_before=none, more_url=none %}{% include "_feed_items.html" %}{% endwith %}
 </div>
 {% else %}
-<p class="muted small">Подсказок нет: {{ "отметьте 👍 хотя бы один сюжет" if not topic.query else "близких сюжетов за неделю не нашлось" }}.</p>
+<p class="muted small">Подсказок нет: {{ "добавьте в тему хотя бы один сюжет" if not topic.query else "близких сюжетов за неделю не нашлось" }}.</p>
 {% endif %}
 {% endif %}
 

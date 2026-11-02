@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
+from html import escape
 from typing import Annotated
 from xml.etree import ElementTree as ET
 
@@ -22,6 +23,7 @@ from sito.services.topics import (
     Vote,
     topic_name_from,
 )
+from sito.utils.lemmas import parse_query
 from sito.web.deps import CurrentUser, DbSession
 from sito.web.forms import form_fields, validation_errors
 from sito.web.security import flash, safe_next
@@ -98,19 +100,28 @@ async def create_topic(
     examples = len(like or []) + len(dislike or [])
     flash(request, f"Тема «{topic.name}» создана. Сейчас в ней сюжетов: {count}"
                    + (f", примеров: {examples}." if examples else ".")
-                   + " Отмечайте 👍 и 👎 в ленте — тема будет точнее.")
+                   + " Лишнее убирайте кнопкой «Не по теме» в ленте.")
     return _redirect(f"/topics/{topic.id}")
 
 
 @router.post("/topics/follow")
 async def follow_story(request: Request, db: DbSession, user: CurrentUser, story_id: Annotated[int, Form()]) -> Response:
-    """«Следить за такими»: сюжет становится первым примером новой темы."""
+    """«Следить за такими»: сюжет становится первым примером новой темы.
+
+    С HTMX тема создаётся на месте: страница сюжета остаётся открытой, появляется строка с итогом.
+    """
+    htmx = bool(request.headers.get("HX-Request"))
     try:
         topic = await _service(request, db).follow_story(user, story_id)
     except TopicError as exc:
+        if htmx:
+            return templates.TemplateResponse(request, "_reason_error.html", {"message": str(exc)})
         flash(request, str(exc))
         return _redirect(f"/stories/{story_id}")
     await db.commit()
+    if htmx:
+        count = await TopicRepository(db).matched_count(topic.id)
+        return templates.TemplateResponse(request, "_followed.html", {"topic": topic, "count": count})
     flash(request, f"Тема «{topic.name}» создана: в неё попадут сюжеты, похожие на этот. "
                    "Название можно поменять ниже.")
     return _redirect(f"/topics/{topic.id}")
@@ -124,9 +135,10 @@ async def vote(
     topic_id: Annotated[int, Form()], story_id: Annotated[int, Form()], vote: Annotated[Vote, Form()],
     next: Annotated[str, Form()] = "/my",
 ) -> Response:
-    """Отметка сюжета в теме. HTMX получает обновлённую строку «почему в теме», без JS — переход назад."""
+    """«Не по теме», «Добавить в тему», «Отменить». HTMX получает обновлённую строку с итогом
+    (сколько похожих сюжетов добавилось или убралось), без JS — переход назад."""
     try:
-        await _service(request, db).vote(user, topic_id, story_id, vote)
+        result = await _service(request, db).vote(user, topic_id, story_id, vote)
     except TopicError as exc:
         if request.headers.get("HX-Request"):
             return templates.TemplateResponse(request, "_reason_error.html", {"message": str(exc)})
@@ -137,7 +149,11 @@ async def vote(
         return _redirect(safe_next(next))
     reasons = await TopicRepository(db).reasons(user.id, [story_id], topic_ids=[topic_id], include_unmatched=True)
     [reason] = reasons[story_id]
-    return templates.TemplateResponse(request, "_reason.html", {"r": reason, "next": safe_next(next)})
+    # Сам сюжет тоже входит в счёт: «и ещё N похожих» — без него
+    others = max(0, (result.added if vote is Vote.LIKE else result.removed) - 1)
+    return templates.TemplateResponse(request, "_reason.html", {
+        "r": reason, "next": safe_next(next), "done": None if vote is Vote.NONE else str(vote), "others": others,
+    })
 
 
 # --- Страница темы -------------------------------------------------------------------------------
@@ -165,6 +181,7 @@ async def _render_topic(
         "user": user, "topic": topic,
         "likes": [e for e in examples if e.liked], "dislikes": [e for e in examples if not e.liked],
         "suggestions": suggestions, "reasons": reasons,
+        "words": parse_query(topic.query).words if topic.query else [],
         "fields": form_fields(TopicForm, form_values, errors), "form_open": errors is not None,
         "rss_url": f"{request.base_url}rss/{topic.rss_token}",
         "next": f"/topics/{topic.id}",
@@ -209,6 +226,8 @@ async def delete_topic(request: Request, db: DbSession, user: CurrentUser, topic
     await _owned(db, user, topic_id)
     name = await _service(request, db).delete(user, topic_id)
     await db.commit()
+    if request.headers.get("HX-Request"):  # «Отменить» сразу после «Следить за такими»
+        return HTMLResponse(f'<div class="reason out"><span class="why">Тема «{escape(name)}» удалена.</span></div>')
     flash(request, f"Тема «{name}» удалена")
     return _redirect("/topics")
 

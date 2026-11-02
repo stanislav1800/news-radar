@@ -14,15 +14,15 @@
 </form>
 
 {% if results.query %}
-{# Отметки 👍/👎 у результатов принадлежат этой форме (атрибут form) и уходят в тему первыми примерами #}
+{# Галочки «Взять в тему» у результатов принадлежат этой форме (атрибут form) и уходят в тему первыми примерами #}
 <form id="follow" class="follow card" method="post" action="/topics">
   <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
   <input type="hidden" name="query" value="{{ results.query }}">
   <input type="hidden" name="name" value="{{ topic_name }}">
   <div>
     <strong>Следить за «{{ results.query }}»</strong>
-    <p class="muted small">Новые сюжеты будут приходить в «Мою ленту». Отметьте ниже 👍 то, что подходит, и 👎 лишнее —
-      тема начнёт с этих примеров и будет искать похожее.</p>
+    <p class="muted small">Новые сюжеты со всеми этими словами будут приходить в «Мою ленту».
+      Отметьте ниже «Взять в тему» у подходящих — тема будет находить и похожие на них, даже без этих слов.</p>
   </div>
   <button type="submit">Следить</button>
 </form>
@@ -31,18 +31,13 @@
 <div class="feed">
   {% for h in results.hits %}
   {% call cards.story_card(h.story, "по смыслу" if h.by_meaning else none) %}
-  <div class="pick" role="group" aria-label="Пример для темы">
-    <label class="vote-toggle" title="Подходит: искать похожее">
-      <input type="checkbox" name="like" value="{{ h.story.id }}" form="follow"><span>👍</span>
-    </label>
-    <label class="vote-toggle" title="Не то: такие в тему не брать">
-      <input type="checkbox" name="dislike" value="{{ h.story.id }}" form="follow"><span>👎</span>
-    </label>
-  </div>
+  <label class="pick">
+    <input type="checkbox" name="like" value="{{ h.story.id }}" form="follow"> Взять в тему
+  </label>
   {% endcall %}
   {% endfor %}
 </div>
-<p class="follow-again"><button type="submit" form="follow">Следить с отмеченными примерами</button></p>
+<p class="follow-again"><button type="submit" form="follow">Следить</button></p>
 {% else %}
 <p class="muted">Ничего не нашлось{% if results.period %} за этот период — попробуйте период длиннее{% endif %}.</p>
 {% endif %}

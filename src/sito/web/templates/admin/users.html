@@ -3,6 +3,7 @@
 {% block title %}Пользователи · Сито{% endblock %}
 {% block main_class %}page wide{% endblock %}
 {% block content %}
+{% set admin_tab = "users" %}{% include "admin/_tabs.html" %}
 <h1>Пользователи</h1>
 <p class="muted">Регистрации нет: пользователей заводит администратор. У каждого свои темы и лента, источники общие.</p>
 

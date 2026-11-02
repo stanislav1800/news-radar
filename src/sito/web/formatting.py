@@ -29,6 +29,23 @@ def local_time(moment: datetime, timezone: str, now: datetime | None = None) -> 
     return f"{day}, {clock}"
 
 
+MONTHS_GENITIVE = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
+                   "сентября", "октября", "ноября", "декабря"]
+
+
+def day_label(moment: datetime, timezone: str, now: datetime | None = None) -> str:
+    """Заголовок дня в ленте: «Сегодня», «Вчера», «28 октября», «28 октября 2025»."""
+    zone = _zone(timezone)
+    day = moment.astimezone(zone).date()
+    today = (now or datetime.now(UTC)).astimezone(zone).date()
+    if day == today:
+        return "Сегодня"
+    if (today - day).days == 1:
+        return "Вчера"
+    label = f"{day.day} {MONTHS_GENITIVE[day.month - 1]}"
+    return label if day.year == today.year else f"{label} {day.year}"
+
+
 def ago(moment: datetime, timezone: str, now: datetime | None = None) -> str:
     """«только что», «5 мин назад», «3 ч назад», дальше — как local_time."""
     current = now or datetime.now(UTC)

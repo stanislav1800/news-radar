@@ -1,8 +1,8 @@
-{# Пример темы в списке «что попадает / не попадает»: ссылка на сюжет и «убрать» #}
+{# Сюжет-пример темы: ссылка и «убрать»/«вернуть» #}
 <span class="example">
-  {% if e.story_id %}<a href="/stories/{{ e.story_id }}">«{{ e.title }}»</a>{% else %}«{{ e.title }}»{% endif %}
+  {% if e.story_id %}<a href="/stories/{{ e.story_id }}">{{ e.title }}</a>{% else %}{{ e.title }}{% endif %}
   <form class="inline" method="post" action="/topics/{{ topic.id }}/examples/{{ e.id }}/delete">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button class="link muted small" type="submit" aria-label="Убрать пример «{{ e.title }}»">убрать</button>
+    <button class="link small" type="submit">{{ "убрать" if e.liked else "вернуть" }}</button>
   </form>
 </span>

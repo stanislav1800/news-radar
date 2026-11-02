@@ -2,58 +2,33 @@
 {% import "_story_card.html" as cards with context %}
 {% block title %}{% if results.query %}{{ results.query }} · {% endif %}Поиск · Сито{% endblock %}
 {% block content %}
-<h1>Поиск</h1>
-<form class="search" method="get" action="/search" role="search">
-  <input type="search" name="q" value="{{ results.query }}" placeholder="например, уголь в Кузбассе" aria-label="Что искать" autofocus>
-  <select name="period" aria-label="За какой период">
-    {% for value, label in periods.items() %}
-    <option value="{{ value }}"{% if value == results.period %} selected{% endif %}>{{ label }}</option>
-    {% endfor %}
-  </select>
-  <button type="submit">Найти</button>
-</form>
-
-{% if results.query %}
-{# Галочки «Взять в тему» у результатов принадлежат этой форме (атрибут form) и уходят в тему первыми примерами #}
-<form id="follow" class="follow card" method="post" action="/topics">
+{% if not results.query %}
+<div class="card intro">
+  <strong>Новая тема</strong>
+  <p>Напишите в строке поиска вверху, о чём хотите знать, — например, «уголь в Кузбассе» или «Python».
+     Посмотрите, что нашлось, и нажмите «Следить»: появится ваша лента по этой теме.</p>
+</div>
+{% else %}
+<form class="follow card" method="post" action="/topics">
   <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
   <input type="hidden" name="query" value="{{ results.query }}">
   <input type="hidden" name="name" value="{{ topic_name }}">
   <div>
-    <strong>Следить за «{{ results.query }}»</strong>
-    <p class="muted small">Новые сюжеты со всеми этими словами будут приходить в «Мою ленту».
-      Отметьте ниже «Взять в тему» у подходящих — тема будет находить и похожие на них, даже без этих слов.</p>
+    <strong>{{ results.hits | length | plural("сюжет", "сюжета", "сюжетов") }} по запросу «{{ results.query }}»</strong>
+    <p class="muted small">Нажмите «Следить» — новые сюжеты с этими словами будут приходить в вашу ленту.</p>
   </div>
   <button type="submit">Следить</button>
 </form>
 
 {% if results.hits %}
 <div class="feed">
-  {% for h in results.hits %}
-  {% call cards.story_card(h.story, "по смыслу" if h.by_meaning else none) %}
-  <label class="pick">
-    <input type="checkbox" name="like" value="{{ h.story.id }}" form="follow"> Взять в тему
-  </label>
-  {% endcall %}
-  {% endfor %}
+  {% for h in results.hits %}{{ cards.story_card(h.story, note="по смыслу" if h.by_meaning else none) }}{% endfor %}
 </div>
-<p class="follow-again"><button type="submit" form="follow">Следить</button></p>
 {% else %}
-<p class="muted">Ничего не нашлось{% if results.period %} за этот период — попробуйте период длиннее{% endif %}.</p>
+<p class="muted">Ничего не нашлось. Попробуйте другие слова.</p>
 {% endif %}
 {% if results.meaning_unavailable %}
-<p class="muted small">Поиск по смыслу сейчас недоступен (модель не загружена), найдено только по словам.</p>
+<p class="muted small">Поиск по смыслу сейчас недоступен, найдено только по словам.</p>
 {% endif %}
 {% endif %}
-
-<details class="search-help">
-  <summary>Как искать точнее</summary>
-  <p class="small muted">Пишите обычным текстом, форма слов не важна: «уголь в Кузбассе» найдёт и «добычу угля в Кузбассе».
-    Сверху — сюжеты, где совпало больше слов и слова реже; ниже — близкие по смыслу без этих слов.</p>
-  <ul class="small muted">
-    <li><code>-слово</code> — без этого слова: <code>уголь -экспорт</code></li>
-    <li><code>"слова в кавычках"</code> — именно в таком порядке: <code>"ключевая ставка"</code></li>
-    <li><code>or</code> — любое из слов, для темы: <code>уголь or шахта</code></li>
-  </ul>
-</details>
 {% endblock %}

@@ -1,0 +1,13 @@
+{# Вкладки ленты: мои темы, каждая тема, главное, все новости. Число — новых с прошлого визита #}
+<nav class="tabs" aria-label="Ленты">
+  {% if topics %}
+  <a class="tab{% if view.kind == 'my' %} active{% endif %}" href="/?view=my">Мои темы{% if new_total %} <span class="count">{{ new_total }}</span>{% endif %}</a>
+  {% for t in topics %}
+  <a class="tab{% if view.topic_id == t.id %} active{% endif %}{% if t.paused %} paused{% endif %}" href="/?topic={{ t.id }}"
+     {% if t.paused %}title="На паузе: новые сюжеты не добавляются"{% endif %}>{{ t.name }}{% if new_counts.get(t.id) %} <span class="count">{{ new_counts[t.id] }}</span>{% endif %}</a>
+  {% endfor %}
+  {% endif %}
+  <a class="tab{% if view.kind == 'top' %} active{% endif %}" href="/?view=top" title="Сюжеты, которые подхватили много изданий">Главное</a>
+  <a class="tab{% if view.kind == 'all' %} active{% endif %}" href="/?view=all">Все новости</a>
+  <a class="tab add" href="/search" title="Новая тема: найдите, что интересно, и нажмите «Следить»">＋ Тема</a>
+</nav>

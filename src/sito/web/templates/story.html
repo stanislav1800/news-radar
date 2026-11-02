@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ story.title }} · Сито{% endblock %}
 {% block content %}
-<a class="back" href="/my">← Лента</a>
+<a class="back" href="/">← Лента</a>
 
 <article class="story">
   <h1>{{ story.title }}</h1>
@@ -17,32 +17,11 @@
 
   <section class="story-topics">
     <div id="topic-lines">{% for r in reasons %}{% include "_reason.html" %}{% endfor %}</div>
-    <div class="topic-actions">
-      <form method="post" action="/topics/follow" hx-post="/topics/follow" hx-target="#topic-lines" hx-swap="beforeend">
-        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-        <input type="hidden" name="story_id" value="{{ story.id }}">
-        <button class="secondary" type="submit" title="Новая тема: в «Моей ленте» будут сюжеты, похожие на этот">Следить за такими</button>
-      </form>
-      {% if other_topics %}
-      <details class="menu">
-        <summary>Добавить в тему…</summary>
-        <div class="menu-body">
-          <p class="muted small">Сюжет станет примером для темы: она будет находить похожие.</p>
-          {% for t in other_topics %}
-          <form method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="#topic-lines" hx-swap="beforeend"
-                hx-on::after-request="this.remove()">
-            <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-            <input type="hidden" name="story_id" value="{{ story.id }}">
-            <input type="hidden" name="topic_id" value="{{ t.id }}">
-            <input type="hidden" name="vote" value="like">
-            <input type="hidden" name="next" value="{{ next }}">
-            <button class="link" type="submit">{{ t.name }}</button>
-          </form>
-          {% endfor %}
-        </div>
-      </details>
-      {% endif %}
-    </div>
+    <form method="post" action="/topics/follow" hx-post="/topics/follow" hx-target="#topic-lines" hx-swap="beforeend">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="story_id" value="{{ story.id }}">
+      <button class="secondary" type="submit" title="Новая тема: в ленте будут сюжеты, похожие на этот">Следить за похожими</button>
+    </form>
   </section>
 
   <h2>Хронология</h2>

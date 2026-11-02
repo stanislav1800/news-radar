@@ -1,0 +1,3 @@
+{# Одна карточка: ответ HTMX на «Отменить» — карточка возвращается на место #}
+{% import "_story_card.html" as cards with context %}
+{{ cards.story_card(s, reasons=story_reasons or [], suggest=suggest) }}

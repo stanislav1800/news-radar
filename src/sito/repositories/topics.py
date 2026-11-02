@@ -291,6 +291,21 @@ class TopicRepository:
             return []
         return list(result.scalars())
 
+    async def new_counts(self, user_id: int, since: datetime) -> tuple[dict[int, int], int]:
+        """Сколько сюжетов появилось в каждой активной теме после since и сколько всего (без повторов)."""
+        query = (
+            select(TopicMatch.topic_id, TopicMatch.story_id)
+            .join(Story, Story.id == TopicMatch.story_id)
+            .join(Topic, Topic.id == TopicMatch.topic_id)
+            .where(Topic.user_id == user_id, Topic.paused.is_(False), Story.started_at > since)
+        )
+        per_topic: dict[int, int] = {}
+        stories: set[int] = set()
+        for topic_id, story_id in await self.session.execute(query):
+            per_topic[topic_id] = per_topic.get(topic_id, 0) + 1
+            stories.add(story_id)
+        return per_topic, len(stories)
+
     async def matched_count(self, topic_id: int) -> int:
         return await self.session.scalar(
             select(func.count()).select_from(TopicMatch).where(TopicMatch.topic_id == topic_id)

@@ -1,25 +1,29 @@
-"""Ленты сюжетов (общая и персональная) и страница сюжета."""
+"""Лента сюжетов с вкладками и страница сюжета.
+
+Вкладки одной ленты: «Мои темы» (все темы пользователя), отдельные темы, «Главное» (сюжеты,
+которые подхватили много изданий) и «Все новости». Адрес: /?view=my|top|all или /?topic=<id>.
+"""
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from sito.config import Settings
-from sito.models import User
+from sito.models import Topic, User
 from sito.repositories.stories import FeedStory, StoryRepository
-from sito.repositories.topics import TopicRepository
+from sito.repositories.topics import TopicReason, TopicRepository
 from sito.services.reading import ReadingService
+from sito.services.search import SearchService
 from sito.web.deps import CurrentUser, DbSession
-from sito.web.security import safe_next
+from sito.web.formatting import day_label
 from sito.web.templating import templates
 
 router = APIRouter()
 
-SOURCE_FILTERS = {1: "Все", 2: "2+ издания", 5: "5+"}
+SUGGESTIONS_DAYS = 7
 
 
 def _cursor(story: FeedStory) -> str:
@@ -53,129 +57,170 @@ def _divider_before(stories: list[FeedStory], boundary: datetime | None, after: 
     return None
 
 
+def _days_before(stories: list[FeedStory], user: User, now: datetime, after: datetime | None) -> dict[int, str]:
+    """Заголовки дней: id сюжета → «Сегодня», «Вчера», «28 октября» перед первым сюжетом дня."""
+    labels: dict[int, str] = {}
+    previous = day_label(after, user.timezone, now) if after else None
+    for story in stories:
+        label = day_label(story.started_at, user.timezone, now)
+        if label != previous:
+            labels[story.id] = label
+        previous = label
+    return labels
+
+
 @dataclass(frozen=True, slots=True)
-class FeedFilters:
-    """Фильтры ленты. Общая лента — без темы; персональная — по всем темам или одной (topic)."""
+class FeedView:
+    """Какая вкладка открыта: my — все темы, topic — одна тема, top — главное, all — все новости."""
 
-    personal: bool = False
-    topic: int | None = None
-    min_sources: int = 1
-    unread: bool = False
+    kind: str
+    topic_id: int | None = None
 
-    def query(self, cursor: str | None = None) -> str:
-        params: dict[str, object] = {}
-        if self.personal and self.topic is not None:
-            params["topic"] = self.topic
-        if not self.personal and self.min_sources != 1:
-            params["min_sources"] = self.min_sources
-        if self.unread:
-            params["unread"] = "true"
-        if cursor:
-            params["cursor"] = cursor
+    @classmethod
+    def parse(cls, view: str | None, topic: int | None, topics: list[Topic]) -> "FeedView":
+        known = {t.id for t in topics}
+        if topic is not None and topic in known:
+            return cls("topic", topic)
+        if view in ("my", "top", "all"):
+            return cls(view) if view != "my" or topics else cls("top")
+        # По умолчанию — свои темы, а пока их нет — главное
+        return cls("my" if topics else "top")
+
+    def query(self, **extra: object) -> str:
+        params: dict[str, object] = {"topic": self.topic_id} if self.kind == "topic" else {"view": self.kind}
+        params.update({k: v for k, v in extra.items() if v is not None})
         return urlencode(params)
 
-    def url(self, cursor: str | None = None, items: bool = False) -> str:
-        path = ("/my" if self.personal else "/feed") + ("/items" if items else "")
-        if path == "/feed":
-            path = "/"
-        query = self.query(cursor)
-        return f"{path}?{query}" if query else path
+    def url(self, path: str = "/", **extra: object) -> str:
+        return f"{path}?{self.query(**extra)}"
 
 
 async def _feed_context(
-    db: DbSession, config: Settings, user: User, filters: FeedFilters, cursor: str | None,
+    request: Request, db: DbSession, user: User, view: FeedView, topics: list[Topic], cursor: str | None,
 ) -> dict[str, object]:
+    config: Settings = request.app.state.settings
+    now = datetime.now(UTC)
     before = _parse_cursor(cursor)
+    active = [t for t in topics if not t.paused]
     topic_ids: list[int] | None = None
-    if filters.personal:
-        active = await TopicRepository(db).list_for_user(user.id, active_only=True)
-        topic_ids = [t.id for t in active if filters.topic in (None, t.id)]
+    if view.kind == "my":
+        topic_ids = [t.id for t in active]
+    elif view.kind == "topic":
+        topic_ids = [view.topic_id] if view.topic_id is not None else []
+    min_sources = config.top_min_sources if view.kind == "top" else 1
+
     # На один больше, чем показываем: так понятно, есть ли что-то дальше
     stories = await StoryRepository(db).feed(
-        config.feed_page_size + 1,
-        user_id=user.id, read_all_before=user.read_all_before,
-        min_sources=filters.min_sources, before=before, unread_only=filters.unread, topic_ids=topic_ids,
+        config.feed_page_size + 1, user_id=user.id, read_all_before=user.read_all_before,
+        min_sources=min_sources, before=before, topic_ids=topic_ids,
     )
     has_more = len(stories) > config.feed_page_size
     stories = stories[: config.feed_page_size]
     next_cursor = _cursor(stories[-1]) if has_more else None
-    reasons = (
-        await TopicRepository(db).reasons(user.id, [s.id for s in stories], topic_ids=topic_ids)
-        if filters.personal else {}
-    )
+    reasons: dict[int, list[TopicReason]] = {}
+    if topic_ids:
+        reasons = await TopicRepository(db).reasons(user.id, [s.id for s in stories], topic_ids=topic_ids)
+
+    suggestions: list[FeedStory] = []
+    suggestion_reasons: dict[int, list[TopicReason]] = {}
+    topic = next((t for t in topics if t.id == view.topic_id), None)
+    if topic is not None and not has_more and not topic.paused:
+        suggestions, suggestion_reasons = await _suggestions(request, db, user, topic)
+
+    after = before[0] if before else None
     return {
         "stories": stories,
-        "filters": filters,
+        "view": view,
         "reasons": reasons,
-        "next": filters.url(),
-        "more_url": filters.url(next_cursor) if next_cursor else None,
-        "more_items_url": filters.url(next_cursor, items=True) if next_cursor else None,
-        "divider_before": _divider_before(stories, user.previous_visit_at, before[0] if before else None),
-        "now": datetime.now(UTC),
+        "more_url": view.url(cursor=next_cursor) if next_cursor else None,
+        "more_items_url": view.url("/feed/items", cursor=next_cursor) if next_cursor else None,
+        "divider_before": _divider_before(stories, user.previous_visit_at, after),
+        "days_before": _days_before(stories, user, now, after),
+        "suggestions": suggestions,
+        "suggestion_reasons": suggestion_reasons,
+        # С какого момента плашка «Ещё N новых» считает новое: самый свежий показанный сюжет
+        "since": int(stories[0].started_at.timestamp() * 1_000_000) if stories and before is None else None,
+        "now": now,
     }
+
+
+async def _suggestions(
+    request: Request, db: DbSession, user: User, topic: Topic,
+) -> tuple[list[FeedStory], dict[int, list[TopicReason]]]:
+    """«Ещё может подойти» в конце ленты темы: свежие сюжеты не из темы, похожие на неё."""
+    config: Settings = request.app.state.settings
+    repo = TopicRepository(db)
+    vector = None
+    if topic.query:
+        vector = await SearchService(db, request.app.state.embedder, config.search_limit).embed_query(topic.query)
+    ids = await repo.suggestions(
+        topic, datetime.now(UTC) - timedelta(days=SUGGESTIONS_DAYS), config.topic_suggestions_limit, vector
+    )
+    cards = await StoryRepository(db).cards(ids, user_id=user.id, read_all_before=user.read_all_before)
+    return cards, await repo.reasons(user.id, ids, topic_ids=[topic.id], include_unmatched=True)
+
+
+async def _tabs(db: DbSession, user: User, topics: list[Topic]) -> dict[str, object]:
+    """Счётчики новых с прошлого визита на вкладках тем."""
+    if user.previous_visit_at is None:
+        return {"new_counts": {}, "new_total": 0}
+    counts, total = await TopicRepository(db).new_counts(user.id, user.previous_visit_at)
+    return {"new_counts": counts, "new_total": total}
 
 
 @router.get("/", response_class=HTMLResponse)
 async def feed(
     request: Request, db: DbSession, user: CurrentUser,
-    min_sources: int = 1, unread: bool = False, cursor: str | None = None,
+    view: str | None = None, topic: int | None = None, cursor: str | None = None,
 ) -> HTMLResponse:
     if cursor is None:  # заход в ленту, а не следующая страница
         ReadingService.register_visit(user)
         await db.commit()
-    filters = FeedFilters(min_sources=min_sources if min_sources in SOURCE_FILTERS else 1, unread=unread)
-    context = await _feed_context(db, request.app.state.settings, user, filters, cursor)
-    return templates.TemplateResponse(
-        request, "feed.html", {"user": user, "source_filters": SOURCE_FILTERS, **context}
-    )
+    topics = await TopicRepository(db).list_for_user(user.id)
+    feed_view = FeedView.parse(view, topic, topics)
+    context = await _feed_context(request, db, user, feed_view, topics, cursor)
+    return templates.TemplateResponse(request, "feed.html", {
+        "user": user, "topics": topics, **await _tabs(db, user, topics), **context,
+    })
 
 
 @router.get("/feed/items", response_class=HTMLResponse)
 async def feed_items(
     request: Request, db: DbSession, user: CurrentUser,
-    min_sources: int = 1, unread: bool = False, cursor: str | None = None,
+    view: str | None = None, topic: int | None = None, cursor: str | None = None,
 ) -> HTMLResponse:
     """Следующая порция карточек для HTMX: дописывается в конец ленты."""
-    filters = FeedFilters(min_sources=min_sources if min_sources in SOURCE_FILTERS else 1, unread=unread)
-    context = await _feed_context(db, request.app.state.settings, user, filters, cursor)
+    topics = await TopicRepository(db).list_for_user(user.id)
+    context = await _feed_context(request, db, user, FeedView.parse(view, topic, topics), topics, cursor)
     return templates.TemplateResponse(request, "_feed_items.html", {"user": user, **context})
 
 
-@router.get("/my", response_class=HTMLResponse)
-async def my_feed(
+@router.get("/feed/newer", response_class=HTMLResponse)
+async def feed_newer(
     request: Request, db: DbSession, user: CurrentUser,
-    topic: int | None = None, unread: bool = False, cursor: str | None = None,
+    since: str, view: str | None = None, topic: int | None = None,
 ) -> HTMLResponse:
-    """Персональная лента: сюжеты по темам пользователя, фильтр по одной теме."""
-    if cursor is None:
-        ReadingService.register_visit(user)
-        await db.commit()
-    topics = await TopicRepository(db).list_for_user(user.id, active_only=True)
-    if topic is not None and topic not in {t.id for t in topics}:
-        topic = None  # чужая, удалённая или на паузе — показываем все темы
-    filters = FeedFilters(personal=True, topic=topic, unread=unread)
-    context = await _feed_context(db, request.app.state.settings, user, filters, cursor)
-    return templates.TemplateResponse(request, "my_feed.html", {"user": user, "topics": topics, **context})
+    """Плашка «Ещё N новых»: лента раз в минуту спрашивает, не появилось ли новое сверху."""
+    config: Settings = request.app.state.settings
+    moment = _parse_cursor(f"{since}-0")
+    topics = await TopicRepository(db).list_for_user(user.id)
+    feed_view = FeedView.parse(view, topic, topics)
+    count = 0
+    if moment is not None:
+        topic_ids = (
+            [t.id for t in topics if not t.paused] if feed_view.kind == "my"
+            else [feed_view.topic_id] if feed_view.topic_id is not None else None
+        )
+        count = await StoryRepository(db).count_newer(
+            moment[0], min_sources=config.top_min_sources if feed_view.kind == "top" else 1, topic_ids=topic_ids,
+        )
+    return templates.TemplateResponse(request, "_newer.html", {"count": count, "url": feed_view.url()})
 
 
-@router.get("/my/items", response_class=HTMLResponse)
-async def my_feed_items(
-    request: Request, db: DbSession, user: CurrentUser,
-    topic: int | None = None, unread: bool = False, cursor: str | None = None,
-) -> HTMLResponse:
-    filters = FeedFilters(personal=True, topic=topic, unread=unread)
-    context = await _feed_context(db, request.app.state.settings, user, filters, cursor)
-    return templates.TemplateResponse(request, "_feed_items.html", {"user": user, **context})
-
-
-@router.post("/feed/mark-all-read")
-async def mark_all_read(db: DbSession, user: CurrentUser, next: Annotated[str, Form()] = "/") -> Response:
-    ReadingService.mark_all_read(user)
-    await db.commit()
-    target = safe_next(next)
-    response = RedirectResponse(target, status.HTTP_303_SEE_OTHER)
-    response.headers["HX-Redirect"] = target
-    return response
+@router.get("/my")
+async def my_feed_redirect(topic: int | None = None) -> Response:
+    """Старый адрес персональной ленты: теперь это вкладки главной страницы."""
+    return RedirectResponse(f"/?topic={topic}" if topic else "/?view=my", status.HTTP_301_MOVED_PERMANENTLY)
 
 
 @router.get("/stories/{story_id}", response_class=HTMLResponse)
@@ -192,18 +237,14 @@ async def story_page(request: Request, db: DbSession, user: CurrentUser, story_i
         window=timedelta(hours=config.related_window_hours),
         limit=config.related_limit,
     )
-    topics = TopicRepository(db)
-    # Темы, где сюжет есть или где пользователь его отметил (👎 — чтобы было видно и можно было снять)
+    # Темы, где сюжет есть или откуда пользователь его убрал (чтобы можно было вернуть)
     reasons = [
-        r for r in (await topics.reasons(user.id, [story_id], include_unmatched=True)).get(story_id, [])
+        r for r in (await TopicRepository(db).reasons(user.id, [story_id], include_unmatched=True)).get(story_id, [])
         if r.matched or r.vote
     ]
-    shown = {r.topic_id for r in reasons}
-    other_topics = [t for t in await topics.list_for_user(user.id, active_only=True) if t.id not in shown]
     await ReadingService(db).mark_read(user, story_id)
     await db.commit()
     return templates.TemplateResponse(request, "story.html", {
         "user": user, "story": story, "timeline": timeline, "similar": similar,
-        "reasons": reasons, "other_topics": other_topics, "next": f"/stories/{story_id}",
-        "now": datetime.now(UTC),
+        "reasons": reasons, "next": f"/stories/{story_id}", "now": datetime.now(UTC),
     })

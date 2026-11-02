@@ -1,6 +1,6 @@
 """Поиск, темы, 👍/👎 и RSS-лента темы."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from email.utils import format_datetime
 from html import escape
 from typing import Annotated
@@ -13,8 +13,8 @@ from pydantic import ValidationError
 from sito.config import Settings
 from sito.models import Topic, User
 from sito.repositories.stories import StoryRepository
-from sito.repositories.topics import TopicRepository
-from sito.services.search import DEFAULT_PERIOD, PERIODS, SearchService
+from sito.repositories.topics import TopicReason, TopicRepository
+from sito.services.search import DEFAULT_PERIOD, SearchService
 from sito.services.topics import (
     TopicError,
     TopicForm,
@@ -32,7 +32,6 @@ from sito.web.templating import templates
 router = APIRouter()
 
 RSS_ITEMS = 50
-SUGGESTIONS_DAYS = 7
 
 
 def _service(request: Request, db: DbSession) -> TopicService:
@@ -68,7 +67,7 @@ async def search_page(
     config: Settings = request.app.state.settings
     results = await SearchService(db, request.app.state.embedder, config.search_limit).search(user, q, period)
     return templates.TemplateResponse(request, "search.html", {
-        "user": user, "results": results, "periods": PERIODS,
+        "user": user, "results": results, "search_query": results.query,
         "topic_name": topic_name_from(results.query) if results.query else "",
         "now": datetime.now(UTC),
     })
@@ -76,10 +75,10 @@ async def search_page(
 
 # --- Список тем и создание -----------------------------------------------------------------------
 
-@router.get("/topics", response_class=HTMLResponse)
-async def topics_page(request: Request, db: DbSession, user: CurrentUser) -> HTMLResponse:
-    stats = await TopicRepository(db).stats(user.id, datetime.now(UTC) - timedelta(days=7))
-    return templates.TemplateResponse(request, "topics.html", {"user": user, "stats": stats})
+@router.get("/topics")
+async def topics_page() -> Response:
+    """Темы — вкладки ленты; отдельного списка больше нет."""
+    return _redirect("/")
 
 
 @router.post("/topics")
@@ -100,8 +99,8 @@ async def create_topic(
     examples = len(like or []) + len(dislike or [])
     flash(request, f"Тема «{topic.name}» создана. Сейчас в ней сюжетов: {count}"
                    + (f", примеров: {examples}." if examples else ".")
-                   + " Лишнее убирайте кнопкой «Не по теме» в ленте.")
-    return _redirect(f"/topics/{topic.id}")
+                   + " Лишнее убирайте кнопкой «Не по теме» в меню «⋯» у сюжета.")
+    return _redirect(f"/?topic={topic.id}")
 
 
 @router.post("/topics/follow")
@@ -122,9 +121,8 @@ async def follow_story(request: Request, db: DbSession, user: CurrentUser, story
     if htmx:
         count = await TopicRepository(db).matched_count(topic.id)
         return templates.TemplateResponse(request, "_followed.html", {"topic": topic, "count": count})
-    flash(request, f"Тема «{topic.name}» создана: в неё попадут сюжеты, похожие на этот. "
-                   "Название можно поменять ниже.")
-    return _redirect(f"/topics/{topic.id}")
+    flash(request, f"Тема «{topic.name}» создана: в неё попадут сюжеты, похожие на этот.")
+    return _redirect(f"/?topic={topic.id}")
 
 
 # --- 👍/👎 ---------------------------------------------------------------------------------------
@@ -133,7 +131,7 @@ async def follow_story(request: Request, db: DbSession, user: CurrentUser, story
 async def vote(
     request: Request, db: DbSession, user: CurrentUser,
     topic_id: Annotated[int, Form()], story_id: Annotated[int, Form()], vote: Annotated[Vote, Form()],
-    next: Annotated[str, Form()] = "/my",
+    next: Annotated[str, Form()] = "/", mode: Annotated[str, Form()] = "line",
 ) -> Response:
     """«Не по теме», «Добавить в тему», «Отменить». HTMX получает обновлённую строку с итогом
     (сколько похожих сюжетов добавилось или убралось), без JS — переход назад."""
@@ -151,9 +149,30 @@ async def vote(
     [reason] = reasons[story_id]
     # Сам сюжет тоже входит в счёт: «и ещё N похожих» — без него
     others = max(0, (result.added if vote is Vote.LIKE else result.removed) - 1)
+    done = None if vote is Vote.NONE else str(vote)
+    if mode in ("feed", "suggest"):
+        return await _card_response(request, db, user, reason, mode, done, others)
     return templates.TemplateResponse(request, "_reason.html", {
-        "r": reason, "next": safe_next(next), "done": None if vote is Vote.NONE else str(vote), "others": others,
+        "r": reason, "next": safe_next(next), "done": done, "others": others,
     })
+
+
+async def _card_response(
+    request: Request, db: DbSession, user: User, reason: TopicReason, mode: str, done: str | None, others: int,
+) -> HTMLResponse:
+    """Ответ для карточки в ленте: итог действия с «Отменить» или, после отмены, снова сама карточка."""
+    if done is not None:
+        return templates.TemplateResponse(request, "_card_result.html", {
+            "r": reason, "done": done, "others": others, "mode": mode,
+        })
+    [card] = await StoryRepository(db).cards([reason.story_id], user_id=user.id, read_all_before=user.read_all_before)
+    if mode == "suggest":
+        context: dict[str, object] = {"suggest": reason}
+    else:
+        active = [t.id for t in await TopicRepository(db).list_for_user(user.id, active_only=True)]
+        story_reasons = await TopicRepository(db).reasons(user.id, [card.id], topic_ids=active)
+        context = {"story_reasons": story_reasons.get(card.id, [])}
+    return templates.TemplateResponse(request, "_card_single.html", {"user": user, "s": card, "now": datetime.now(UTC), **context})
 
 
 # --- Страница темы -------------------------------------------------------------------------------
@@ -163,24 +182,11 @@ async def _render_topic(
     values: dict[str, str] | None = None, errors: dict[str, str] | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
-    config: Settings = request.app.state.settings
-    repo = TopicRepository(db)
-    examples = await repo.examples(topic.id)
-    vector = None
-    if topic.query:
-        vector = await SearchService(db, request.app.state.embedder, config.search_limit).embed_query(topic.query)
-    suggestion_ids = await repo.suggestions(
-        topic, datetime.now(UTC) - timedelta(days=SUGGESTIONS_DAYS), config.topic_suggestions_limit, vector
-    )
-    suggestions = await StoryRepository(db).cards(
-        suggestion_ids, user_id=user.id, read_all_before=user.read_all_before
-    )
-    reasons = await repo.reasons(user.id, suggestion_ids, topic_ids=[topic.id], include_unmatched=True)
+    examples = await TopicRepository(db).examples(topic.id)
     form_values = values or {"name": topic.name, "query": topic.query or ""}
     return templates.TemplateResponse(request, "topic.html", {
         "user": user, "topic": topic,
         "likes": [e for e in examples if e.liked], "dislikes": [e for e in examples if not e.liked],
-        "suggestions": suggestions, "reasons": reasons,
         "words": parse_query(topic.query).words if topic.query else [],
         "fields": form_fields(TopicForm, form_values, errors), "form_open": errors is not None,
         "rss_url": f"{request.base_url}rss/{topic.rss_token}",
@@ -229,7 +235,7 @@ async def delete_topic(request: Request, db: DbSession, user: CurrentUser, topic
     if request.headers.get("HX-Request"):  # «Отменить» сразу после «Следить за такими»
         return HTMLResponse(f'<div class="reason out"><span class="why">Тема «{escape(name)}» удалена.</span></div>')
     flash(request, f"Тема «{name}» удалена")
-    return _redirect("/topics")
+    return _redirect("/")
 
 
 @router.post("/topics/{topic_id}/rss-token")
@@ -268,7 +274,7 @@ async def topic_rss(request: Request, db: DbSession, token: str) -> Response:
     rss = ET.Element("rss", version="2.0")
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = f"Сито · {topic.name}"
-    ET.SubElement(channel, "link").text = f"{base}my?topic={topic.id}"
+    ET.SubElement(channel, "link").text = f"{base}?topic={topic.id}"
     ET.SubElement(channel, "description").text = f"Сюжеты по теме «{topic.name}»"
     ET.SubElement(channel, "language").text = "ru"
     for story in stories:

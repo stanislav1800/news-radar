@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
+from html import escape
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
@@ -45,6 +46,27 @@ async def summary_page(request: Request, db: DbSession, user: AdminUser) -> HTML
         "beat": beat,
         "now": now,
     })
+
+
+@router.get("/alert", response_class=HTMLResponse)
+async def alert(db: DbSession) -> HTMLResponse:
+    """Красная точка у меню аккаунта, если что-то сломалось. Подгружается в шапку каждой страницы."""
+    now = datetime.now(UTC)
+    pipeline = PipelineRepository(db)
+    beat = await pipeline.heartbeat("worker")
+    sources = await SourceRepository(db).list_with_stats()
+    problems = []
+    if worker_state(beat.beat_at if beat else None, now) != "ok":
+        problems.append("worker не работает")
+    if failing := sum(s.failing for s in sources):
+        problems.append(f"источников с ошибкой: {failing}")
+    if silent := sum(s.silent_since(now) is not None for s in sources):
+        problems.append(f"молчат: {silent}")
+    if failed := (await pipeline.summary()).by_status.get("failed", 0):
+        problems.append(f"постов с ошибкой: {failed}")
+    if not problems:
+        return HTMLResponse("")
+    return HTMLResponse(f'<span class="alert-dot" title="{escape("; ".join(problems))}"></span>')
 
 
 @router.post("/failed/retry")

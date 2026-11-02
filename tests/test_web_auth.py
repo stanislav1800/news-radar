@@ -157,3 +157,17 @@ async def test_duplicate_user(session_factory: async_sessionmaker[AsyncSession],
     async with session_factory() as session:
         with pytest.raises(UserError, match="уже есть"):
             await UserService(session).create("IVAN", PASSWORD)
+
+
+async def test_own_settings(logged_in: httpx.AsyncClient) -> None:
+    """Свой часовой пояс и пароль: смена пароля требует текущий и не выкидывает из этой сессии."""
+    token = await csrf_from(logged_in, "/settings")
+    await logged_in.post("/settings/timezone", data={"csrf_token": token, "timezone": "Asia/Novokuznetsk"})
+    assert 'value="Asia/Novokuznetsk" selected' in (await logged_in.get("/settings")).text
+
+    await logged_in.post("/settings/password", data={"csrf_token": token, "current": "wrong", "new": "new-password-1"})
+    assert "Текущий пароль неверный" in (await logged_in.get("/settings")).text
+
+    await logged_in.post("/settings/password", data={"csrf_token": token, "current": PASSWORD, "new": "new-password-1"})
+    page = await logged_in.get("/settings")
+    assert page.status_code == 200 and "Пароль изменён" in page.text

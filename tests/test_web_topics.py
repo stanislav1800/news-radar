@@ -36,13 +36,13 @@ async def post(client: httpx.AsyncClient, path: str, page: str = "/search", **da
 async def follow_search(client: httpx.AsyncClient, query: str) -> int:
     response = await post(client, "/topics", query=query)
     assert response.status_code == 303
-    match = re.fullmatch(r"/topics/(\d+)", response.headers["location"])
+    match = re.fullmatch(r"/\?topic=(\d+)", response.headers["location"])
     assert match
     return int(match.group(1))
 
 
 async def test_pages_need_login(client: httpx.AsyncClient) -> None:
-    for path in ("/my", "/search?q=x", "/topics", "/topics/1"):
+    for path in ("/", "/search?q=x", "/topics/1"):
         assert (await client.get(path)).status_code == 303, path
 
 
@@ -63,8 +63,7 @@ async def test_search_one_list_words_then_meaning(
     assert titles(html) == ["Добыча угля в Кузбассе выросла", "Министр о добыче", "Шахтёры перевыполнили план"]
     assert html.count("по смыслу</span>") == 1  # пометка только у найденного по смыслу
     assert embedder.calls == ["добыча угля в кузбассе"]  # пробелы схлопнуты
-    assert "Следить за «добыча угля в кузбассе»" in html
-    assert "Как искать точнее" in html  # синтаксис — в свёрнутой подсказке, а не на виду
+    assert "по запросу «добыча угля в кузбассе»" in html and ">Следить</button>" in html
 
     await logged_in.get("/search", params={"q": 'добыча or "уголь" -нефть'})
     assert embedder.calls[-1] == "добыча уголь"  # синтаксис поиска по словам модели не передаётся
@@ -99,7 +98,7 @@ async def test_follow_with_examples_from_results(
     async with session_factory() as session:
         votes = {(e.story_id, e.liked) for e in await session.scalars(select(TopicExample))}
     assert votes == {(good, True), (bad, False)}
-    my = (await logged_in.get("/my")).text
+    my = (await logged_in.get("/?view=my")).text
     assert "Шахтёры перевыполнили план" in titles(my) and "Угольный утюг: обзор" not in titles(my)
 
 
@@ -129,7 +128,7 @@ async def test_follow_search_and_personal_feed(
 
     page = await logged_in.get(f"/topics/{topic_id}")
     assert "Тема «уголь» создана. Сейчас в ней сюжетов: 1" in page.text
-    my = (await logged_in.get("/my")).text
+    my = (await logged_in.get("/?view=my")).text
     assert titles(my) == ["Уголь подорожал"]
     assert "есть слова: уголь" in my and "Не по теме" in my
     [topic] = await topics_of(session_factory)
@@ -137,8 +136,8 @@ async def test_follow_search_and_personal_feed(
 
 
 async def test_empty_personal_feed_explains_topics(logged_in: httpx.AsyncClient) -> None:
-    html = (await logged_in.get("/my")).text
-    assert "Тема — это сохранённый поиск" in html
+    html = (await logged_in.get("/")).text
+    assert "О чём вы хотите знать?" in html
 
 
 async def test_vote_with_htmx_returns_fragment(
@@ -147,11 +146,11 @@ async def test_vote_with_htmx_returns_fragment(
     good = await stories.add([("ТАСС", "Уголь: добыча выросла", timedelta(hours=2))], embedding=direction(0))
     bad = await stories.add([("ТАСС", "Уголь для шашлыка", timedelta(hours=1))], embedding=direction(90))
     topic_id = await follow_search(logged_in, "уголь")
-    token = await csrf_from(logged_in, "/my")
+    token = await csrf_from(logged_in, "/")
 
     response = await logged_in.post(
         "/topics/vote",
-        data={"topic_id": topic_id, "story_id": bad, "vote": "dislike", "next": "/my"},
+        data={"topic_id": topic_id, "story_id": bad, "vote": "dislike", "next": "/"},
         headers={"HX-Request": "true", "X-CSRF-Token": token},
     )
 
@@ -159,10 +158,10 @@ async def test_vote_with_htmx_returns_fragment(
     assert "<html" not in response.text
     assert "Убрано из темы" in response.text and "Отменить" in response.text
     assert 'class="reason out"' in response.text
-    assert titles((await logged_in.get("/my")).text) == ["Уголь: добыча выросла"]
+    assert titles((await logged_in.get("/?view=my")).text) == ["Уголь: добыча выросла"]
 
     # 👍 без HTMX — обычная форма: переход обратно
-    response = await post(logged_in, "/topics/vote", page="/my", topic_id=topic_id, story_id=good,
+    response = await post(logged_in, "/topics/vote", page="/", topic_id=topic_id, story_id=good,
                           vote="like", next=f"/stories/{good}")
     assert response.status_code == 303 and response.headers["location"] == f"/stories/{good}"
     assert "вы добавили этот сюжет" in (await logged_in.get(f"/stories/{good}")).text
@@ -183,15 +182,15 @@ async def test_follow_story_from_story_page(
 ) -> None:
     story = await stories.add([("ТАСС", "Запуск ракеты Ангара", timedelta(hours=1))], embedding=direction(0))
     page = (await logged_in.get(f"/stories/{story}")).text
-    assert "Следить за такими" in page
+    assert "Следить за похожими" in page
 
     response = await post(logged_in, "/topics/follow", page=f"/stories/{story}", story_id=story)
 
     assert response.status_code == 303
     [topic] = await topics_of(session_factory)
     assert topic.name == "Запуск ракеты Ангара" and topic.query is None
-    topic_page = (await logged_in.get(response.headers["location"])).text
-    assert "Что попадает в тему" in topic_page and "«Запуск ракеты Ангара»" in topic_page
+    topic_feed = (await logged_in.get(response.headers["location"])).text
+    assert titles(topic_feed) == ["Запуск ракеты Ангара"]
 
 
 async def test_topic_page_suggestions(
@@ -202,11 +201,11 @@ async def test_topic_page_suggestions(
     embedder.vectors["уголь"] = direction(0)
     topic_id = await follow_search(logged_in, "уголь")
 
-    html = (await logged_in.get(f"/topics/{topic_id}")).text
-    suggestions = html.split("Возможно, подойдёт")[1]
+    html = (await logged_in.get(f"/?topic={topic_id}")).text
+    suggestions = html.split("Ещё может подойти")[1]
 
     assert titles(suggestions) == ["Шахтёры вышли на смену"]
-    assert "Не в теме" in suggestions and "Добавить в тему" in suggestions
+    assert "Добавить в тему" in suggestions
 
 
 async def test_someone_elses_topic_is_not_found(
@@ -220,12 +219,12 @@ async def test_someone_elses_topic_is_not_found(
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as other:
         await login(other, "petr")
         assert (await other.get(f"/topics/{topic_id}")).status_code == 404
-        assert (await post(other, f"/topics/{topic_id}/delete", page="/topics")).status_code == 404
-        await post(other, "/topics/vote", page="/topics", topic_id=topic_id, story_id=story, vote="dislike")
-        assert titles((await other.get(f"/my?topic={topic_id}")).text) == []
+        assert (await post(other, f"/topics/{topic_id}/delete", page="/")).status_code == 404
+        await post(other, "/topics/vote", page="/", topic_id=topic_id, story_id=story, vote="dislike")
+        assert titles((await other.get(f"/?topic={topic_id}")).text) == []
 
     assert len(await topics_of(session_factory)) == 1
-    assert titles((await logged_in.get("/my")).text) == ["Уголь"]  # чужой 👎 не сработал
+    assert titles((await logged_in.get("/?view=my")).text) == ["Уголь"]  # чужой 👎 не сработал
 
 
 async def test_rename_pause_delete(
@@ -243,10 +242,10 @@ async def test_rename_pause_delete(
     assert topic.name == "Угольная отрасль" and topic.query == "уголь or шахта"
 
     await post(logged_in, f"{page}/pause", page=page, paused="true")
-    assert titles((await logged_in.get("/my")).text) == []
-    assert "на паузе" in (await logged_in.get("/topics")).text
+    assert titles((await logged_in.get("/?view=my")).text) == []
+    assert "tab paused" in (await logged_in.get("/")).text  # вкладка темы на паузе приглушена
     await post(logged_in, f"{page}/pause", page=page, paused="false")
-    assert titles((await logged_in.get("/my")).text) == ["Уголь подорожал"]
+    assert titles((await logged_in.get("/?view=my")).text) == ["Уголь подорожал"]
 
     await post(logged_in, f"{page}/delete", page=page)
     assert await topics_of(session_factory) == []
@@ -289,7 +288,7 @@ async def test_vote_requires_csrf(logged_in: httpx.AsyncClient, stories: Stories
     response = await logged_in.post("/topics/vote", data={"topic_id": topic_id, "story_id": story, "vote": "dislike"})
 
     assert response.status_code == 403
-    assert titles((await logged_in.get("/my")).text) == ["Уголь"]
+    assert titles((await logged_in.get("/?view=my")).text) == ["Уголь"]
 
 
 async def test_story_page_timeline_and_follow_in_place(logged_in: httpx.AsyncClient, stories: Stories) -> None:

@@ -1,7 +1,7 @@
 {# Ответ на «Следить за такими» с HTMX: тема создана, страница сюжета остаётся на месте #}
 <div class="reason">
   <span class="why">
-    Создана тема <a class="topic-name" href="/my?topic={{ topic.id }}">«{{ topic.name }}»</a>: похожие сюжеты будут в «Моей ленте»
+    Создана тема <a class="topic-name" href="/?topic={{ topic.id }}">«{{ topic.name }}»</a>: похожие сюжеты будут в «Моей ленте»
     {%- if count > 1 %}, уже нашлось {{ count | plural("сюжет", "сюжета", "сюжетов") }}{% endif %}.
   </span>
   <a class="small" href="/topics/{{ topic.id }}">Настроить</a>

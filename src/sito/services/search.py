@@ -14,7 +14,7 @@ from sito.utils.lemmas import parse_query
 logger = logging.getLogger(__name__)
 
 PERIODS = {1: "Сутки", 7: "Неделя", 30: "Месяц", 0: "Всё время"}
-DEFAULT_PERIOD = 7
+DEFAULT_PERIOD = 0  # за всё время: свежие и так выше (см. _SEARCH_WORDS_SQL)
 # Ниже этого сходство запроса с сюжетом — уже не про запрос. Короткий запрос похож на сюжеты
 # слабее, чем сюжеты друг на друга: у релевантных обычно 0.79–0.87
 MEANING_MIN_SIMILARITY = 0.78

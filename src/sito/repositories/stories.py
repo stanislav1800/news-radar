@@ -177,7 +177,7 @@ _SIMILAR_SQL = text("""
 #   — вес слова — его редкость среди сюжетов периода (IDF): «уголь» весит больше, чем «Кузбасс»,
 #     поэтому сюжеты про уголь выше сюжетов про погоду в Кузбассе;
 #   — слово в заголовке весит в TITLE_BOOST раз больше, чем только в тексте;
-#   — при равенстве выше свежие.
+#   — свежие выше: вес плавно падает с возрастом сюжета (за две недели — вдвое).
 # Слова исключённые (-слово) отсекают сюжет целиком. Поиск идёт по индексу ix_post_search_vector.
 TITLE_BOOST = 1.5
 _SEARCH_WORDS_SQL = text("""
@@ -204,7 +204,8 @@ _SEARCH_WORDS_SQL = text("""
     total AS (SELECT count(*) AS n FROM period)
     SELECT hits.story_id,
            sum(ln(1 + (total.n - df.n + 0.5) / (df.n + 0.5))
-               * CASE WHEN hits.in_title THEN :title_boost ELSE 1 END) AS score
+               * CASE WHEN hits.in_title THEN :title_boost ELSE 1 END)
+           / (1 + extract(epoch FROM now() - story.last_post_at) / 86400 / 14) AS score
     FROM hits JOIN df USING (lemma) CROSS JOIN total
     JOIN story ON story.id = hits.story_id
     WHERE hits.story_id NOT IN (SELECT story_id FROM excluded)
@@ -336,6 +337,20 @@ class StoryRepository:
             )
             query = query.where(matched.exists())
         return [FeedStory(**row._mapping) for row in await self.session.execute(query)]
+
+    async def count_newer(
+        self, since: datetime, *, min_sources: int = 1, topic_ids: Sequence[int] | None = None,
+    ) -> int:
+        """Сколько сюжетов появилось после since: для плашки «Ещё N новых»."""
+        query = select(func.count()).select_from(Story).where(
+            Story.started_at > since, Story.sources_count >= min_sources
+        )
+        if topic_ids is not None:
+            query = query.where(
+                select(TopicMatch.story_id)
+                .where(TopicMatch.story_id == Story.id, TopicMatch.topic_id.in_(topic_ids)).exists()
+            )
+        return await self.session.scalar(query) or 0
 
     async def cards(
         self, story_ids: Sequence[int], *, user_id: int, read_all_before: datetime | None = None

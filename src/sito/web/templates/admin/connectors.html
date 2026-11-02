@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% import "_form_fields.html" as form %}
-{% block title %}Подключения · Сито{% endblock %}
+{% block title %}Источники · Сито{% endblock %}
 {% block main_class %}page wide{% endblock %}
 {% block content %}
-<h1>Подключения</h1>
+{% set admin_tab = "sources" %}{% include "admin/_tabs.html" %}
+<h1>Источники</h1>
 <p class="muted">Источники общие для всех пользователей. Подключение — тип источников со своими настройками и учётными данными; RSS есть всегда.</p>
 
 {% for section in sections %}

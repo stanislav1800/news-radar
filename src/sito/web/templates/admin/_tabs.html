@@ -1,0 +1,6 @@
+{# Разделы администрирования #}
+<nav class="tabs admin-tabs" aria-label="Администрирование">
+  <a class="tab{% if admin_tab == 'state' %} active{% endif %}" href="/admin">Состояние</a>
+  <a class="tab{% if admin_tab == 'sources' %} active{% endif %}" href="/admin/connectors">Источники</a>
+  <a class="tab{% if admin_tab == 'users' %} active{% endif %}" href="/admin/users">Пользователи</a>
+</nav>

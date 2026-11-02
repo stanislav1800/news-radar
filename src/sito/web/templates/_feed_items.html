@@ -1,17 +1,23 @@
-{# Карточки сюжетов. Отдельный файл: его же отдаёт /feed/items для «Показать ещё» #}
+{# Карточки ленты. Отдельный файл: его же отдаёт /feed/items для «Показать ещё» #}
 {% import "_story_card.html" as cards with context %}
 {% for s in stories %}
+{% if s.id in days_before %}<h2 class="day">{{ days_before[s.id] }}</h2>{% endif %}
 {% if s.id == divider_before %}
-<div class="divider" role="separator">
-  Вы были здесь {{ user.previous_visit_at | ago(user.timezone, now) }}
-</div>
+<div class="divider" role="separator">Вы были здесь {{ user.previous_visit_at | ago(user.timezone, now) }}</div>
 {% endif %}
-{% call cards.story_card(s) %}
-  {% for r in (reasons or {}).get(s.id, []) %}{% include "_reason.html" %}{% endfor %}
-{% endcall %}
+{{ cards.story_card(s, reasons=(reasons or {}).get(s.id, [])) }}
 {% endfor %}
 
 {% if more_url %}
 {# Без JavaScript — обычная ссылка на следующую страницу, с HTMX — дописывает карточки на место ссылки #}
 <a class="more" href="{{ more_url }}" hx-get="{{ more_items_url }}" hx-target="this" hx-swap="outerHTML">Показать ещё</a>
+{% elif suggestions %}
+<section class="suggestions">
+  <h2>Ещё может подойти</h2>
+  <p class="muted small">Свежие сюжеты, похожие на эту тему. Добавьте подходящие — тема будет находить такие сама.</p>
+  {% for s in suggestions %}
+  {% set r = (suggestion_reasons.get(s.id) or [none])[0] %}
+  {{ cards.story_card(s, suggest=r) }}
+  {% endfor %}
+</section>
 {% endif %}

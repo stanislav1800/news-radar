@@ -1,61 +1,32 @@
 {% extends "base.html" %}
 {% import "_form_fields.html" as form %}
-{% block title %}{{ topic.name }} · Темы · Сито{% endblock %}
+{% block title %}{{ topic.name }} · Настройки темы · Сито{% endblock %}
 {% block content %}
-<a class="back" href="/topics">← Темы</a>
-<div class="feed-head">
-  <h1>{{ topic.name }}</h1>
-  {% if topic.paused %}<span class="badge">на паузе</span>{% else %}<a href="/my?topic={{ topic.id }}">Лента темы →</a>{% endif %}
-</div>
-<section class="card rules">
-  <div>
-    <h3>Что попадает в тему</h3>
-    <ul>
-      {% if words %}<li>сюжеты, где есть слова: <strong>{{ words | join(", ") }}</strong> <span class="muted small">(в любой форме)</span></li>{% endif %}
-      {% for e in likes %}<li>похожие на {% include "_example.html" %}</li>{% endfor %}
-    </ul>
-    {% if not words and not likes %}<p class="muted small">Пока ничего: добавьте в тему подходящие сюжеты ниже.</p>{% endif %}
-  </div>
-  {% if dislikes %}
-  <div>
-    <h3>Что не попадает</h3>
-    <ul>{% for e in dislikes %}<li>похожие на {% include "_example.html" %}</li>{% endfor %}</ul>
-  </div>
-  {% endif %}
-</section>
+<a class="back" href="/?topic={{ topic.id }}">← К ленте темы</a>
+<h1>{{ topic.name }}</h1>
 
-{% if not topic.paused %}
-<h2>Возможно, подойдёт</h2>
-{% if suggestions %}
-<p class="muted small">Свежие сюжеты, которых нет в теме, но они {{ "похожи на её примеры" if likes else "близки к запросу по смыслу" }}.
-  «Добавить в тему» — и тема будет находить похожие.</p>
-<div class="feed">
-  {% with stories=suggestions, divider_before=none, more_url=none %}{% include "_feed_items.html" %}{% endwith %}
-</div>
-{% else %}
-<p class="muted small">Подсказок нет: {{ "добавьте в тему хотя бы один сюжет" if not topic.query else "близких сюжетов за неделю не нашлось" }}.</p>
-{% endif %}
-{% endif %}
-
-<h2>Настройки</h2>
 <section class="card settings">
   <form class="stack" method="post" action="/topics/{{ topic.id }}">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
     {{ form.render(fields) }}
     <button type="submit">Сохранить</button>
   </form>
+</section>
 
-  <div class="setting">
-    <strong>RSS-лента темы</strong>
-    <p class="muted small">Для RSS-читалки. Адрес секретный: по нему лента открывается без пароля.</p>
-    <input class="rss-url" type="text" readonly value="{{ rss_url }}" aria-label="Адрес RSS-ленты" onclick="this.select()">
-    <form method="post" action="/topics/{{ topic.id }}/rss-token"
-          onsubmit='return confirm({{ "Старый адрес перестанет работать. Сменить?" | tojson }})'>
-      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-      <button class="link" type="submit">Сменить адрес</button>
-    </form>
-  </div>
+{% if likes %}
+<h2>Добавленные сюжеты</h2>
+<p class="muted small">Тема находит похожие на них, даже без слов из названия.</p>
+<ul class="examples-list">{% for e in likes %}<li>{% include "_example.html" %}</li>{% endfor %}</ul>
+{% endif %}
 
+{% if dislikes %}
+<h2>Убранные сюжеты</h2>
+<p class="muted small">Похожие на них в тему не попадают. Убрали по ошибке — верните.</p>
+<ul class="examples-list">{% for e in dislikes %}<li>{% include "_example.html" %}</li>{% endfor %}</ul>
+{% endif %}
+
+<h2>Управление</h2>
+<section class="card settings">
   <div class="setting row">
     <form method="post" action="/topics/{{ topic.id }}/pause">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
@@ -63,10 +34,20 @@
       <button class="link" type="submit">{{ "Снять с паузы" if topic.paused else "Поставить на паузу" }}</button>
     </form>
     <form method="post" action="/topics/{{ topic.id }}/delete"
-          onsubmit='return confirm({{ ("Удалить тему «" ~ topic.name ~ "» вместе с примерами?") | tojson }})'>
+          onsubmit='return confirm({{ ("Удалить тему «" ~ topic.name ~ "»?") | tojson }})'>
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
       <button class="link danger" type="submit">Удалить тему</button>
     </form>
   </div>
+  <details>
+    <summary class="muted small">Дополнительно: RSS-лента темы</summary>
+    <p class="muted small">Для RSS-читалки. Адрес секретный: по нему лента открывается без пароля.</p>
+    <input class="rss-url" type="text" readonly value="{{ rss_url }}" aria-label="Адрес RSS-ленты" onclick="this.select()">
+    <form method="post" action="/topics/{{ topic.id }}/rss-token"
+          onsubmit='return confirm({{ "Старый адрес перестанет работать. Сменить?" | tojson }})'>
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <button class="link" type="submit">Сменить адрес</button>
+    </form>
+  </details>
 </section>
 {% endblock %}

@@ -1,7 +1,7 @@
 {# Строка «тема ↔ сюжет»: в теме ли сюжет, почему и что с ним сделать. r — TopicReason.
    Сразу после действия: done — like/dislike, others — сколько похожих сюжетов изменилось вместе с этим.
    HTMX заменяет всю строку ответом /topics/vote. #}
-{% set topic_link %}<a class="topic-name" href="/my?topic={{ r.topic_id }}">«{{ r.topic_name }}»</a>{% endset %}
+{% set topic_link %}<a class="topic-name" href="/?topic={{ r.topic_id }}">«{{ r.topic_name }}»</a>{% endset %}
 <div class="reason{% if not r.matched %} out{% endif %}">
   <span class="why">
     {%- if done == "dislike" -%}

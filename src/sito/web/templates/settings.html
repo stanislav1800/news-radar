@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Настройки · Сито{% endblock %}
+{% block content %}
+<h1>Настройки</h1>
+
+<h2>Часовой пояс</h2>
+<section class="card">
+  <form class="inline-form" method="post" action="/settings/timezone">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <select name="timezone" aria-label="Часовой пояс">
+      {% for value, label in timezones.items() %}
+      <option value="{{ value }}"{% if value == user.timezone %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Сохранить</button>
+  </form>
+</section>
+
+<h2>Пароль</h2>
+<section class="card">
+  <form class="stack" method="post" action="/settings/password">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <label>Текущий пароль <input name="current" type="password" required autocomplete="current-password"></label>
+    <label>Новый пароль <input name="new" type="password" required minlength="8" autocomplete="new-password"></label>
+    <button type="submit">Сменить пароль</button>
+  </form>
+</section>
+{% endblock %}

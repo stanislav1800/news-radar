@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     login_max_failures: int = 5       # неудачных попыток входа подряд...
     login_lockout_minutes: int = 5    # ...после которых пауза
     feed_page_size: int = 30
+    top_min_sources: int = 5  # вкладка «Главное»: сюжеты, которые подхватили столько изданий
     # «Похожие» на странице сюжета: близкие по смыслу сюжеты, которые не склеились с этим
     related_min_similarity: float = 0.86
     related_window_hours: float = 48

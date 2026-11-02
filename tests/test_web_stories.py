@@ -74,23 +74,22 @@ async def test_feed_newest_first_with_counts(
         ("РБК", "40 погибших при столкновении поездов", timedelta(hours=1)),
     ])
 
-    html = (await logged_in.get("/")).text
+    html = (await logged_in.get("/?view=all")).text
 
     assert titles(html) == ["40 погибших при столкновении поездов", "Старый сюжет"]
     assert "2 издания" in html
     assert "обновлено 1 ч назад" in html
 
 
-async def test_feed_source_filter(
+async def test_top_tab_shows_widely_covered_stories(
     logged_in: httpx.AsyncClient, session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
 ) -> None:
     stories = Stories(session_factory, make_source)
-    await stories.add([("ТАСС", "Одиночный", timedelta(hours=1))])
-    await stories.add([("ТАСС", "Подхваченный", timedelta(hours=2)), ("РБК", "Подхваченный", timedelta(hours=2))])
+    await stories.add([(f"Издание {n}", "Подхватили все", timedelta(hours=1)) for n in range(5)])
+    await stories.add([("ТАСС", "Одно издание", timedelta(hours=1))])
 
-    assert titles((await logged_in.get("/?min_sources=2")).text) == ["Подхваченный"]
-    assert len(titles((await logged_in.get("/?min_sources=999")).text)) == 2  # неизвестный фильтр — «Все»
-
+    assert titles((await logged_in.get("/?view=top")).text) == ["Подхватили все"]
+    assert titles((await logged_in.get("/")).text) == ["Подхватили все"]  # без тем открывается «Главное»
 
 async def test_feed_pagination(
     logged_in: httpx.AsyncClient, session_factory: async_sessionmaker[AsyncSession],
@@ -101,12 +100,12 @@ async def test_feed_pagination(
     for i in range(page_size + 3):
         await stories.add([("ТАСС", f"Сюжет {i:02d}", timedelta(minutes=i + 1))])
 
-    first = (await logged_in.get("/")).text
+    first = (await logged_in.get("/?view=all")).text
     assert len(titles(first)) == page_size
-    cursor = re.search(r'hx-get="/feed/items\?cursor=([^"]+)"', first)
+    cursor = re.search(r'hx-get="/feed/items\?view=all&(?:amp;)?cursor=([^"]+)"', first)
     assert cursor, "нет ссылки «Показать ещё»"
 
-    more = await logged_in.get(f"/feed/items?cursor={cursor.group(1)}", headers={"HX-Request": "true"})
+    more = await logged_in.get(f"/feed/items?view=all&cursor={cursor.group(1)}", headers={"HX-Request": "true"})
 
     rest = titles(more.text)
     assert rest == [f"Сюжет {i:02d}" for i in range(page_size, page_size + 3)]
@@ -178,7 +177,7 @@ async def test_titles_are_escaped(
     stories = Stories(session_factory, make_source)
     await stories.add([("ТАСС", "<script>alert(1)</script>", timedelta(hours=1))])
 
-    html = (await logged_in.get("/")).text
+    html = (await logged_in.get("/?view=all")).text
 
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html

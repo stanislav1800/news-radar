@@ -1,8 +1,36 @@
 {# Карточка сюжета. Импорт: {% import "_story_card.html" as cards with context %} — нужны user и now.
-   note — пометка в строке под заголовком; содержимое {% call %} — под карточкой (почему в теме и что сделать) #}
-{% macro story_card(s, note=none) %}
-<article class="story-card {{ s.read_state }}">
-  <a class="story-title" href="/stories/{{ s.id }}">{{ s.title }}</a>
+   reasons — темы, в которых сюжет (метки и «Не по теме» в меню «⋯»);
+   suggest — тема, в которую сюжет можно добавить (кнопка «Добавить в тему»);
+   note — пометка в строке под заголовком («по смыслу»); содержимое {% call %} — под карточкой. #}
+{% macro why(r) -%}
+  {%- if r.vote == "like" %}вы добавили этот сюжет
+  {%- elif r.example_title %}похоже на «{{ r.example_title }}»
+  {%- elif r.by_words %}есть слова: {{ r.words | join(", ") }}{% endif -%}
+{%- endmacro %}
+
+{% macro story_card(s, note=none, reasons=[], suggest=none) %}
+<article class="story-card {{ s.read_state }}" id="story-{{ s.id }}">
+  <div class="card-head">
+    <a class="story-title" href="/stories/{{ s.id }}">{{ s.title }}</a>
+    {% if reasons %}
+    <details class="menu card-menu">
+      <summary aria-label="Действия с сюжетом">⋯</summary>
+      <div class="menu-body right">
+        {% for r in reasons %}
+        <form method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="#story-{{ s.id }}" hx-swap="outerHTML">
+          <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+          <input type="hidden" name="topic_id" value="{{ r.topic_id }}">
+          <input type="hidden" name="story_id" value="{{ s.id }}">
+          <input type="hidden" name="vote" value="dislike">
+          <input type="hidden" name="mode" value="feed">
+          <input type="hidden" name="next" value="/">
+          <button class="link" type="submit">Не по теме{% if reasons | length > 1 %} «{{ r.topic_name }}»{% endif %}</button>
+        </form>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
   {% if s.lead %}<p class="lead">{{ s.lead }}</p>{% endif %}
   <div class="meta">
     {% if note %}<span class="badge quiet">{{ note }}</span>{% endif %}
@@ -15,7 +43,19 @@
     {% if (s.last_post_at - s.started_at).total_seconds() > 600 %}
     · <span>обновлено {{ s.last_post_at | ago(user.timezone, now) }}</span>
     {% endif %}
+    {% for r in reasons %}<a class="tag" href="/?topic={{ r.topic_id }}" title="{{ why(r) }}">{{ r.topic_name }}</a>{% endfor %}
   </div>
+  {% if suggest %}
+  <form class="card-action" method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="#story-{{ s.id }}" hx-swap="outerHTML">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="topic_id" value="{{ suggest.topic_id }}">
+    <input type="hidden" name="story_id" value="{{ s.id }}">
+    <input type="hidden" name="vote" value="like">
+    <input type="hidden" name="mode" value="suggest">
+    <input type="hidden" name="next" value="/?topic={{ suggest.topic_id }}">
+    <button class="secondary" type="submit">Добавить в тему</button>
+  </form>
+  {% endif %}
   {% if caller is defined %}{{ caller() }}{% endif %}
 </article>
 {% endmacro %}

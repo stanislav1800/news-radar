@@ -11,25 +11,22 @@
 <body{% if user %} hx-headers='{"{{ CSRF_HEADER }}": "{{ csrf_token(request) }}"}'{% endif %}>
   {% if user %}
   <header class="topbar">
-    <a class="brand" href="/my">Сито</a>
-    <nav>
-      <a href="/my">Моя лента</a>
-      <a href="/">Все сюжеты</a>
-      <a href="/search">Поиск</a>
-      <a href="/topics">Темы</a>
-      {% if user.is_admin %}
-      <a href="/admin">Сводка</a>
-      <a href="/admin/connectors">Подключения</a>
-      <a href="/admin/users">Пользователи</a>
-      {% endif %}
-    </nav>
-    <div class="account">
-      <span class="muted">{{ user.username }}{% if user.is_admin %} · админ{% endif %}</span>
-      <form method="post" action="/logout">
-        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-        <button class="link" type="submit">Выйти</button>
-      </form>
-    </div>
+    <a class="brand" href="/">Сито</a>
+    <form class="top-search" method="get" action="/search" role="search">
+      <input type="search" name="q" value="{{ search_query | default('') }}"
+             placeholder="Найти или следить: например, уголь в Кузбассе" aria-label="Найти или следить">
+    </form>
+    <details class="menu account">
+      <summary>{{ user.username }}{% if user.is_admin %}<span hx-get="/admin/alert" hx-trigger="load" hx-swap="outerHTML"></span>{% endif %}</summary>
+      <div class="menu-body right">
+        <a href="/settings">Настройки</a>
+        {% if user.is_admin %}<a href="/admin">Администрирование</a>{% endif %}
+        <form method="post" action="/logout">
+          <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+          <button class="link" type="submit">Выйти</button>
+        </form>
+      </div>
+    </details>
   </header>
   {% endif %}
   <main class="{% block main_class %}page{% endblock %}">

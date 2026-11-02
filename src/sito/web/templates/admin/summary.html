@@ -1,8 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Сводка · Сито{% endblock %}
+{% block title %}Состояние · Сито{% endblock %}
 {% block main_class %}page wide{% endblock %}
 {% block content %}
-<h1>Сводка</h1>
+{% set admin_tab = "state" %}{% include "admin/_tabs.html" %}
+<h1>Состояние</h1>
 
 <section class="card stats">
   <div class="stat">

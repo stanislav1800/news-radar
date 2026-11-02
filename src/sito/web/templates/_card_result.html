@@ -1,0 +1,15 @@
+{# Карточка после «Не по теме» или «Добавить в тему»: что изменилось и «Отменить» #}
+<article class="story-card result" id="story-{{ r.story_id }}">
+  <span>
+    {% if done == "dislike" %}Убрано из темы «{{ r.topic_name }}»{% if others %} вместе с {{ others | plural("похожим", "похожими", "похожими") }}{% endif %}. Такие больше не попадут.
+    {% else %}Добавлено в тему «{{ r.topic_name }}»{% if others %}, и ещё {{ others | plural("похожий сюжет", "похожих сюжета", "похожих сюжетов") }}{% endif %}.{% endif %}
+  </span>
+  <form method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="#story-{{ r.story_id }}" hx-swap="outerHTML">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="topic_id" value="{{ r.topic_id }}">
+    <input type="hidden" name="story_id" value="{{ r.story_id }}">
+    <input type="hidden" name="vote" value="none">
+    <input type="hidden" name="mode" value="{{ mode }}">
+    <button class="link" type="submit">Отменить</button>
+  </form>
+</article>

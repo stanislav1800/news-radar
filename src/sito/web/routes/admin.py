@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from html import escape
 from typing import Annotated
 
+import segno
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
@@ -18,7 +19,7 @@ from sito.services.collector.registry import COLLECTORS, CollectorSpec, RssSourc
 from sito.services.collector.telegram import TelegramSourceForm
 from sito.services.connectors import ConnectorError, ConnectorService, secret_fields
 from sito.services.sources import SourceError, SourceService
-from sito.services.telegram_login import LoginError, TelegramLoginService
+from sito.services.telegram_login import LoginError, QrAttempt, TelegramLoginService
 from sito.web.deps import AdminUser, DbSession, require_admin
 from sito.web.forms import FormField, form_fields, validation_errors
 from sito.web.routes.health import worker_state
@@ -338,8 +339,10 @@ async def _render_login(
         delivery = service.delivery(connector)
     except ConnectorError as exc:
         step, error = "start", str(exc)
+    qr = request.app.state.qr_logins.get(connector.id)
     return templates.TemplateResponse(request, "admin/telegram_login.html", {
         "user": user, "connector": connector, "step": step, "error": error,
+        "qr_running": qr is not None and qr.status in ("waiting", "error"),
         "delivery": delivery[0], "next_delivery": delivery[1],
     }, status_code=status_code)
 
@@ -347,6 +350,28 @@ async def _render_login(
 @router.get("/connectors/{connector_id}/login", response_class=HTMLResponse)
 async def login_page(request: Request, db: DbSession, user: AdminUser, connector_id: int) -> HTMLResponse:
     return await _render_login(request, db, user, await _login_connector(db, connector_id))
+
+
+@router.get("/connectors/{connector_id}/login/qr", response_class=HTMLResponse)
+async def login_qr(request: Request, db: DbSession, user: AdminUser, connector_id: int) -> Response:
+    """Состояние входа по QR-коду для страницы входа (HTMX спрашивает раз в пару секунд)."""
+    connector = await _login_connector(db, connector_id)
+    attempt: QrAttempt | None = request.app.state.qr_logins.get(connector_id)
+    if attempt is not None and attempt.status in ("done", "password"):
+        request.app.state.qr_logins.cancel(connector_id)
+        if attempt.status == "done":
+            flash(request, f"Вход в «{connector.name}» выполнен. Worker подключится в течение минуты "
+                           "и заберёт посты каналов за последние сутки.")
+            target = f"/admin/connectors#connector-{connector_id}"
+        else:
+            target = f"/admin/connectors/{connector_id}/login"  # дальше — облачный пароль
+        return Response(headers={"HX-Redirect": target})
+    qr_svg = None
+    if attempt is not None and attempt.status == "waiting" and attempt.url:
+        qr_svg = segno.make(attempt.url, error="m").svg_inline(scale=5, border=2)
+    return templates.TemplateResponse(request, "admin/_telegram_qr.html", {
+        "connector": connector, "attempt": attempt, "qr_svg": qr_svg,
+    })
 
 
 @router.post("/connectors/{connector_id}/login/{action}")
@@ -364,7 +389,10 @@ async def login_step(
             done = await service.enter_code(connector, code)
         elif action == "password":
             done = await service.enter_password(connector, password)
+        elif action == "qr":
+            request.app.state.qr_logins.start(connector.id, *service.app_credentials(connector))
         elif action == "cancel":
+            request.app.state.qr_logins.cancel(connector.id)
             service.cancel(connector)
         else:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Нет такого шага")
@@ -378,6 +406,8 @@ async def login_step(
         return _back(f"#connector-{connector_id}")
     if action == "cancel":
         return _back(f"#connector-{connector_id}")
+    if action == "qr":
+        return RedirectResponse(f"/admin/connectors/{connector_id}/login?qr=1", status.HTTP_303_SEE_OTHER)
     return RedirectResponse(f"/admin/connectors/{connector_id}/login", status.HTTP_303_SEE_OTHER)
 
 

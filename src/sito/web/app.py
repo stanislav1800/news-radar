@@ -22,6 +22,7 @@ from sito.models.post import EMBEDDING_DIM
 from sito.services.collector.telegram_client import TelethonLogin
 from sito.services.embedding import Embedder, LazyEmbedder, SentenceTransformerEmbedder
 from sito.services.sources import http_trial_fetch
+from sito.services.telegram_login import QrLogins
 from sito.utils.crypto import SecretBox
 from sito.web.deps import LoginRequired, verify_csrf
 from sito.web.routes import account, admin, admin_users, auth, health, stories, topics
@@ -94,6 +95,9 @@ def create_app(
     app.state.secret_box = SecretBox(config.secret_key.get_secret_value())  # секреты подключений
     app.state.trial_fetch = http_trial_fetch(config)  # тесты подменяют, чтобы не ходить в сеть
     app.state.telegram_login = TelethonLogin()        # и вход в Telegram тоже
+    # Входы по QR-коду идут фоном, пока QR-код не отсканируют (один процесс веба)
+    app.state.qr_logins = QrLogins(app.state.session_factory, app.state.secret_box,
+                                   lambda: app.state.telegram_login)
     app.state.login_limiter = LoginLimiter(
         max_failures=config.login_max_failures,
         lockout_seconds=timedelta(minutes=config.login_lockout_minutes).total_seconds(),

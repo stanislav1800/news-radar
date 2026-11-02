@@ -6,6 +6,7 @@
 подключение не запускает (статус «нужен вход»).
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -195,6 +196,9 @@ class SignIn:
     needs_password: bool   # включена двухфакторная защита: нужен облачный пароль
 
 
+# Сколько ждать сканирования QR-кода, прежде чем сдаться
+QR_TIMEOUT = 300
+
 _LOGIN_ERRORS: dict[type[Exception], str] = {
     errors.ApiIdInvalidError: "api_id или api_hash неверные: проверьте на my.telegram.org",
     errors.PhoneNumberInvalidError: "Неверный номер телефона",
@@ -249,6 +253,30 @@ class TelethonLogin:
         async with _login_client(api_id, api_hash, session) as client:
             await client.sign_in(password=password)
             return SignIn(_save(client), needs_password=False)
+
+    async def qr_login(self, api_id: int, api_hash: str, on_url: Callable[[str, datetime], None],
+                       timeout: float = QR_TIMEOUT) -> SignIn:
+        """Вход по QR-коду: код подтверждения не нужен, вход подтверждают в приложении Telegram.
+
+        on_url получает адрес tg://login?token=… для QR-кода и время, когда он устареет. Токен живёт
+        около 30 секунд — пока никто не отсканировал, он пересоздаётся. Соединение держится открытым
+        всё время ожидания: иначе Telegram не сообщит, что код отсканирован.
+        """
+        async with _login_client(api_id, api_hash, "") as client:
+            qr = await client.qr_login()
+            deadline = asyncio.get_running_loop().time() + timeout
+            while True:
+                on_url(qr.url, qr.expires)
+                try:
+                    await qr.wait()
+                except TimeoutError:
+                    if asyncio.get_running_loop().time() > deadline:
+                        raise LoginError("QR-код так и не отсканировали: начните заново") from None
+                    await qr.recreate()
+                    continue
+                except errors.SessionPasswordNeededError:
+                    return SignIn(_save(client), needs_password=True)
+                return SignIn(_save(client), needs_password=False)
 
 
 def _save(client: TelegramClient) -> str:

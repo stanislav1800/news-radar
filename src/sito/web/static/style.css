@@ -388,3 +388,8 @@ h2.day:first-child { margin-top: 0; }
 [data-autohide] { transition: opacity .4s ease; }
 [data-autohide].fading { opacity: 0; }
 [data-settle]:not(.settled) .settled-only, [data-settle].settled .transient { display: none; }
+
+/* Вход в Telegram по QR-коду */
+.qr-login .qr { display: inline-block; background: #fff; padding: .5rem; border-radius: 8px; }
+.qr-login .qr svg { display: block; }
+.qr-login ol { margin: .75rem 0 0; padding-left: 1.2rem; }

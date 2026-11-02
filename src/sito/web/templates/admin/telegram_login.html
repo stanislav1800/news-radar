@@ -31,21 +31,29 @@
 {% elif step == "done" %}
   <p><span class="status-ok">Вход выполнен.</span> Worker собирает посты каналов, на которые подписан аккаунт.</p>
   <p class="muted small">Войти заново нужно, только если сессию отозвали (Telegram → Настройки → Устройства) или сменился аккаунт.</p>
+{% elif qr_running %}
+  {% include "admin/_telegram_qr.html" %}
 {% else %}
-  <p>Telegram пришлёт код подтверждения в приложение, где открыт аккаунт {{ connector.settings.phone }}.</p>
+  <p>Проще всего — по QR-коду: отсканируете его в приложении Telegram, где открыт аккаунт
+    {{ connector.settings.phone }}, и всё. Код подтверждения ждать не нужно.</p>
+  <form method="post" action="/admin/connectors/{{ connector.id }}/login/qr">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button type="submit">Войти по QR-коду</button>
+  </form>
+  <p class="muted small">Или по коду: Telegram пришлёт его в приложение, где открыт этот аккаунт.</p>
 {% endif %}
 
-{% if step in ("start", "done", "code") %}
+{% if step in ("done", "code") or (step == "start" and not qr_running) %}
   <form method="post" action="/admin/connectors/{{ connector.id }}/login/send-code">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button {% if step != "start" %}class="link"{% endif %} type="submit">
+    <button class="{{ 'secondary' if step == 'start' else 'link' }}" type="submit">
       {%- if step == "start" %}Прислать код
       {%- elif step == "code" %}Код не пришёл — прислать {{ next_delivery or "ещё раз" }}
       {%- else %}Войти заново{% endif -%}
     </button>
   </form>
 {% endif %}
-{% if step in ("code", "password") %}
+{% if step in ("code", "password") or qr_running %}
   <form method="post" action="/admin/connectors/{{ connector.id }}/login/cancel">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
     <button class="link" type="submit">Отменить вход</button>

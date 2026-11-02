@@ -1,6 +1,9 @@
 """Telegram в админке: подключение, мастер входа (код, пароль), канал по ссылке. Telegram поддельный."""
 
+import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -26,6 +29,7 @@ BOX = SecretBox("test-secret-key-0123")
 class FakeLogin:
     password: str | None = None  # облачный пароль, если включена двухэтапная проверка
     resend_exhausted: bool = False
+    scanned: asyncio.Event = field(default_factory=asyncio.Event)  # QR-код отсканировали в приложении
     calls: list[str] = field(default_factory=list)
 
     async def send_code(self, api_id: int, api_hash: str, phone: str) -> CodeSent:
@@ -44,6 +48,11 @@ class FakeLogin:
         if code != "12345" or session != "half-session" or phone_code_hash != "hash-1":
             raise LoginError("Код неверный")
         return SignIn("half-session-2", needs_password=True) if self.password else SignIn("full-session", False)
+
+    async def qr_login(self, api_id: int, api_hash: str, on_url: Callable[[str, datetime], None]) -> SignIn:
+        on_url("tg://login?token=abc", datetime.now(UTC))
+        await self.scanned.wait()
+        return SignIn("half-session-2", needs_password=True) if self.password else SignIn("qr-session", False)
 
     async def sign_in_password(self, api_id: int, api_hash: str, session: str, password: str) -> SignIn:
         if password != self.password or session != "half-session-2":
@@ -169,3 +178,27 @@ async def test_resend_falls_back_to_new_code(
 
     assert response.status_code == 303
     assert [c.split()[0] for c in fake_login.calls] == ["code", "resend", "code"]
+
+
+async def test_login_by_qr_code(
+    app: FastAPI, admin: httpx.AsyncClient, fake_login: FakeLogin, session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    page = await add_account(admin)
+    connector_id = (await connector(session_factory)).id
+
+    started = await post(admin, f"{page}/qr")
+    await asyncio.sleep(0)  # фоновый вход успевает получить токен
+    fragment = await admin.get(f"{page}/qr")
+
+    assert started.headers["location"] == f"{page}?qr=1"
+    assert "<svg" in fragment.text and "Подключить устройство" in fragment.text
+
+    fake_login.scanned.set()
+    attempt = app.state.qr_logins.get(connector_id)
+    await attempt.task
+    finished = await admin.get(f"{page}/qr")
+
+    assert finished.headers["HX-Redirect"] == f"/admin/connectors#connector-{connector_id}"
+    saved = await connector(session_factory)
+    assert saved.status == ConnectorStatus.ACTIVE
+    assert saved.secrets is not None and BOX.decrypt(saved.secrets)["session"] == "qr-session"

@@ -1,0 +1,15 @@
+{# Вход по QR-коду: страница спрашивает состояние раз в 2 секунды, QR-код обновляется сам #}
+<div class="qr-login" hx-get="/admin/connectors/{{ connector.id }}/login/qr" hx-trigger="every 2s" hx-swap="outerHTML">
+  {% if attempt and attempt.status == "error" %}
+  <div class="error" role="alert">{{ attempt.error }}</div>
+  {% elif qr_svg %}
+  <div class="qr">{{ qr_svg | safe }}</div>
+  <ol class="small">
+    <li>Откройте Telegram на телефоне, где открыт аккаунт {{ connector.settings.phone }}.</li>
+    <li>Настройки → Устройства → «Подключить устройство».</li>
+    <li>Наведите камеру на этот QR-код. Он обновляется сам, страницу перезагружать не нужно.</li>
+  </ol>
+  {% else %}
+  <p class="muted">Готовлю QR-код…</p>
+  {% endif %}
+</div>

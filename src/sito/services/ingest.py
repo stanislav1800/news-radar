@@ -10,7 +10,13 @@ from sito.models import ConnectorStatus, Source, SourceType
 from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.posts import NewPost, PostRepository
 from sito.repositories.sources import SourceRepository
-from sito.services.collector.base import BaseCollector, KnownSource, RawPost, SaveResult
+from sito.services.collector.base import (
+    BaseCollector,
+    KnownSource,
+    PendingSource,
+    RawPost,
+    SaveResult,
+)
 from sito.utils.urls import content_hash, normalize_url
 
 logger = logging.getLogger(__name__)
@@ -135,6 +141,22 @@ class IngestService:
     async def connected(self, connector_id: int) -> None:
         async with self.session_factory() as session, session.begin():
             await ConnectorRepository(session).set_status(connector_id, ConnectorStatus.ACTIVE)
+
+    async def pending_sources(self, connector_id: int) -> list[PendingSource]:
+        async with self.session_factory() as session:
+            found = await SourceRepository(session).pending(connector_id)
+        return [PendingSource(s.id, s.url) for s in found if s.url]
+
+    async def bind_pending(self, source_id: int, external_id: str, *, name: str) -> KnownSource:
+        async with self.session_factory() as session, session.begin():
+            found = await SourceRepository(session).bind_pending(source_id, external_id, name)
+            if found is None:
+                raise LookupError(f"Источник {source_id} не найден")
+            return _known(found)
+
+    async def pending_failed(self, source_id: int, error: str) -> None:
+        async with self.session_factory() as session, session.begin():
+            await SourceRepository(session).mark_failed(source_id, error)
 
     @staticmethod
     def _prepare(raw_posts: Iterable[RawPost]) -> tuple[list[NewPost], int]:

@@ -19,6 +19,8 @@ from sito.services.cleaning import CleaningService
 from sito.services.clustering import ClusteringRules, ClusteringService
 from sito.services.collector.base import ConnectorListener
 from sito.services.collector.rss import RssCollector
+from sito.services.collector.telegram import TelegramListener, TelegramRules
+from sito.services.collector.telegram_client import telethon_connect
 from sito.services.connectors import ConnectorSupervisor
 from sito.services.embedding import EmbeddingService, SentenceTransformerEmbedder
 from sito.services.ingest import IngestService
@@ -28,8 +30,13 @@ from sito.utils.crypto import SecretBox
 logger = logging.getLogger("sito.worker")
 
 POLLED_TYPES = (SourceType.RSS,)
-# Слушающие сборщики по типам подключений. Telegram добавится здесь
-LISTENERS: dict[SourceType, ConnectorListener] = {}
+# Слушающие сборщики по типам подключений
+LISTENERS: dict[SourceType, ConnectorListener] = {
+    SourceType.TELEGRAM: TelegramListener(
+        telethon_connect(settings.telegram_flood_sleep_seconds),
+        TelegramRules(catch_up=timedelta(hours=settings.telegram_catch_up_hours)),
+    ),
+}
 
 
 async def poll_one(service: IngestService, semaphore: asyncio.Semaphore, source_id: int) -> None:

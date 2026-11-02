@@ -24,6 +24,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "sentence-transformers>=6.2.0",
     "sqlalchemy[asyncio]>=2.1.6",
+    "telethon>=1.40",
     "torch>=2.14.1",
     "typer>=0.27.3",
     "uvicorn>=0.54.0",
@@ -76,5 +77,5 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 # Библиотеки без аннотаций типов
-module = ["feedparser", "feedparser.*", "asyncpg", "asyncpg.*", "pymorphy3", "pymorphy3.*"]
+module = ["feedparser", "feedparser.*", "asyncpg", "asyncpg.*", "pymorphy3", "pymorphy3.*", "telethon", "telethon.*"]
 ignore_missing_imports = true

@@ -69,6 +69,14 @@ class KnownSource:
 
 
 @dataclass(frozen=True, slots=True)
+class PendingSource:
+    """Источник, добавленный ссылкой, на который подключение ещё не подписалось (нет external_id)."""
+
+    id: int
+    url: str
+
+
+@dataclass(frozen=True, slots=True)
 class SaveResult:
     inserted: int = 0
     updated: int = 0
@@ -106,6 +114,22 @@ class PostSink(Protocol):
 
     async def connected(self, connector_id: int) -> None:
         """Подключение работает: снять с него прежнюю ошибку."""
+        ...
+
+    async def pending_sources(self, connector_id: int) -> list[PendingSource]:
+        """Источники, добавленные ссылкой, на которые ещё надо подписаться (старые первыми, без ошибки)."""
+        ...
+
+    async def bind_pending(self, source_id: int, external_id: str, *, name: str) -> KnownSource:
+        """Подписались: источнику по ссылке — id у сервиса и название.
+
+        Если такой канал уже есть (аккаунт был подписан раньше), ссылка просто удаляется
+        и возвращается существующий источник.
+        """
+        ...
+
+    async def pending_failed(self, source_id: int, error: str) -> None:
+        """Подписаться не вышло (нет такого канала): ошибка видна в админке, повторов нет."""
         ...
 
 

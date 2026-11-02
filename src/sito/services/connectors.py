@@ -46,7 +46,9 @@ class ConnectorService:
         settings, secrets = self._split(form)
         connector = Connector(
             type=spec.source_type, name=str(settings.pop("name")), builtin=False,
-            settings=settings, secrets=self._encrypt(secrets),
+            settings=settings, secrets=self.encrypt(secrets),
+            # Подключение со входом (Telegram) заработает после мастера входа
+            status=ConnectorStatus.NEEDS_LOGIN if spec.login else ConnectorStatus.ACTIVE,
         )
         self.session.add(connector)
         await self.session.flush()
@@ -63,14 +65,25 @@ class ConnectorService:
         except SecretsError as exc:
             raise ConnectorError(str(exc)) from exc
 
-    async def update(self, connector: Connector, form: BaseModel) -> None:
-        """Новые настройки и секреты. Worker заметит изменение и переподключится."""
+    async def update(self, connector: Connector, form: BaseModel, *, login: bool = False) -> None:
+        """Новые настройки и секреты. Worker заметит изменение и переподключится.
+
+        Секреты, которых нет в форме (сессия после входа), сохраняются, пока учётные данные те же.
+        login — у подключения есть вход: при смене учётных данных нужно войти заново.
+        """
         settings, secrets = self._split(form)
         connector.name = str(settings.pop("name"))
+        current = self.current_secrets(connector)
+        same_account = settings == connector.settings and all(current.get(k) == v for k, v in secrets.items())
+        kept = {k: v for k, v in current.items() if k not in secrets} if same_account else {}
         connector.settings = settings
-        connector.secrets = self._encrypt(secrets)
-        connector.status = ConnectorStatus.ACTIVE
-        connector.last_error = None
+        connector.secrets = self.encrypt({**kept, **secrets})
+        if login and not same_account:
+            connector.status = ConnectorStatus.NEEDS_LOGIN
+            connector.last_error = "Учётные данные изменились: войдите заново"
+        elif not login or connector.status != ConnectorStatus.NEEDS_LOGIN:
+            connector.status = ConnectorStatus.ACTIVE
+            connector.last_error = None
 
     async def set_enabled(self, connector: Connector, enabled: bool) -> None:
         if connector.builtin and not enabled:
@@ -101,7 +114,7 @@ class ConnectorService:
                 settings[name] = value
         return settings, secrets
 
-    def _encrypt(self, secrets: Mapping[str, Any]) -> bytes | None:
+    def encrypt(self, secrets: Mapping[str, Any]) -> bytes | None:
         if not secrets:
             return None
         if self.box is None:

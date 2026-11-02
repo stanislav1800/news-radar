@@ -37,9 +37,16 @@
   Если очередь растёт, а самый старый пост всё старше, — конвейер не успевает за сбором.</p>
 
 <h2>Источники с проблемами</h2>
-{% if broken or silent %}
+{% if broken or silent or broken_connectors %}
 <section class="card">
   <ul class="problems">
+    {% for c in broken_connectors %}
+    <li><strong>{{ c.name }}</strong> — <span class="status-error">
+      {%- if c.status == "needs_login" %}нужен вход{% else %}ошибка подключения{% endif %}</span>:
+      сбор со всех его каналов стоит.
+      {% if c.status == "needs_login" %}<a href="/admin/connectors/{{ c.id }}/login">Войти</a>{% endif %}
+      {% if c.last_error %}<div class="small field-error">{{ c.last_error[:200] }}</div>{% endif %}</li>
+    {% endfor %}
     {% for s in broken %}
     <li><strong>{{ s.name }}</strong> — <span class="status-error">ошибка</span>
       {% if s.failures > 1 %}{{ s.failures | plural("раз", "раза", "раз") }} подряд, {% endif %}последняя {{ s.last_error_at | ago(user.timezone, now) }}.

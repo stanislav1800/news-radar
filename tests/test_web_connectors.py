@@ -1,6 +1,7 @@
 """«Подключения»: добавление подключения по форме из описания коллектора, секреты, правка, удаление.
 
-Настоящего второго типа ещё нет, поэтому тест регистрирует поддельный «Telegram» с формой подключения.
+Тест подменяет описание Telegram упрощённым (без входа): здесь проверяется общая механика подключений,
+а Telegram с мастером входа — в test_web_telegram.py.
 """
 
 from collections.abc import Iterator
@@ -76,7 +77,7 @@ async def test_add_connector_encrypts_secrets(
     page = (await admin.get("/admin/connectors")).text
     assert "very-secret-hash" not in page  # секрет не показывается никогда
     assert "+79990001122" in page and "Сохранено. Оставьте пустым, чтобы не менять." in page
-    assert "Источников пока нет: они появятся сами" in page
+    assert "Каналов пока нет: они появятся сами" in page
 
 
 async def test_add_connector_validation(admin: httpx.AsyncClient, session_factory: async_sessionmaker[AsyncSession]) -> None:

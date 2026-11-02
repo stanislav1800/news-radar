@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from sito.models import SourceType
+from sito.services.collector.telegram import TelegramConnectorForm, TelegramSourceForm
 
 
 class RssSourceForm(BaseModel):
@@ -36,6 +37,7 @@ class CollectorSpec:
     source_form: type[BaseModel] | None = None     # источник добавляет администратор (RSS)
     connector_form: type[BaseModel] | None = None  # подключение добавляет администратор (Telegram)
     trial_fetch: bool = False        # умеет пробный сбор перед сохранением
+    login: bool = False              # после сохранения подключения нужен вход (мастер: код, пароль)
 
 
 COLLECTORS: dict[SourceType, CollectorSpec] = {
@@ -47,5 +49,16 @@ COLLECTORS: dict[SourceType, CollectorSpec] = {
         polled=True,
         source_form=RssSourceForm,
         trial_fetch=True,
+    ),
+    SourceType.TELEGRAM: CollectorSpec(
+        source_type=SourceType.TELEGRAM,
+        title="Telegram",
+        description="Служебный аккаунт Telegram: посты всех каналов, на которые он подписан, приходят сразу. "
+                    "Канал можно добавить ссылкой — аккаунт подпишется сам. Нужен отдельный аккаунт, не личный.",
+        builtin=False,
+        polled=False,
+        source_form=TelegramSourceForm,
+        connector_form=TelegramConnectorForm,
+        login=True,
     ),
 }

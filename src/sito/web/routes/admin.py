@@ -10,13 +10,15 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
-from sito.models import Connector, User
+from sito.models import Connector, ConnectorStatus, User
 from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.pipeline import PipelineRepository
 from sito.repositories.sources import SourceRepository
 from sito.services.collector.registry import COLLECTORS, CollectorSpec, RssSourceForm
+from sito.services.collector.telegram import TelegramSourceForm
 from sito.services.connectors import ConnectorError, ConnectorService, secret_fields
 from sito.services.sources import SourceError, SourceService
+from sito.services.telegram_login import LoginError, TelegramLoginService
 from sito.web.deps import AdminUser, DbSession, require_admin
 from sito.web.forms import FormField, form_fields, validation_errors
 from sito.web.routes.health import worker_state
@@ -41,11 +43,20 @@ async def summary_page(request: Request, db: DbSession, user: AdminUser) -> HTML
         "summary": await pipeline.summary(),
         "failed": await pipeline.failed_posts(FAILED_SHOWN),
         "broken": [s for s in sources if s.failing],
+        "broken_connectors": await _broken_connectors(db),
         "silent": [(s, since) for s in sources if (since := s.silent_since(now))],
         "worker": worker_state(beat.beat_at if beat else None, now),
         "beat": beat,
         "now": now,
     })
+
+
+async def _broken_connectors(db: DbSession) -> list[Connector]:
+    """Включённые подключения, которые не работают: нужен вход (Telegram) или ошибка."""
+    return [
+        c for c in await ConnectorRepository(db).list_all()
+        if c.enabled and not c.builtin and c.status != ConnectorStatus.ACTIVE
+    ]
 
 
 @router.get("/alert", response_class=HTMLResponse)
@@ -58,6 +69,8 @@ async def alert(db: DbSession) -> HTMLResponse:
     problems = []
     if worker_state(beat.beat_at if beat else None, now) != "ok":
         problems.append("worker не работает")
+    if connectors := await _broken_connectors(db):
+        problems.append("подключения: " + ", ".join(c.name for c in connectors))
     if failing := sum(s.failing for s in sources):
         problems.append(f"источников с ошибкой: {failing}")
     if silent := sum(s.silent_since(now) is not None for s in sources):
@@ -182,6 +195,8 @@ async def add_connector(request: Request, db: DbSession, user: AdminUser, type: 
         return await _render_connectors(request, db, user, target=target, values=values,
                                         errors={"__all__": str(exc)}, status_code=status.HTTP_400_BAD_REQUEST)
     await db.commit()
+    if spec.login:
+        return RedirectResponse(f"/admin/connectors/{connector.id}/login", status.HTTP_303_SEE_OTHER)
     flash(request, f"Подключение «{connector.name}» добавлено. Worker подключится в течение минуты.")
     return _back(f"#connector-{connector.id}")
 
@@ -200,7 +215,7 @@ async def update_connector(request: Request, db: DbSession, user: AdminUser, con
         kept = service.current_secrets(connector)
         data = {**values, **{k: str(v) for k, v in kept.items() if not values.get(k)}}
         form = spec.connector_form.model_validate(data)
-        await service.update(connector, form)
+        await service.update(connector, form, login=spec.login)
     except ValidationError as exc:
         return await _render_connectors(request, db, user, target=target, values=values,
                                         errors=validation_errors(exc), status_code=status.HTTP_400_BAD_REQUEST)
@@ -245,9 +260,10 @@ async def delete_connector(request: Request, db: DbSession, user: AdminUser, con
 async def add_source(request: Request, db: DbSession, user: AdminUser, connector_id: int) -> Response:
     connector = await ConnectorRepository(db).get(connector_id)
     spec = COLLECTORS.get(connector.type) if connector else None
-    if connector is None or spec is None or spec.source_form is not RssSourceForm:
-        # Источники слушающих подключений (Telegram) заводятся сами, вручную их не добавляют
+    if connector is None or spec is None or spec.source_form is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Подключение не найдено")
+    if spec.source_form is TelegramSourceForm:
+        return await _add_telegram_channel(request, db, user, connector)
 
     values = _form_values(await request.form())
     check = values.pop("check", None) == "on"
@@ -279,6 +295,88 @@ async def add_source(request: Request, db: DbSession, user: AdminUser, connector
     return RedirectResponse(f"/admin/connectors#source-{source.id}", status.HTTP_303_SEE_OTHER)
 
 
+async def _add_telegram_channel(request: Request, db: DbSession, user: User, connector: Connector) -> Response:
+    values = _form_values(await request.form())
+    target = f"source:{connector.id}"
+    try:
+        form = TelegramSourceForm.model_validate(values)
+        source = await SourceService(db, request.app.state.trial_fetch).add_telegram(connector, form)
+    except ValidationError as exc:
+        return await _render_connectors(request, db, user, target=target, values=values,
+                                        errors=validation_errors(exc), status_code=status.HTTP_400_BAD_REQUEST)
+    except SourceError as exc:
+        return await _render_connectors(request, db, user, target=target, values=values,
+                                        errors={"__all__": str(exc)}, status_code=status.HTTP_400_BAD_REQUEST)
+    await db.commit()
+    flash(request, f"Канал {source.name} добавлен. Аккаунт подпишется на него в течение пары минут "
+                   "и заберёт посты за последние сутки.")
+    return RedirectResponse(f"/admin/connectors#source-{source.id}", status.HTTP_303_SEE_OTHER)
+
+
+# --- Вход в Telegram ------------------------------------------------------------------------------
+
+def _login_service(request: Request, db: DbSession) -> TelegramLoginService:
+    return TelegramLoginService(db, request.app.state.secret_box, request.app.state.telegram_login)
+
+
+async def _login_connector(db: DbSession, connector_id: int) -> Connector:
+    connector = await _connector(db, connector_id)
+    spec = COLLECTORS.get(connector.type)
+    if spec is None or not spec.login:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "У этого подключения нет входа")
+    return connector
+
+
+async def _render_login(
+    request: Request, db: DbSession, user: User, connector: Connector, *,
+    error: str | None = None, status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse:
+    try:
+        step = _login_service(request, db).step(connector)
+    except ConnectorError as exc:
+        step, error = "start", str(exc)
+    return templates.TemplateResponse(request, "admin/telegram_login.html", {
+        "user": user, "connector": connector, "step": step, "error": error,
+    }, status_code=status_code)
+
+
+@router.get("/connectors/{connector_id}/login", response_class=HTMLResponse)
+async def login_page(request: Request, db: DbSession, user: AdminUser, connector_id: int) -> HTMLResponse:
+    return await _render_login(request, db, user, await _login_connector(db, connector_id))
+
+
+@router.post("/connectors/{connector_id}/login/{action}")
+async def login_step(
+    request: Request, db: DbSession, user: AdminUser, connector_id: int, action: str,
+    code: Annotated[str, Form()] = "", password: Annotated[str, Form()] = "",
+) -> Response:
+    """Шаги входа: send-code — прислать код, code — ввести код, password — облачный пароль, cancel."""
+    connector = await _login_connector(db, connector_id)
+    service = _login_service(request, db)
+    try:
+        if action == "send-code":
+            await service.send_code(connector)
+        elif action == "code":
+            done = await service.enter_code(connector, code)
+        elif action == "password":
+            done = await service.enter_password(connector, password)
+        elif action == "cancel":
+            service.cancel(connector)
+        else:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Нет такого шага")
+    except (LoginError, ConnectorError) as exc:
+        return await _render_login(request, db, user, connector, error=str(exc),
+                                   status_code=status.HTTP_400_BAD_REQUEST)
+    await db.commit()
+    if action in ("code", "password") and done:
+        flash(request, f"Вход в «{connector.name}» выполнен. Worker подключится в течение минуты "
+                       "и заберёт посты каналов за последние сутки.")
+        return _back(f"#connector-{connector_id}")
+    if action == "cancel":
+        return _back(f"#connector-{connector_id}")
+    return RedirectResponse(f"/admin/connectors/{connector_id}/login", status.HTTP_303_SEE_OTHER)
+
+
 @router.post("/sources/{source_id}/enabled")
 async def set_source_enabled(
     request: Request, db: DbSession, user: AdminUser, source_id: int, enabled: Annotated[bool, Form()],
@@ -305,7 +403,7 @@ async def delete_source(request: Request, db: DbSession, source_id: int) -> Resp
     name = source.name
     await repo.delete(source_id)
     await db.commit()
-    flash(request, f"Лента «{name}» удалена вместе с её постами.")
+    flash(request, f"Источник «{name}» удалён вместе с его постами.")
     response = RedirectResponse("/admin/connectors", status.HTTP_303_SEE_OTHER)
     response.headers["HX-Redirect"] = "/admin/connectors"
     return response

@@ -19,6 +19,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from sito.config import Settings, settings
 from sito.db.engine import async_session
 from sito.models.post import EMBEDDING_DIM
+from sito.services.collector.telegram_client import TelethonLogin
 from sito.services.embedding import Embedder, LazyEmbedder, SentenceTransformerEmbedder
 from sito.services.sources import http_trial_fetch
 from sito.utils.crypto import SecretBox
@@ -92,6 +93,7 @@ def create_app(
     app.state.embedder = search_embedder
     app.state.secret_box = SecretBox(config.secret_key.get_secret_value())  # секреты подключений
     app.state.trial_fetch = http_trial_fetch(config)  # тесты подменяют, чтобы не ходить в сеть
+    app.state.telegram_login = TelethonLogin()        # и вход в Telegram тоже
     app.state.login_limiter = LoginLimiter(
         max_failures=config.login_max_failures,
         lockout_seconds=timedelta(minutes=config.login_lockout_minutes).total_seconds(),

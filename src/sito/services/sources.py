@@ -12,6 +12,7 @@ from sito.repositories.sources import SourceRepository
 from sito.services.collector.base import FetchResult
 from sito.services.collector.registry import RssSourceForm
 from sito.services.collector.rss import RssCollector
+from sito.services.collector.telegram import TelegramSourceForm
 
 PREVIEW_TITLES = 3
 
@@ -64,3 +65,10 @@ class SourceService:
         trial = await self.trial(url) if check else None
         source = await self.repo.add(connector.id, connector.type, form.name, url=url, poll_interval=form.poll_interval)
         return source, trial
+
+    async def add_telegram(self, connector: Connector, form: TelegramSourceForm) -> Source:
+        """Канал по ссылке. Подпишется на него worker (не больше одного канала в минуту) и даст ему id и название."""
+        if await self.repo.get_by_url(form.url):
+            raise SourceError(f"Канал {form.url} уже есть")
+        name = "@" + form.url.rsplit("/", 1)[-1]  # до подписки — имя из ссылки, потом название канала
+        return await self.repo.add(connector.id, connector.type, name, url=form.url)

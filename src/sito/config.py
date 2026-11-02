@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     source_max_backoff_hours: float = 6
     # Как часто сверять подключения в базе с работающими (Telegram): новые, выключенные, изменённые
     connector_check_seconds: float = 15
+    # Telegram: за сколько часов взять историю нового канала; до скольких секунд ждать FloodWait молча
+    # (дольше — подключение упадёт и перезапустится с паузой)
+    telegram_catch_up_hours: int = 24
+    telegram_flood_sleep_seconds: int = 600
 
     # Worker: очистка текста (шаг 3)
     clean_batch_size: int = 100       # постов за одну транзакцию

@@ -26,8 +26,12 @@ _JUNK_LINE = re.compile(
     re.IGNORECASE,
 )
 
-# Маркировка рекламы по закону о рекламе: токен erid
-_AD_MARK = re.compile(r"\berid\b", re.IGNORECASE)
+# Подпись в конце постов Telegram-каналов: «Илья Середюк в МАКС. Подписаться», «👉 Подписаться | Прислать новость».
+# Одинаковая у всех постов канала, склейку она бы только путала. Короткая строка со словом «подписаться»
+_SIGNATURE_LINE = re.compile(r"^.{0,80}\bподписаться\b.{0,60}$", re.IGNORECASE)
+
+# Маркировка рекламы по закону о рекламе: токен erid; в Telegram ещё и хэштег #реклама
+_AD_MARK = re.compile(r"\berid\b|#реклама\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +63,9 @@ def clean_html(raw: str | None, own_url: str | None = None) -> CleanText:
         block.insert_after("\n")
 
     lines = (" ".join(line.split()) for line in soup.get_text().translate(_INVISIBLE).splitlines())
-    text = "\n".join(line for line in lines if line and not _JUNK_LINE.match(line))
+    text = "\n".join(
+        line for line in lines if line and not _JUNK_LINE.match(line) and not _SIGNATURE_LINE.match(line)
+    )
     return CleanText(text, links, is_ad=bool(_AD_MARK.search(text)))
 
 

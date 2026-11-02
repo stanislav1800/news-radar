@@ -20,6 +20,11 @@
       {% elif c.status == "error" %}<span class="status-error">ошибка</span>
       {% else %}<span class="status-ok">работает</span>{% endif %}
       {% if c.last_error %}<span class="small field-error">{{ c.last_error[:300] }}</span>{% endif %}
+      {% if section.spec and section.spec.login %}
+      <a class="{% if c.status == 'needs_login' %}button{% else %}small{% endif %}" href="/admin/connectors/{{ c.id }}/login">
+        {{- "Войти в аккаунт" if c.status == "needs_login" else "Вход" -}}
+      </a>
+      {% endif %}
     </p>
     {% endif %}
   </header>
@@ -36,14 +41,15 @@
     </table>
   </div>
   {% elif section.spec and not section.spec.polled %}
-  <p class="muted">Источников пока нет: они появятся сами с первыми постами.</p>
+  <p class="muted">Каналов пока нет: они появятся сами с первыми постами каналов, на которые подписан аккаунт.
+    Или добавьте канал ссылкой ниже.</p>
   {% else %}
   <p class="muted">Источников пока нет.</p>
   {% endif %}
 
   {% if section.spec and section.spec.source_form %}
   <details class="add-source" {% if section.form_open %}open{% endif %}>
-    <summary>Добавить ленту</summary>
+    <summary>{{ "Добавить канал" if section.spec.login else "Добавить ленту" }}</summary>
     <form class="stack" method="post" action="/admin/connectors/{{ c.id }}/sources">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
       {% if section.form_error %}<div class="error" role="alert">{{ section.form_error }}</div>{% endif %}

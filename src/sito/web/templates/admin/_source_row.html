@@ -11,6 +11,9 @@
     <span class="status-error" title="{{ s.last_error }}">ошибка {{ s.last_error_at | ago(user.timezone, now) }}</span>
     {% if s.failures > 1 %}<span class="small muted">· {{ s.failures }} раз подряд, опрос реже</span>{% endif %}
     <div class="small field-error">{{ s.last_error[:120] }}</div>
+    {% elif s.external_id is none and s.poll_interval is none %}
+    <span class="muted">ждёт подписки</span>
+    <div class="small muted">аккаунт подпишется на канал в течение пары минут</div>
     {% elif s.silent_since(now) %}
     <span class="status-error">молчит</span>
     <div class="small muted">новых постов нет {{ s.silent_since(now) | ago(user.timezone, now) | replace(" назад", "") }}, обычно чаще</div>

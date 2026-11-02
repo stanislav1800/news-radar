@@ -118,6 +118,29 @@ class SourceRepository:
         assert source is not None
         return source
 
+    async def pending(self, connector_id: int) -> list[Source]:
+        """Источники, добавленные ссылкой, на которые подключение ещё не подписалось и не споткнулось."""
+        return list(await self.session.scalars(
+            select(Source).where(
+                Source.connector_id == connector_id, Source.external_id.is_(None), Source.url.is_not(None),
+                Source.last_error.is_(None), Source.enabled,
+            ).order_by(Source.id)
+        ))
+
+    async def bind_pending(self, source_id: int, external_id: str, name: str) -> Source | None:
+        """Источнику по ссылке — id у сервиса. Если такой источник уже есть, ссылка удаляется: дубля нет."""
+        pending = await self.get(source_id)
+        if pending is None:
+            return None
+        existing = await self.get_by_external_id(pending.type, external_id)
+        if existing is not None:
+            await self.session.delete(pending)
+            return existing
+        pending.external_id = external_id
+        pending.name = name
+        await self.session.flush()
+        return pending
+
     async def list_with_stats(self, connector_id: int | None = None) -> list[SourceRow]:
         """Источники со статистикой: одного подключения или все."""
         def posts_since(interval: str) -> ScalarSelect[int]:

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Вход в Telegram · {{ connector.name }} · Сито{% endblock %}
+{% block content %}
+{% set admin_tab = "sources" %}{% include "admin/_tabs.html" %}
+<a class="back" href="/admin/connectors#connector-{{ connector.id }}">← К источникам</a>
+<h1>Вход в Telegram</h1>
+<p class="muted">Подключение «{{ connector.name }}», аккаунт {{ connector.settings.phone }}.</p>
+
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="card settings">
+{% if step == "code" %}
+  <form class="stack" method="post" action="/admin/connectors/{{ connector.id }}/login/code">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <label>Код из Telegram
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus>
+    </label>
+    <p class="muted small">Код пришёл сообщением от Telegram в приложение, где открыт этот аккаунт (не СМС).
+      Никому его не пересылайте: Telegram заблокирует вход, если код отправить в чат.</p>
+    <button type="submit">Войти</button>
+  </form>
+{% elif step == "password" %}
+  <form class="stack" method="post" action="/admin/connectors/{{ connector.id }}/login/password">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <label>Облачный пароль
+      <input name="password" type="password" autocomplete="current-password" required autofocus>
+    </label>
+    <p class="muted small">У аккаунта включена двухэтапная проверка. Пароль нужен один раз и не сохраняется.</p>
+    <button type="submit">Войти</button>
+  </form>
+{% elif step == "done" %}
+  <p><span class="status-ok">Вход выполнен.</span> Worker собирает посты каналов, на которые подписан аккаунт.</p>
+  <p class="muted small">Войти заново нужно, только если сессию отозвали (Telegram → Настройки → Устройства) или сменился аккаунт.</p>
+{% else %}
+  <p>Telegram пришлёт код подтверждения в приложение, где открыт аккаунт {{ connector.settings.phone }}.</p>
+{% endif %}
+
+{% if step in ("start", "done", "code") %}
+  <form method="post" action="/admin/connectors/{{ connector.id }}/login/send-code">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button {% if step != "start" %}class="link"{% endif %} type="submit">
+      {%- if step == "start" %}Прислать код{% elif step == "code" %}Прислать код заново{% else %}Войти заново{% endif -%}
+    </button>
+  </form>
+{% endif %}
+{% if step in ("code", "password") %}
+  <form method="post" action="/admin/connectors/{{ connector.id }}/login/cancel">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button class="link" type="submit">Отменить вход</button>
+  </form>
+{% endif %}
+</section>
+{% endblock %}

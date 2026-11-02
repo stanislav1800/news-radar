@@ -1,0 +1,9 @@
+{# Что за лента открыта: под вкладками, меняется вместе с лентой #}
+<p class="tab-about muted small">
+  {%- if view.kind == "top" %}О чём написали 5 и больше изданий.
+  {%- elif view.kind == "all" %}Все сюжеты подряд, со всех источников.
+  {%- elif view.kind == "my" %}Сюжеты по всем вашим темам.
+  {%- else %}{% set current = topics | selectattr("id", "equalto", view.topic_id) | first %}
+    {%- if current.paused %}Тема на паузе: новые сюжеты не добавляются. {% endif %}<a href="/topics/{{ view.topic_id }}">Настроить тему</a>
+  {%- endif -%}
+</p>

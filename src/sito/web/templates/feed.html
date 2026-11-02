@@ -2,6 +2,8 @@
 {% block title %}Сито{% endblock %}
 {% block content %}
 {% include "_tabs.html" %}
+<div id="feed-area">
+{% include "_tab_about.html" %}
 
 {% if not topics %}
 <div class="card intro">
@@ -25,4 +27,5 @@
 </p>
 {% if suggestions %}{% include "_feed_items.html" %}{% endif %}
 {% endif %}
+</div>
 {% endblock %}

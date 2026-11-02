@@ -1,5 +1,5 @@
 {# Вкладки ленты: сначала общие (главное, все новости), потом свои темы. Число — новых с прошлого визита #}
-<nav class="tabs" aria-label="Ленты">
+<nav class="tabs" aria-label="Ленты" hx-boost="true" hx-target="#feed-area" hx-select="#feed-area" hx-swap="outerHTML">
   <a class="tab{% if view.kind == 'top' %} active{% endif %}" href="/?view=top">Главное</a>
   <a class="tab{% if view.kind == 'all' %} active{% endif %}" href="/?view=all">Все новости</a>
   {% if topics %}
@@ -11,11 +11,3 @@
   {% endfor %}
   {% endif %}
 </nav>
-<p class="tab-about muted small">
-  {%- if view.kind == "top" %}О чём написали 5 и больше изданий.
-  {%- elif view.kind == "all" %}Все сюжеты подряд, со всех источников.
-  {%- elif view.kind == "my" %}Сюжеты по всем вашим темам.
-  {%- else %}{% set current = topics | selectattr("id", "equalto", view.topic_id) | first %}
-    {%- if current.paused %}Тема на паузе: новые сюжеты не добавляются. {% endif %}<a href="/topics/{{ view.topic_id }}">Настроить тему</a>
-  {%- endif -%}
-</p>

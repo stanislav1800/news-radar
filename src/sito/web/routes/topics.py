@@ -10,12 +10,14 @@ from xml.etree import ElementTree as ET
 from fastapi import APIRouter, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from sito.config import Settings
-from sito.models import Topic, User
+from sito.models import Topic, TopicReport, User
 from sito.repositories.sources import SourceRepository
 from sito.repositories.stories import StoryRepository
 from sito.repositories.topics import TopicReason, TopicRepository
+from sito.services.llm import PERIODS, LlmError, TopicReportService
 from sito.services.search import DEFAULT_PERIOD, SearchService
 from sito.services.topics import (
     TopicError,
@@ -218,6 +220,7 @@ async def _render_topic(
         "all_sources": await SourceRepository(db).list_all(),
         "topic_sources": set(topic.source_ids or []),
         "default_similarity": request.app.state.settings.topic_example_min_similarity,
+        "llm": request.app.state.llm is not None,
         "next": f"/topics/{topic.id}",
         "now": datetime.now(UTC),
     }, status_code=status_code)
@@ -241,6 +244,93 @@ async def update_topic(request: Request, db: DbSession, user: CurrentUser, topic
     await db.commit()
     flash(request, "Тема сохранена")
     return _redirect(f"/topics/{topic_id}")
+
+
+@router.post("/topics/{topic_id}/llm-prompt")
+async def set_llm_prompt(
+    request: Request, db: DbSession, user: CurrentUser, topic_id: int, prompt: Annotated[str, Form()] = "",
+) -> Response:
+    """Пожелания к сводкам и ответам LLM по теме."""
+    topic = await _owned(db, user, topic_id)
+    topic.llm_prompt = prompt.strip()[:2000] or None
+    await db.commit()
+    flash(request, "Пожелания к сводкам сохранены" if topic.llm_prompt else "Пожелания к сводкам убраны")
+    return _redirect(f"/topics/{topic_id}")
+
+
+# --- Сводки и вопросы по теме (LLM) ---------------------------------------------------------------
+
+def _report_service(request: Request, db: DbSession) -> TopicReportService:
+    if request.app.state.llm is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "LLM не настроена")
+    return TopicReportService(db, request.app.state.llm, request.app.state.settings)
+
+
+async def report_block(
+    request: Request, db: DbSession, user: User, topic: Topic, report: TopicReport | None = None, *,
+    open_report: bool = False, error: str | None = None, question: str = "",
+) -> dict[str, object]:
+    """Контекст блока «Сводка» вверху ленты темы: последний отчёт и сколько с тех пор нового."""
+    service = TopicReportService(db, request.app.state.llm, request.app.state.settings)
+    report = report or await service.latest(topic.id)
+    return {
+        "topic": topic, "report": report, "report_new": await service.new_since(report) if report else 0,
+        "report_open": open_report, "report_error": error, "periods": PERIODS, "question": question,
+        "llm": True, "user": user, "now": datetime.now(UTC),
+    }
+
+
+@router.post("/topics/{topic_id}/reports", response_class=HTMLResponse)
+async def make_report(
+    request: Request, db: DbSession, user: CurrentUser, topic_id: int,
+    days: Annotated[int, Form()] = 7, question: Annotated[str, Form()] = "", force: Annotated[bool, Form()] = False,
+) -> HTMLResponse:
+    """Сводка за период или ответ на вопрос — только по нажатию."""
+    topic = await _owned(db, user, topic_id)
+    service = _report_service(request, db)
+    question = question.strip()[:500]
+    report, error = None, None
+    try:
+        report = await service.make(topic, days=days, user_id=user.id, timezone=user.timezone,
+                                    question=question or None, force=force)
+    except LlmError as exc:
+        error = str(exc)
+    await db.commit()  # расход токенов записан и при ошибке
+    context = await report_block(request, db, user, topic, report, open_report=True, error=error,
+                                 question=question if error else "")
+    return templates.TemplateResponse(request, "_topic_report_block.html", context)
+
+
+@router.get("/topics/{topic_id}/reports", response_class=HTMLResponse)
+async def reports_page(request: Request, db: DbSession, user: CurrentUser, topic_id: int) -> HTMLResponse:
+    topic = await _owned(db, user, topic_id)
+    reports = list(await db.scalars(
+        select(TopicReport).where(TopicReport.topic_id == topic.id).order_by(TopicReport.id.desc()).limit(200)
+    ))
+    return templates.TemplateResponse(request, "topic_reports.html", {
+        "user": user, "topic": topic, "reports": reports, "periods": PERIODS, "now": datetime.now(UTC),
+    })
+
+
+@router.get("/topics/{topic_id}/reports/{report_id}", response_class=HTMLResponse)
+async def report_page(request: Request, db: DbSession, user: CurrentUser, topic_id: int, report_id: int) -> HTMLResponse:
+    topic = await _owned(db, user, topic_id)
+    report = await db.get(TopicReport, report_id)
+    if report is None or report.topic_id != topic.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сводка не найдена")
+    return templates.TemplateResponse(request, "topic_report.html", {
+        "user": user, "topic": topic, "report": report, "periods": PERIODS, "now": datetime.now(UTC),
+    })
+
+
+@router.post("/topics/{topic_id}/reports/{report_id}/delete")
+async def delete_report(request: Request, db: DbSession, user: CurrentUser, topic_id: int, report_id: int) -> Response:
+    topic = await _owned(db, user, topic_id)
+    report = await db.get(TopicReport, report_id)
+    if report is not None and report.topic_id == topic.id:
+        await db.delete(report)
+        await db.commit()
+    return _redirect(f"/topics/{topic_id}/reports")
 
 
 @router.post("/topics/{topic_id}/sources")

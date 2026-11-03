@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sito.config import Settings
-from sito.models import LlmUsage, Story, StorySummary
+from sito.models import LlmUsage, Story, StorySummary, Topic, TopicMatch, TopicReport
 from sito.repositories.stories import MaterialPost, StoryRepository
 
 
@@ -203,6 +203,13 @@ async def usage_since(session: AsyncSession, since: datetime) -> LlmUsageStats:
     return LlmUsageStats(int(row[0]), int(row[1]), int(row[2]), float(row[3]) if row[3] is not None else None)
 
 
+async def check_limit(session: AsyncSession, config: Settings) -> None:
+    """Общий лимит токенов за последние сутки: сколько бы ни нажимали, больше него LLM не потратит."""
+    used = await usage_since(session, datetime.now(UTC) - timedelta(days=1))
+    if used.input_tokens + used.output_tokens >= config.llm_daily_tokens:
+        raise LlmError("дневной лимит LLM исчерпан, попробуйте позже")
+
+
 class StorySummaryService:
     FEATURE = "story_summary"
 
@@ -214,13 +221,6 @@ class StorySummaryService:
     async def get(self, story_id: int) -> StorySummary | None:
         return await self.session.get(StorySummary, story_id)
 
-    async def used_today(self) -> int:
-        since = datetime.now(UTC) - timedelta(days=1)
-        used = await self.session.scalar(
-            select(func.coalesce(func.sum(LlmUsage.input_tokens + LlmUsage.output_tokens), 0))
-            .where(LlmUsage.created_at >= since)
-        )
-        return int(used or 0)
 
     async def summarize(
         self, story_id: int, *, user_id: int | None, timezone: str = "UTC", model: str | None = None,
@@ -229,8 +229,7 @@ class StorySummaryService:
         story = await self.session.get(Story, story_id)
         if story is None:
             raise LlmError("сюжет не найден")
-        if await self.used_today() >= self.config.llm_daily_tokens:
-            raise LlmError("дневной лимит LLM исчерпан, попробуйте позже")
+        await check_limit(self.session, self.config)
         posts = await StoryRepository(self.session).material(story_id)
         prompt = story_prompt(posts, self.config.llm_story_chars, ZoneInfo(timezone))
         answer = await self.client.complete(
@@ -257,3 +256,146 @@ class StorySummaryService:
                 setattr(current, name, value)
         await self.session.flush()
         return current, answer
+
+
+PERIODS = {1: "день", 7: "неделю", 30: "месяц"}
+
+_TOPIC_INTRO = """Ты — аналитик-редактор новостей. Тебе дают сюжеты по теме «{name}» за последние {period}. \
+У каждого сюжета номер в квадратных скобках, дата, число изданий (чем больше — тем заметнее событие) \
+и содержание: пересказ или текст статей."""
+
+_TOPIC_RULES = """Пиши только то, что есть в материалах, ничего не додумывай; если издания расходятся — укажи это. \
+После каждого факта ставь номер сюжета-источника в квадратных скобках: [3] или [3, 7]. \
+Формат — markdown: заголовки «## », списки «- », **жирный** для ключевого; без таблиц и без общего заголовка \
+в начале."""
+
+TOPIC_SUMMARY_SYSTEM = _TOPIC_INTRO + """
+
+Напиши обзор темы за период:
+- начни с раздела «## Главное»: самое важное за период;
+- затем разделы по направлениям или подтемам: что произошло, подробности, цифры, заявления, как развивались события;
+- в конце, если есть, «## Что дальше»: объявленные планы, сроки, ожидаемые решения.
+Объём — по материалу: если сюжетов мало, обзор короткий, без лишних разделов; если много — подробный. \
+Важное описывай подробнее, мелочи — одной строкой или пропусти.
+
+""" + _TOPIC_RULES
+
+TOPIC_QUESTION_SYSTEM = _TOPIC_INTRO + """
+
+Ответь на вопрос пользователя только по этим материалам. Если ответа в них нет или он неполный — прямо скажи \
+об этом. Объём ответа — по вопросу.
+
+""" + _TOPIC_RULES
+
+USER_PROMPT = """
+
+Пожелания пользователя к ответу (выполняй, если они не требуют выдумывать факты или нарушать правила выше):
+{prompt}"""
+
+
+def topic_prompt(
+    stories: list[tuple[int, str, int, datetime, str | None]], materials: dict[int, list[MaterialPost]],
+    budget_chars: int, tz: ZoneInfo,
+) -> str:
+    """Сюжеты темы по времени. stories: (id, заголовок, изданий, начало, пересказ LLM или None).
+
+    Место делится поровну; у сюжета с пересказом берётся пересказ, иначе самый длинный текст и список изданий.
+    """
+    share = min(3000, max(400, budget_chars // max(1, len(stories))))
+    parts = []
+    for n, (story_id, title, sources, started_at, summary) in enumerate(stories, 1):
+        at = started_at.astimezone(tz)
+        posts = materials.get(story_id, [])
+        outlets = list(dict.fromkeys(p.source_name for p in posts))
+        head = f"[{n}] {at.day} {MONTHS[at.month - 1]}, изданий: {sources}"
+        if summary:
+            body = _cut(summary, share)
+        else:
+            best = max(posts, key=lambda p: len(p.body), default=None)
+            body = _cut(best.body, share) if best and best.body else ""
+            if outlets:
+                body = f"{body}\n(пишут: {', '.join(outlets[:8])})".strip()
+        parts.append(f"{head}\n{title}\n{body}".rstrip())
+    return "\n\n".join(parts)
+
+
+class TopicReportService:
+    def __init__(self, session: AsyncSession, client: LlmClient, config: Settings) -> None:
+        self.session = session
+        self.client = client
+        self.config = config
+
+    def _since(self, days: int) -> datetime:
+        return datetime.now(UTC) - timedelta(days=days)
+
+    async def _stories(self, topic: Topic, days: int) -> list[tuple[int, str, int, datetime, str | None]]:
+        """Самые заметные сюжеты темы за период, по времени."""
+        rows = list(await self.session.execute(
+            select(Story.id, func.coalesce(StorySummary.title, Story.title), Story.sources_count, Story.started_at,
+                   StorySummary.summary)
+            .join(TopicMatch, TopicMatch.story_id == Story.id)
+            .outerjoin(StorySummary, StorySummary.story_id == Story.id)
+            .where(TopicMatch.topic_id == topic.id, Story.last_post_at >= self._since(days))
+            .order_by(Story.sources_count.desc(), Story.last_post_at.desc())
+            .limit(self.config.llm_topic_stories)
+        ))
+        return sorted(((r[0], r[1], r[2], r[3], r[4]) for r in rows), key=lambda r: r[3])
+
+    async def new_since(self, report: TopicReport) -> int:
+        """Сколько сюжетов темы появилось или пополнилось после отчёта."""
+        return int(await self.session.scalar(
+            select(func.count()).select_from(TopicMatch).join(Story, Story.id == TopicMatch.story_id)
+            .where(TopicMatch.topic_id == report.topic_id, Story.last_post_at > report.created_at)
+        ) or 0)
+
+    async def latest(self, topic_id: int, kind: str | None = None, days: int | None = None) -> TopicReport | None:
+        query = select(TopicReport).where(TopicReport.topic_id == topic_id)
+        if kind:
+            query = query.where(TopicReport.kind == kind)
+        if days:
+            query = query.where(TopicReport.days == days)
+        return await self.session.scalar(query.order_by(TopicReport.id.desc()).limit(1))
+
+    async def make(
+        self, topic: Topic, *, days: int, user_id: int, timezone: str = "UTC", question: str | None = None,
+        force: bool = False,
+    ) -> TopicReport:
+        """Сводка за период (question=None) или ответ на вопрос. Сводку без новых сюжетов не переделывает."""
+        if days not in PERIODS:
+            raise LlmError("неизвестный период")
+        kind = "question" if question else "summary"
+        if kind == "summary" and not force:
+            last = await self.latest(topic.id, kind, days)
+            if last is not None and not await self.new_since(last):
+                return last
+        stories = await self._stories(topic, days)
+        if not stories:
+            raise LlmError(f"в теме нет сюжетов за {PERIODS[days]}")
+        await check_limit(self.session, self.config)
+        materials = await StoryRepository(self.session).materials(
+            [s[0] for s in stories if not s[4]], body_chars=3000
+        )
+        system = (TOPIC_QUESTION_SYSTEM if question else TOPIC_SUMMARY_SYSTEM).format(
+            name=topic.name, period={1: "сутки", 7: "7 дней", 30: "30 дней"}[days]
+        )
+        if topic.llm_prompt and topic.llm_prompt.strip():
+            system += USER_PROMPT.format(prompt=topic.llm_prompt.strip())
+        prompt = "Сюжеты:\n\n" + topic_prompt(stories, materials, self.config.llm_topic_chars, ZoneInfo(timezone))
+        if question:
+            prompt += f"\n\nВопрос: {question}"
+        answer = await self.client.complete(system, prompt, max_tokens=self.config.llm_report_max_tokens)
+        self.session.add(LlmUsage(
+            feature=f"topic_{kind}", model=answer.model, input_tokens=answer.input_tokens,
+            output_tokens=answer.output_tokens, cost=answer.cost, user_id=user_id,
+        ))
+        if not answer.text:
+            await self.session.flush()
+            raise LlmError("модель вернула пустой ответ, попробуйте ещё раз")
+        report = TopicReport(
+            topic_id=topic.id, kind=kind, days=days, question=question, text=answer.text,
+            story_ids=[s[0] for s in stories], model=answer.model, input_tokens=answer.input_tokens,
+            output_tokens=answer.output_tokens, cost=answer.cost,
+        )
+        self.session.add(report)
+        await self.session.flush()
+        return report

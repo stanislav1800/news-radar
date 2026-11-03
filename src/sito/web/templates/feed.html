@@ -4,6 +4,7 @@
 {% include "_tabs.html" %}
 <div id="feed-area">
 {% include "_tab_about.html" %}
+{% if view.kind == "topic" and periods is defined %}{% include "_topic_report_block.html" %}{% endif %}
 
 {% if not topics %}
 <div class="card intro">

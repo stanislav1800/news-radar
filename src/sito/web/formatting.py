@@ -1,7 +1,11 @@
 """Время для людей: в часовом поясе пользователя, относительно «сейчас»."""
 
+import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from markupsafe import Markup, escape
 
 MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
@@ -90,3 +94,48 @@ def compact(value: int | None) -> str:
     if value < 1_000_000:
         return f"{round(value / 1000)} тыс."
     return f"{value / 1_000_000:.1f}".rstrip("0").rstrip(".").replace(".", ",") + " млн"
+
+
+_REF = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+
+
+def _inline(text: str, story_ids: Sequence[int]) -> str:
+    html = str(escape(text))
+    html = _BOLD.sub(r"<strong>\1</strong>", html)
+
+    def ref(match: re.Match[str]) -> str:
+        links = []
+        for raw in match.group(1).split(","):
+            n = int(raw)
+            if 1 <= n <= len(story_ids):
+                links.append(f'<a href="/stories/{story_ids[n - 1]}">{n}</a>')
+        return f'<sup class="ref">{", ".join(links)}</sup>' if links else ""
+
+    return _REF.sub(ref, html)
+
+
+def report_html(text: str, story_ids: Sequence[int]) -> Markup:
+    """Ответ LLM (markdown: ## заголовки, списки, **жирный**, [n] — сюжеты) в безопасный HTML."""
+    out: list[str] = []
+    in_list = False
+    for raw in text.replace("\r", "").split("\n"):
+        line = raw.strip()
+        item = re.match(r"^(?:[-*•]|\d+[.)])\s+(.*)", line)
+        if in_list and not item:
+            out.append("</ul>")
+            in_list = False
+        if not line:
+            continue
+        if heading := re.match(r"^#{1,6}\s+(.*)", line):
+            out.append(f"<h3>{_inline(heading.group(1).strip('* '), story_ids)}</h3>")
+        elif item:
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{_inline(item.group(1), story_ids)}</li>")
+        else:
+            out.append(f"<p>{_inline(line, story_ids)}</p>")
+    if in_list:
+        out.append("</ul>")
+    return Markup("".join(out))

@@ -479,6 +479,26 @@ class StoryRepository:
             for row in await self.session.execute(query)
         ]
 
+    async def materials(self, story_ids: Sequence[int], body_chars: int) -> dict[int, list[MaterialPost]]:
+        """Посты нескольких сюжетов (текст обрезан до body_chars): для сводки по теме."""
+        event_at = literal_column(EVENT_AT_SQL, DateTime(timezone=True))
+        query = (
+            select(
+                Post.story_id, Source.name, literal_column(OUTLET_KEY_SQL, Text).label("outlet"), Post.title,
+                event_at.label("event_at"),
+                func.left(func.coalesce(func.nullif(Post.full_text, ""), Post.text, ""), body_chars).label("body"),
+            )
+            .join(Source, Source.id == Post.source_id)
+            .where(Post.story_id.in_(story_ids))
+            .order_by(event_at, Post.id)
+        )
+        result: dict[int, list[MaterialPost]] = {}
+        for row in await self.session.execute(query):
+            result.setdefault(row.story_id, []).append(
+                MaterialPost(row.name, row.outlet, row.title, row.event_at, row.body)
+            )
+        return result
+
     async def reprocess(self, source_type: str, *, untitled: bool = False) -> int:
         """Отправить посты источников этого типа заново через весь конвейер: очистка, вектор, склейка.
 

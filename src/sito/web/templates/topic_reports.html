@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}История сводок · {{ topic.name }} · Сито{% endblock %}
+{% block content %}
+<a class="back" href="/?topic={{ topic.id }}">← К ленте темы</a>
+<h1>История: {{ topic.name }}</h1>
+{% if reports %}
+<ul class="report-list">
+  {% for r in reports %}
+  <li>
+    <a href="/topics/{{ topic.id }}/reports/{{ r.id }}">
+      {%- if r.kind == "question" %}Вопрос: {{ r.question }}{% else %}Сводка за {{ periods.get(r.days, r.days ~ " дн.") }}{% endif -%}
+    </a>
+    <span class="muted small">· {{ r.created_at | local_time(user.timezone, now) }} · {{ r.story_ids | length | plural("сюжет", "сюжета", "сюжетов") }}
+      {%- if r.cost is not none %} · {{ "%.2f" | format(r.cost) }} ₽{% endif %}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">Сводок и вопросов по этой теме пока не было. Их можно сделать вверху ленты темы.</p>
+{% endif %}
+{% endblock %}

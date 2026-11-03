@@ -59,6 +59,20 @@
   </details>
 </section>
 
+{% if llm %}
+<h2>Пожелания к сводкам</h2>
+<section class="card settings">
+  <form class="stack" method="post" action="/topics/{{ topic.id }}/llm-prompt">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <label for="llm-prompt">Как писать сводки и ответы по этой теме</label>
+    <textarea id="llm-prompt" name="prompt" rows="3" maxlength="2000"
+              placeholder="Например: пиши для руководителя, сначала цифры; отдельно — позиция Китая">{{ topic.llm_prompt or "" }}</textarea>
+    <p class="muted small">Необязательно. Факты всё равно берутся только из новостей темы, со ссылками на сюжеты.</p>
+    <button type="submit">Сохранить</button>
+  </form>
+</section>
+{% endif %}
+
 <h2>Управление</h2>
 <section class="card settings">
   <div class="setting row">

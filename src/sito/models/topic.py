@@ -30,6 +30,7 @@ class Topic(IdMixin, TimestampMixin, Base):
     min_similarity: Mapped[float | None]
     # Искать только в этих источниках (тема «IT» — Хабр и OpenNET); пусто — во всех
     source_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), server_default="{}")
+    llm_prompt: Mapped[str | None]  # пожелания пользователя к сводкам и ответам LLM по теме
 
 
 class TopicExample(IdMixin, Base):

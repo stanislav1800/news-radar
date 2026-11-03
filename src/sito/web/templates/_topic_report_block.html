@@ -1,0 +1,40 @@
+{# Блок «Сводка» вверху ленты темы (LLM): кнопки периода, вопрос, последний отчёт #}
+<section class="topic-report card" id="topic-report">
+  {% set busy = "this.closest('section').classList.add('busy'); this.querySelectorAll('button').forEach(b => b.disabled = true)" %}
+  <div class="report-bar">
+    <span>Сводка за</span>
+    {% for days, label in periods.items() %}
+    <form method="post" action="/topics/{{ topic.id }}/reports" hx-post="/topics/{{ topic.id }}/reports"
+          hx-target="#topic-report" hx-swap="outerHTML" hx-on::before-request="{{ busy }}">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="days" value="{{ days }}">
+      <button class="chip" type="submit">{{ label }}</button>
+    </form>
+    {% endfor %}
+    <a class="small" href="/topics/{{ topic.id }}/reports">История</a>
+    <span class="busy-note muted small">Готовлю ответ, обычно 10–30 секунд…</span>
+  </div>
+  <form class="report-ask" method="post" action="/topics/{{ topic.id }}/reports" hx-post="/topics/{{ topic.id }}/reports"
+        hx-target="#topic-report" hx-swap="outerHTML" hx-on::before-request="{{ busy }}">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <input type="text" name="question" value="{{ question }}" required maxlength="500"
+           placeholder="Спросить про эту тему: например, «что известно о сроках?»" aria-label="Вопрос по теме">
+    <select name="days" aria-label="За какой период">
+      {% for days, label in periods.items() %}<option value="{{ days }}"{% if days == 7 %} selected{% endif %}>за {{ label }}</option>{% endfor %}
+    </select>
+    <button class="secondary" type="submit">Спросить</button>
+  </form>
+  {% if report_error %}<p class="small field-error" role="alert">Не получилось: {{ report_error }}</p>{% endif %}
+  {% if report %}
+  {% with open=report_open, new=report_new %}{% include "_topic_report.html" %}{% endwith %}
+  {% if report_new and report.kind == "summary" %}
+  <form method="post" action="/topics/{{ topic.id }}/reports" hx-post="/topics/{{ topic.id }}/reports"
+        hx-target="#topic-report" hx-swap="outerHTML" hx-on::before-request="{{ busy }}">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="days" value="{{ report.days }}">
+    <input type="hidden" name="force" value="true">
+    <button class="link small" type="submit">Обновить сводку с учётом новых сюжетов</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</section>

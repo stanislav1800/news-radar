@@ -455,3 +455,22 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 .story-summary p { margin: 0 0 .5rem; }
 .story-summary .summary-meta { display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: baseline; }
 .story-summary form { display: inline; }
+
+/* Сводка по теме (LLM) */
+.topic-report { margin: .5rem 0 1rem; }
+.report-bar { display: flex; flex-wrap: wrap; gap: .4rem .6rem; align-items: center; }
+.report-bar form, .topic-report > form { display: inline; }
+.report-ask { display: flex !important; gap: .5rem; margin-top: .6rem; flex-wrap: wrap; }
+.report-ask input[type=text] { flex: 1 1 18rem; min-width: 0; }
+.topic-report .busy-note { display: none; }
+.topic-report.busy .busy-note { display: inline; }
+.topic-report.busy { opacity: .75; }
+.report { margin-top: .75rem; }
+.report > summary { cursor: pointer; }
+.report-body h3 { font-size: 1rem; margin: 1rem 0 .3rem; }
+.report-body p, .report-body ul { margin: 0 0 .5rem; }
+.report-body ul { padding-left: 1.2rem; }
+.report-body sup.ref { font-size: .7em; margin-left: .1em; }
+.report-meta { margin-top: .5rem; }
+.report-list { padding-left: 1.2rem; }
+.report-list li { margin: .3rem 0; }

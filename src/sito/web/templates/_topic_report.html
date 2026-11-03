@@ -1,0 +1,17 @@
+{# Один отчёт по теме: report, topic. open — раскрыт; new — сколько сюжетов с тех пор #}
+{% set period = periods[report.days] if report.days in periods else report.days ~ " дн." %}
+<details class="report"{% if open %} open{% endif %}>
+  <summary>
+    <strong>{% if report.kind == "question" %}Вопрос: {{ report.question }}{% else %}Сводка за {{ period }}{% endif %}</strong>
+    <span class="muted small">· {{ report.created_at | ago(user.timezone, now) }}
+      {%- if new %} · с тех пор новых сюжетов: {{ new }}{% endif %}</span>
+  </summary>
+  <div class="report-body">{{ report.text | report_html(report.story_ids) }}</div>
+  <p class="muted small report-meta">
+    {{ report.model.split("/")[-1] }} по {{ report.story_ids | length | plural("сюжету", "сюжетам", "сюжетам") }}
+    {%- if report.kind == "question" %} за {{ period }}{% endif %}
+    {%- if report.cost is not none %} · {{ "%.2f" | format(report.cost) }} ₽{% endif %}.
+    Может ошибаться: номера ведут на сюжеты.
+    <a href="/topics/{{ topic.id }}/reports/{{ report.id }}">Отдельной страницей</a>
+  </p>
+</details>

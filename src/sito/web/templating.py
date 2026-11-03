@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
-from sito.web.formatting import ago, compact, local_time, plural, safe_url
+from sito.web.formatting import ago, compact, local_time, plural, report_html, safe_url
 from sito.web.security import CSRF_FORM_FIELD, CSRF_HEADER, csrf_token, pop_flash
 
 WEB_DIR = Path(__file__).parent
@@ -28,4 +28,5 @@ templates.env.globals.update(
     CSRF_FORM_FIELD=CSRF_FORM_FIELD,
     CSRF_HEADER=CSRF_HEADER,
 )
-templates.env.filters.update(local_time=local_time, ago=ago, plural=plural, safe_url=safe_url, compact=compact)
+templates.env.filters.update(local_time=local_time, ago=ago, plural=plural, safe_url=safe_url, compact=compact,
+                            report_html=report_html)

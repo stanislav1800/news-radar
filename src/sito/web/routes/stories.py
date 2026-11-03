@@ -147,7 +147,14 @@ async def _feed_context(
             suggestions = []
 
     after = before[0] if before else None
+    # Вверху ленты темы — блок «Сводка» с последним отчётом LLM
+    report: dict[str, object] = {}
+    if topic is not None and first_page and request.app.state.llm is not None:
+        from sito.web.routes.topics import report_block
+
+        report = await report_block(request, db, user, topic)
     return {
+        **report,
         "stories": stories,
         "view": view,
         "reasons": reasons,

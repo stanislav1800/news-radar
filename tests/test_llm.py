@@ -94,3 +94,55 @@ async def test_daily_limit(
     token = await csrf_from(logged_in, f"/stories/{story_id}")
     response = await logged_in.post(f"/stories/{story_id}/summary", data={"csrf_token": token})
     assert "лимит" in response.text and seen == []
+
+
+def test_report_html_escapes_and_links_stories() -> None:
+    from sito.web.formatting import report_html
+
+    html = report_html("## Главное\n**Рекорд** угля [1, 2]. <script>\n- пункт [3]\n- [9]", [10, 20, 30])
+    assert "<h3>Главное</h3>" in html and "<strong>Рекорд</strong>" in html and "&lt;script&gt;" in html
+    assert '<a href="/stories/10">1</a>, <a href="/stories/20">2</a>' in html
+    assert "<ul><li>пункт" in html and "9" not in html.split("</ul>")[0].split("пункт")[1]
+
+
+async def test_topic_summary_question_history_and_prompt(
+    app: FastAPI, logged_in: httpx.AsyncClient, stories: Stories,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from sito.models import Topic, TopicMatch, TopicReport, User
+
+    story_id = await stories.add([("ТАСС", "Рекорд добычи угля", timedelta(hours=2)),
+                                  ("РБК", "Кузбасс добыл больше угля", timedelta(hours=1))])
+    async with session_factory() as session, session.begin():
+        user = await session.scalar(select(User))
+        assert user is not None
+        topic = Topic(user_id=user.id, name="Уголь", query="уголь", rss_token="t", llm_prompt="Сначала цифры")
+        session.add(topic)
+        await session.flush()
+        session.add(TopicMatch(topic_id=topic.id, story_id=story_id, by_words=True))
+        topic_id = topic.id
+
+    seen: list[dict[str, object]] = []
+    app.state.llm = fake_llm([answer("## Главное\nДобыли рекорд [1]."), answer("Сроков нет [1].")], seen)
+    page = await logged_in.get(f"/?topic={topic_id}")
+    assert "Сводка за" in page.text and "Спросить про эту тему" in page.text
+    token = await csrf_from(logged_in, f"/?topic={topic_id}")
+    url = f"/topics/{topic_id}/reports"
+
+    response = await logged_in.post(url, data={"csrf_token": token, "days": "7"})
+    assert f'<a href="/stories/{story_id}">1</a>' in response.text
+    system = str(seen[0]["messages"])
+    assert "«Уголь»" in system and "Сначала цифры" in system and "Кузбасс добыл больше угля" in system
+
+    # Новых сюжетов нет — та же сводка без запроса к LLM
+    await logged_in.post(url, data={"csrf_token": token, "days": "7"})
+    assert len(seen) == 1
+
+    response = await logged_in.post(url, data={"csrf_token": token, "days": "1", "question": "Какие сроки?"})
+    assert "Сроков нет" in response.text and "Вопрос: Какие сроки?" in str(seen[1]["messages"])
+
+    history = await logged_in.get(url)
+    assert "Сводка за неделю" in history.text and "Вопрос: Какие сроки?" in history.text
+    async with session_factory() as session:
+        assert len(list(await session.scalars(select(TopicReport)))) == 2
+        assert len(list(await session.scalars(select(LlmUsage)))) == 2

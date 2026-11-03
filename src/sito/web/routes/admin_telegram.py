@@ -7,7 +7,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -23,7 +23,8 @@ from sito.web.templating import templates
 
 router = APIRouter(prefix="/admin/connectors/{connector_id}", dependencies=[Depends(require_admin)])
 
-MAX_LINKS = 50  # ссылок за раз: подписка всё равно идёт по одной в минуту
+MAX_LINKS = 50
+CHANNELS_LIMIT = 500  # столько каналов Telegram даёт обычному аккаунту (с Premium — 1000)  # ссылок за раз: подписка всё равно идёт по одной в минуту
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +79,7 @@ async def channels_page(
         counts[row.state] = counts.get(row.state, 0) + 1
     return templates.TemplateResponse(request, "admin/telegram_channels.html", {
         "user": user, "connector": connector, "rows": rows, "counts": counts, "preview_id": preview,
+        "subscribed": sum(r.state not in ("left", "pending", "error") for r in rows), "limit": CHANNELS_LIMIT,
         "new_channels": connector.settings.get("new_channels", "collect"),
         "quiet": bool(connector.settings.get("quiet", True)), "now": datetime.now(UTC),
     })
@@ -106,7 +108,30 @@ async def preview_links(request: Request, db: DbSession, connector_id: int, link
     if not links.strip():
         flash(request, "Вставьте ссылки на каналы")
         return _back(connector_id)
-    command = await ConnectorRepository(db).add_command(connector_id, "preview", {"links": links[:10_000]})
+    return await _command(request, db, connector_id, "preview", {"links": links[:10_000]})
+
+
+@router.post("/channels/search")
+async def search_channels(request: Request, db: DbSession, connector_id: int, query: Annotated[str, Form()]) -> Response:
+    """Поиск каналов Telegram по словам: результат — как предпросмотр, с подпиской в один клик."""
+    return await _command(request, db, connector_id, "search", {"query": query.strip()[:100]})
+
+
+@router.post("/channels/similar")
+async def similar_channels(request: Request, db: DbSession, connector_id: int, source_id: Annotated[int, Form()]) -> Response:
+    return await _command(request, db, connector_id, "similar", {"source_id": source_id})
+
+
+@router.post("/logout")
+async def logout(request: Request, db: DbSession, connector_id: int) -> Response:
+    await _command(request, db, connector_id, "logout", {})
+    flash(request, "Выхожу из аккаунта: сессия завершится и в Telegram. Чтобы снова собирать каналы, войдите заново.")
+    return RedirectResponse(f"/admin/connectors#connector-{connector_id}", status.HTTP_303_SEE_OTHER)
+
+
+async def _command(request: Request, db: DbSession, connector_id: int, kind: str, payload: dict[str, Any]) -> Response:
+    await _telegram(db, connector_id)
+    command = await ConnectorRepository(db).add_command(connector_id, kind, payload)
     await db.commit()
     return _back(connector_id, f"?preview={command.id}#add")
 

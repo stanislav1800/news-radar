@@ -209,6 +209,18 @@ class TelegramApi(Protocol):
         """Отписаться от канала."""
         ...
 
+    async def search(self, query: str) -> list[ChannelPreview]:
+        """Открытые каналы по словам — глобальный поиск Telegram."""
+        ...
+
+    async def similar(self, channel_id: int) -> list[ChannelPreview]:
+        """«Похожие каналы», которые Telegram рекомендует к этому."""
+        ...
+
+    async def log_out(self) -> None:
+        """Выйти из аккаунта: сессия завершается и на стороне Telegram."""
+        ...
+
     async def details(self, channel_id: int) -> ChannelDetails:
         """Подписчики и описание канала."""
         ...
@@ -375,6 +387,15 @@ class _Session:
         try:
             if command.kind == "preview":
                 result: Any = await self._preview(str(command.payload.get("links", "")))
+            elif command.kind == "search":
+                result = self._found(await self.api.search(str(command.payload.get("query", ""))))
+            elif command.kind == "similar":
+                result = self._found(await self.api.similar(int(self._by_id(int(command.payload["source_id"])).external_id)))
+            elif command.kind == "logout":
+                # После выхода соединение закроется, подключение станет «нужен вход»
+                await self.sink.finish_command(command.id, {})
+                await self.api.log_out()
+                return
             elif command.kind == "leave":
                 result = await self._leave(int(command.payload["source_id"]), bool(command.payload.get("delete")))
             else:
@@ -396,16 +417,24 @@ class _Session:
             except JoinError as exc:
                 found.append({"link": link.url, "title": "", "error": str(exc)})
                 continue
-            for item in previews:
-                data = asdict(item)
-                data["known"] = item.channel_id is not None and str(item.channel_id) in self.sources
-                found.append(data)
+            found.extend(self._found(previews))
         return found
 
-    async def _leave(self, source_id: int, delete: bool) -> dict[str, Any]:
+    def _found(self, previews: list[ChannelPreview]) -> list[dict[str, Any]]:
+        """Для страницы: known — канал уже в списке Сито."""
+        return [
+            {**asdict(item), "known": item.channel_id is not None and str(item.channel_id) in self.sources}
+            for item in previews
+        ]
+
+    def _by_id(self, source_id: int) -> KnownSource:
         source = next((s for s in self.sources.values() if s.id == source_id), None)
         if source is None:
             raise ValueError("Канал не найден: возможно, он уже удалён")
+        return source
+
+    async def _leave(self, source_id: int, delete: bool) -> dict[str, Any]:
+        source = self._by_id(source_id)
         await self.api.leave(int(source.external_id))
         await self.sink.forget_source(source_id, delete=delete)
         if delete:

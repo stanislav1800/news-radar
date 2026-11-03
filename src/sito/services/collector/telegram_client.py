@@ -20,11 +20,13 @@ from telethon.tl import types
 from telethon.tl.functions.account import UpdateNotifySettingsRequest
 from telethon.tl.functions.auth import ResendCodeRequest
 from telethon.tl.functions.channels import (
+    GetChannelRecommendationsRequest,
     GetFullChannelRequest,
     JoinChannelRequest,
     LeaveChannelRequest,
 )
 from telethon.tl.functions.chatlists import CheckChatlistInviteRequest
+from telethon.tl.functions.contacts import SearchRequest
 from telethon.tl.functions.messages import (
     CheckChatInviteRequest,
     ImportChatInviteRequest,
@@ -52,6 +54,7 @@ DEVICE: dict[str, str] = {"device_model": "Sito", "system_version": "Linux", "ap
 
 PREVIEW_POSTS = 3     # сколько последних постов показать перед подпиской
 PREVIEW_CHARS = 200
+SEARCH_LIMIT = 30
 MUTE_FOREVER = 2**31 - 1  # «без звука навсегда» в Telegram — самая дальняя дата
 ARCHIVE_FOLDER = 1
 
@@ -80,6 +83,16 @@ def _message(message: Any) -> Message:
 
 def _is_broadcast(entity: object) -> bool:
     return isinstance(entity, TlChannel) and bool(entity.broadcast)
+
+
+def _short_preview(chat: TlChannel) -> ChannelPreview:
+    """Канал из списка (поиск, похожие, папка): без последних постов — так быстрее."""
+    return ChannelPreview(
+        link=f"https://t.me/{chat.username}" if chat.username else "", title=chat.title,
+        username=chat.username, channel_id=chat.id, subscribers=chat.participants_count,
+        subscribed=not chat.left,
+        error=None if chat.username else "Закрытый канал: подпишитесь в приложении или по приглашению",
+    )
 
 
 class TelethonApi(TelegramApi):
@@ -141,16 +154,8 @@ class TelethonApi(TelegramApi):
             folder = await self.client(CheckChatlistInviteRequest(link.value))
         except errors.RPCError as exc:
             raise JoinError(f"Папка не открывается: {exc.message}") from exc
-        found = []
-        for chat in folder.chats:
-            if not _is_broadcast(chat):
-                continue  # в папках бывают и группы: их Сито не читает
-            found.append(ChannelPreview(
-                link=f"https://t.me/{chat.username}" if chat.username else "", title=chat.title,
-                username=chat.username, channel_id=chat.id, subscribers=chat.participants_count,
-                subscribed=not chat.left,
-                error=None if chat.username else "Закрытый канал: подпишитесь в приложении или по приглашению",
-            ))
+        # В папках бывают и группы: их Сито не читает
+        found = [_short_preview(chat) for chat in folder.chats if _is_broadcast(chat)]
         if not found:
             raise JoinError("В папке нет каналов")
         return found
@@ -188,6 +193,17 @@ class TelethonApi(TelegramApi):
             await self.client(LeaveChannelRequest(await self._entity(channel_id)))
         except (errors.UserNotParticipantError, errors.ChannelPrivateError):
             pass  # уже не подписан — то, что нужно
+
+    async def search(self, query: str) -> list[ChannelPreview]:
+        found = await self.client(SearchRequest(q=query, limit=SEARCH_LIMIT))
+        return [_short_preview(chat) for chat in found.chats if _is_broadcast(chat)]
+
+    async def similar(self, channel_id: int) -> list[ChannelPreview]:
+        found = await self.client(GetChannelRecommendationsRequest(channel=await self._entity(channel_id)))
+        return [_short_preview(chat) for chat in found.chats if _is_broadcast(chat)]
+
+    async def log_out(self) -> None:
+        await self.client.log_out()
 
     async def details(self, channel_id: int) -> ChannelDetails:
         full = await self.client(GetFullChannelRequest(await self._entity(channel_id)))

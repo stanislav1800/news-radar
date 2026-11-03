@@ -10,6 +10,7 @@
   {% if connector.status == "needs_login" %}<a href="/admin/connectors/{{ connector.id }}/login" class="status-error">нужен вход</a>
   {% elif connector.status == "error" %}<span class="status-error">ошибка: {{ (connector.last_error or "")[:120] }}</span>
   {% else %}<span class="status-ok">работает</span>{% endif %}
+  · подписок {{ subscribed }} из {{ limit }}
 </p>
 
 <section class="card" id="add">
@@ -19,6 +20,11 @@
     <textarea name="links" rows="3" required
               placeholder="t.me/имя_канала, @имя, t.me/+приглашение или t.me/addlist/папка — можно несколько, с новой строки"></textarea>
     <button type="submit">Показать</button>
+  </form>
+  <form class="inline-search" method="post" action="/admin/connectors/{{ connector.id }}/channels/search">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <input type="search" name="query" required placeholder="Или найти каналы по словам: Кемерово новости">
+    <button class="secondary" type="submit">Найти</button>
   </form>
   {% if preview_id %}
   <div hx-get="/admin/connectors/{{ connector.id }}/commands/{{ preview_id }}" hx-trigger="load" hx-swap="outerHTML">
@@ -104,6 +110,13 @@
               <button class="link" name="action" value="leave">Отписаться</button>
               {% endif %}
             </form>
+            {% if row.state in ("waiting", "stopped", "collecting") %}
+            <form method="post" action="/admin/connectors/{{ connector.id }}/channels/similar">
+              <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+              <input type="hidden" name="source_id" value="{{ s.id }}">
+              <button class="link" title="Каналы, которые Telegram рекомендует к этому">Похожие</button>
+            </form>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -128,6 +141,11 @@
       Тишина на телефоне: каналы без звука, в архиве и прочитаны</label>
     <p class="muted small">Чтобы телефон служебного аккаунта не звенел от сотни каналов и не копил тысячи непрочитанных.</p>
     <button type="submit">Сохранить</button>
+  </form>
+  <form method="post" action="/admin/connectors/{{ connector.id }}/logout"
+        onsubmit="return confirm('Выйти из аккаунта? Сбор каналов остановится, пока не войдёте снова.')">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button class="link danger" type="submit">Выйти из аккаунта</button>
   </form>
 </section>
 {% endblock %}

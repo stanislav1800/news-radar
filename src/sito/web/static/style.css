@@ -410,3 +410,5 @@ h2.day:first-child { margin-top: 0; }
 .preview-item .recent { margin: .3rem 0 0; padding-left: 1.1rem; color: var(--muted); }
 .preview-item .recent li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 48rem; }
 textarea { width: 100%; font: inherit; }
+.inline-search { display: flex; gap: .5rem; margin-top: .6rem; }
+.inline-search input { flex: 1; }

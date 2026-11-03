@@ -24,6 +24,7 @@ from sito.services.collector.telegram import (
     TelegramRules,
     TelegramSourceForm,
     _Session,
+    channel_url,
     channel_username,
     parse_links,
 )
@@ -77,6 +78,18 @@ class FakeTelegram(TelegramApi):
     async def leave(self, channel_id: int) -> None:
         self.calls.append(f"leave {channel_id}")
         self.subscribed = [c for c in self.subscribed if c.id != channel_id]
+
+    async def search(self, query: str) -> list[ChannelPreview]:
+        self.calls.append(f"search {query}")
+        return [ChannelPreview(link=channel_url(c.username), title=c.title, username=c.username, channel_id=c.id)
+                for c in self.public.values() if c.username and query.lower() in c.title.lower()]
+
+    async def similar(self, channel_id: int) -> list[ChannelPreview]:
+        self.calls.append(f"similar {channel_id}")
+        return [ChannelPreview(link="https://t.me/mash", title="Mash", username="mash", channel_id=333)]
+
+    async def log_out(self) -> None:
+        self.calls.append("log_out")
 
     async def details(self, channel_id: int) -> ChannelDetails:
         self.calls.append(f"details {channel_id}")
@@ -341,3 +354,24 @@ async def test_maintenance_keeps_phone_quiet(
     assert tg.calls == ["details 111", "quiet 111", "read 111 5"]
     [source] = await sink.sources(config.id)
     assert source.info["subscribers"] == 5000 and source.info["quiet"] is True
+
+
+async def test_search_similar_and_logout_commands(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    sink, config = setup
+    tg = FakeTelegram(subscribed=[COAL], public={"coal": COAL})
+    session = _Session(config, sink, tg, TelegramRules())
+    await session.run()
+    [coal] = await sink.sources(config.id)
+    search = await add_command(session_factory, config.id, "search", {"query": "уголь"})
+    similar = await add_command(session_factory, config.id, "similar", {"source_id": coal.id})
+    await add_command(session_factory, config.id, "logout", {})
+
+    while (command := await sink.next_command(config.id)) is not None:
+        await session._run_command(command)
+
+    assert [(i["title"], i["known"]) for i in (await command_result(session_factory, search)).result] == [
+        ("Уголь Кузбасса", True)]
+    assert [i["title"] for i in (await command_result(session_factory, similar)).result] == ["Mash"]
+    assert tg.calls == ["search уголь", "similar 111", "log_out"]

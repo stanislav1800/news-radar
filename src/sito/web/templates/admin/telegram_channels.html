@@ -1,9 +1,10 @@
 {% extends "base.html" %}
+{% import "_form_fields.html" as form %}
 {% block title %}Каналы · {{ connector.name }} · Сито{% endblock %}
 {% block main_class %}page wide{% endblock %}
 {% block content %}
 {% set admin_tab = "sources" %}{% include "admin/_tabs.html" %}
-<a class="back" href="/admin/connectors#connector-{{ connector.id }}">← К источникам</a>
+<a class="back" href="/admin/connectors">← Все источники</a>
 <h1>Каналы Telegram</h1>
 <p class="muted">
   {{ connector.name }} · {{ connector.settings.phone }} ·
@@ -177,10 +178,43 @@
     <p class="muted small">Чтобы телефон служебного аккаунта не звенел от сотни каналов и не копил тысячи непрочитанных.</p>
     <button type="submit">Сохранить</button>
   </form>
-  <form method="post" action="/admin/connectors/{{ connector.id }}/logout"
-        onsubmit="return confirm('Выйти из аккаунта? Сбор каналов остановится, пока не войдёте снова.')">
-    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button class="link danger" type="submit">Выйти из аккаунта</button>
-  </form>
+</section>
+
+<section class="card settings">
+  <h2>Подключение</h2>
+  <p>
+    {% if not connector.enabled %}<span class="muted">выключено: каналы не собираются</span>
+    {% elif connector.status == "needs_login" %}<span class="status-error">нужен вход</span>
+    {% elif connector.status == "error" %}<span class="status-error">ошибка</span>
+    {% else %}<span class="status-ok">работает</span>{% endif %}
+    · <a href="/admin/connectors/{{ connector.id }}/login">{{ "Войти в аккаунт" if connector.status == "needs_login" else "Вход в аккаунт" }}</a>
+  </p>
+  {% if connector.last_error %}<p class="small field-error">{{ connector.last_error[:300] }}</p>{% endif %}
+  <details class="add-source">
+    <summary>Название и учётные данные (api_id, api_hash, телефон)</summary>
+    <form class="stack" method="post" action="/admin/connectors/{{ connector.id }}">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      {{ form.render(fields) }}
+      <p class="muted small">Смена api_id, api_hash или телефона потребует войти заново.</p>
+      <button type="submit">Сохранить</button>
+    </form>
+  </details>
+  <div class="row-actions">
+    <form method="post" action="/admin/connectors/{{ connector.id }}/enabled">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="enabled" value="{{ 'false' if connector.enabled else 'true' }}">
+      <button class="link" type="submit">{{ "Выключить подключение" if connector.enabled else "Включить подключение" }}</button>
+    </form>
+    <form method="post" action="/admin/connectors/{{ connector.id }}/logout"
+          onsubmit="return confirm('Выйти из аккаунта? Сбор каналов остановится, пока не войдёте снова.')">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <button class="link danger" type="submit">Выйти из аккаунта</button>
+    </form>
+    <form method="post" action="/admin/connectors/{{ connector.id }}/delete"
+          onsubmit='return confirm({{ ("Удалить подключение «" ~ connector.name ~ "»? Сначала удалите или отпишите его каналы.") | tojson }})'>
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <button class="link danger" type="submit">Удалить подключение</button>
+    </form>
+  </div>
 </section>
 {% endblock %}

@@ -15,9 +15,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sito.models import Connector, Source, SourceType
 from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.sources import SourceRepository, SourceRow
+from sito.services.collector.registry import COLLECTORS
 from sito.services.collector.telegram import parse_link
 from sito.services.connectors import ConnectorService
 from sito.web.deps import AdminUser, DbSession, require_admin
+from sito.web.routes.admin import _connector_fields
 from sito.web.security import flash
 from sito.web.templating import templates
 
@@ -83,6 +85,8 @@ async def channels_page(
         "new_channels": connector.settings.get("new_channels", "collect"),
         "quiet": bool(connector.settings.get("quiet", True)), "alerts": bool(connector.settings.get("alerts", True)),
         "now": datetime.now(UTC),
+        # Подключение целиком здесь же: вход, учётные данные, включить, удалить
+        "fields": _connector_fields(COLLECTORS[SourceType.TELEGRAM], connector, None, None),
     })
 
 
@@ -128,7 +132,7 @@ async def similar_channels(request: Request, db: DbSession, connector_id: int, s
 async def logout(request: Request, db: DbSession, connector_id: int) -> Response:
     await _command(request, db, connector_id, "logout", {})
     flash(request, "Выхожу из аккаунта: сессия завершится и в Telegram. Чтобы снова собирать каналы, войдите заново.")
-    return RedirectResponse(f"/admin/connectors#connector-{connector_id}", status.HTTP_303_SEE_OTHER)
+    return _back(connector_id)
 
 
 async def _command(request: Request, db: DbSession, connector_id: int, kind: str, payload: dict[str, Any]) -> Response:

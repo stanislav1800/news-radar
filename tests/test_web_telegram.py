@@ -197,7 +197,7 @@ async def test_login_by_qr_code(
     await attempt.task
     finished = await admin.get(f"{page}/qr")
 
-    assert finished.headers["HX-Redirect"] == f"/admin/connectors#connector-{connector_id}"
+    assert finished.headers["HX-Redirect"] == f"/admin/connectors/{connector_id}/channels"
     saved = await connector(session_factory)
     assert saved.status == ConnectorStatus.ACTIVE
     assert saved.secrets is not None and BOX.decrypt(saved.secrets)["session"] == "qr-session"

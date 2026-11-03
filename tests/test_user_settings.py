@@ -70,3 +70,14 @@ async def test_topic_searches_only_its_sources(
     await post(logged_in, f"/topics/{topic_id}/sources", page=f"/topics/{topic_id}", source_id=habr)
 
     assert titles((await logged_in.get(f"/?topic={topic_id}")).text) == ["Вышел Python 3.15"]
+
+
+async def test_add_to_topic_from_all_news(logged_in: httpx.AsyncClient, stories: Stories) -> None:
+    """Во «Всех новостях» у сюжета — свои темы: где его нет, «Добавить в тему», где есть — «Не по теме»."""
+    await stories.add([("ТАСС", "Уголь подорожал", timedelta(hours=1))])
+    await stories.add([("РБК", "Шахтёры вышли на смену", timedelta(hours=2))])
+    await follow_search(logged_in, "уголь")
+
+    page = " ".join((await logged_in.get("/?view=all")).text.split())
+
+    assert "Добавить в тему «уголь»" in page and "Не по теме" in page

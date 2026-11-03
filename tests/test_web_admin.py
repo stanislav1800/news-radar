@@ -69,7 +69,9 @@ async def test_admin_pages_need_login(client: httpx.AsyncClient) -> None:
 async def test_connectors_page_lists_sources(admin: httpx.AsyncClient, make_source: MakeSource) -> None:
     await make_source(name="ТАСС", url="https://tass.example/rss")
 
-    html = (await admin.get("/admin/connectors")).text
+    summary = (await admin.get("/admin/connectors")).text
+    assert "1 лента, собирается 1" in " ".join(summary.split()) and "Ленты →" in summary
+    html = (await admin.get("/admin/connectors/1")).text  # таблица лент — на странице RSS
 
     assert "встроенное" in html
     assert "ТАСС" in html and "https://tass.example/rss" in html

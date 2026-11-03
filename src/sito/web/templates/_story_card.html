@@ -22,10 +22,14 @@
           <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
           <input type="hidden" name="topic_id" value="{{ r.topic_id }}">
           <input type="hidden" name="story_id" value="{{ s.id }}">
-          <input type="hidden" name="vote" value="dislike">
+          <input type="hidden" name="vote" value="{{ 'dislike' if r.matched else 'like' }}">
           <input type="hidden" name="mode" value="feed">
           <input type="hidden" name="next" value="/">
+          {% if r.matched %}
           <button class="link" type="submit">Не по теме{% if reasons | length > 1 %} «{{ r.topic_name }}»{% endif %}</button>
+          {% else %}
+          <button class="link" type="submit" title="Тема будет находить похожие">Добавить в тему «{{ r.topic_name }}»</button>
+          {% endif %}
         </form>
         {% endfor %}
         {% if hide_next and s.first_source_id %}
@@ -52,7 +56,7 @@
     {% if (s.last_post_at - s.started_at).total_seconds() > 600 %}
     · <span>обновлено {{ s.last_post_at | ago(user.timezone, now) }}</span>
     {% endif %}
-    {% for r in reasons %}<a class="tag" href="/?topic={{ r.topic_id }}" title="{{ r.topic_name }}: {{ why(r) }}">{{ r.topic_name }}</a>{% endfor %}
+    {% for r in reasons if r.matched %}<a class="tag" href="/?topic={{ r.topic_id }}" title="{{ r.topic_name }}: {{ why(r) }}">{{ r.topic_name }}</a>{% endfor %}
   </div>
   {% if suggest %}
   <form class="card-action" method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="#story-{{ s.id }}" hx-swap="outerHTML">

@@ -4,14 +4,19 @@
 {% block main_class %}page wide{% endblock %}
 {% block content %}
 {% set admin_tab = "sources" %}{% include "admin/_tabs.html" %}
+{% if detail %}
+<a class="back" href="/admin/connectors">← Все источники</a>
+{% else %}
 <h1>Источники</h1>
 <p class="muted">Источники общие для всех пользователей. Подключение — тип источников со своими настройками и учётными данными; RSS есть всегда.</p>
+{% endif %}
 
 {% for section in sections %}
 {% set c = section.connector %}
 <section class="card connector{% if not c.enabled %} disabled{% endif %}" id="connector-{{ c.id }}">
   <header class="connector-head">
-    <h2>{{ c.name }}{% if c.builtin %} <span class="badge">встроенное</span>{% endif %}</h2>
+    <h2>{% if detail %}{{ c.name }}{% else %}<a href="{{ section.url }}">{{ c.name }}</a>{% endif %}
+      {%- if c.builtin %} <span class="badge">встроенное</span>{% endif %}</h2>
     {% if section.spec %}<p class="muted small">{{ section.spec.description }}</p>{% endif %}
     {% if not c.builtin %}
     <p class="connector-status">
@@ -20,22 +25,25 @@
       {% elif c.status == "error" %}<span class="status-error">ошибка</span>
       {% else %}<span class="status-ok">работает</span>{% endif %}
       {% if c.last_error %}<span class="small field-error">{{ c.last_error[:300] }}</span>{% endif %}
-      {% if section.spec and section.spec.login %}
-      <a class="{% if c.status == 'needs_login' %}button{% else %}small{% endif %}" href="/admin/connectors/{{ c.id }}/login">
-        {{- "Войти в аккаунт" if c.status == "needs_login" else "Вход" -}}
-      </a>
+      {% if section.spec and section.spec.login and c.status == "needs_login" %}
+      <a class="button" href="/admin/connectors/{{ c.id }}/login">Войти в аккаунт</a>
       {% endif %}
     </p>
     {% endif %}
   </header>
 
-  {% if section.spec and section.spec.login %}
-  {% set collecting = section.sources | selectattr("enabled") | list | length %}
-  <p>
-    {{ section.sources | length | plural("канал", "канала", "каналов") }}, собирается {{ collecting }}.
-    <a class="button" href="/admin/connectors/{{ c.id }}/channels">Каналы →</a>
+  {% if not detail %}
+  {% set n = section.summary %}
+  {% set word = ("канал", "канала", "каналов") if section.spec and section.spec.login else ("лента", "ленты", "лент") %}
+  <p class="connector-summary">
+    {{ n.total | plural(*word) }}, собирается {{ n.collecting }}
+    {%- if n.failing %} · <span class="status-error">с ошибкой {{ n.failing }}</span>{% endif %}
+    {%- if n.silent %} · <span class="status-error">молчат {{ n.silent }}</span>{% endif %}
+    {%- if n.late %} · <span class="status-warn">с опозданием {{ n.late }}</span>{% endif %}
+    <a class="button" href="{{ section.url }}">{{ "Каналы и настройки →" if section.spec and section.spec.login else "Ленты →" }}</a>
   </p>
-  {% elif section.sources %}
+  {% else %}
+  {% if section.sources %}
   <div class="table-wrap">
     <table class="sources">
       <thead>
@@ -97,9 +105,11 @@
     </div>
   </div>
   {% endif %}
+  {% endif %}
 </section>
 {% endfor %}
 
+{% if not detail %}
 {% for item in new_connectors %}
 <section class="card connector new-connector">
   <details {% if item.form_open %}open{% endif %}>
@@ -115,4 +125,5 @@
   </details>
 </section>
 {% endfor %}
+{% endif %}
 {% endblock %}

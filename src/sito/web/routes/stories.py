@@ -130,9 +130,7 @@ async def _feed_context(
     has_more = len(stories) > config.feed_page_size
     stories = stories[: config.feed_page_size]
     next_cursor = _cursor(stories[-1]) if has_more else None
-    reasons: dict[int, list[TopicReason]] = {}
-    if topic_ids:
-        reasons = await TopicRepository(db).reasons(user.id, [s.id for s in stories], topic_ids=topic_ids)
+    reasons = await _card_reasons(db, user, stories, topic_ids, active)
 
     # Подсказки темы: спорные сюжеты спрашиваются прямо в ленте («Подходит?»), остальные — в её конце
     ask: list[FeedStory] = []
@@ -165,6 +163,19 @@ async def _feed_context(
         "since": int(stories[0].started_at.timestamp() * 1_000_000) if stories and before is None else None,
         "now": now,
     }
+
+
+async def _card_reasons(
+    db: DbSession, user: User, stories: list[FeedStory], topic_ids: list[int] | None, active: list[Topic],
+) -> dict[int, list[TopicReason]]:
+    """Темы у карточек. В лентах тем — почему сюжет в теме («Не по теме»). В «Главном» и «Всех новостях» —
+    все свои темы: где сюжет есть, «Не по теме», где нет — «Добавить в тему»."""
+    ids = [s.id for s in stories]
+    if topic_ids:
+        return await TopicRepository(db).reasons(user.id, ids, topic_ids=topic_ids)
+    if topic_ids is None and active:
+        return await TopicRepository(db).reasons(user.id, ids, topic_ids=[t.id for t in active], include_unmatched=True)
+    return {}
 
 
 async def _suggestions(
@@ -263,10 +274,7 @@ async def feed_newer(
     )
     if not stories:
         return HTMLResponse("")
-    reasons = (
-        await TopicRepository(db).reasons(user.id, [s.id for s in stories], topic_ids=topic_ids)
-        if topic_ids else {}
-    )
+    reasons = await _card_reasons(db, user, stories, topic_ids, [t for t in topics if not t.paused])
     return templates.TemplateResponse(request, "_newer.html", {
         "user": user, "stories": stories, "reasons": reasons, "view": feed_view,
         "since": int(stories[0].started_at.timestamp() * 1_000_000), "now": datetime.now(UTC),

@@ -74,7 +74,7 @@ async def test_add_connector_encrypts_secrets(
     assert connector.name == "Мониторинг" and connector.settings == {"phone": "+79990001122"}
     assert connector.secrets is not None and b"very-secret-hash" not in connector.secrets
     assert BOX.decrypt(connector.secrets) == {"api_hash": "very-secret-hash"}
-    page = (await admin.get("/admin/connectors")).text
+    page = (await admin.get(f"/admin/connectors/{connector.id}")).text
     assert "very-secret-hash" not in page  # секрет не показывается никогда
     assert "+79990001122" in page and "Сохранено. Оставьте пустым, чтобы не менять." in page
     assert "Каналов пока нет: они появятся сами" in page
@@ -117,7 +117,7 @@ async def test_disable_and_delete(admin: httpx.AsyncClient, session_factory: asy
     await post(admin, f"/admin/connectors/{connector.id}/enabled", enabled="false")
     [disabled] = await connectors(session_factory)
     assert not disabled.enabled
-    assert "Включить подключение" in (await admin.get("/admin/connectors")).text
+    assert "Включить подключение" in (await admin.get(f"/admin/connectors/{connector.id}")).text
 
     await post(admin, f"/admin/connectors/{connector.id}/delete")
     assert await connectors(session_factory) == []
@@ -135,7 +135,7 @@ async def test_connector_with_sources_is_not_deleted(
     await post(admin, f"/admin/connectors/{connector.id}/delete")
 
     assert len(await connectors(session_factory)) == 1
-    page = (await admin.get("/admin/connectors")).text
+    page = (await admin.get(f"/admin/connectors/{connector.id}")).text
     assert "У подключения есть источники" in page
     assert "Канал про уголь" in page and "сразу" in page  # источник без опроса по расписанию
 

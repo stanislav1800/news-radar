@@ -310,9 +310,10 @@ async def test_vote_requires_csrf(logged_in: httpx.AsyncClient, stories: Stories
 
 async def test_story_page_timeline_and_follow_in_place(logged_in: httpx.AsyncClient, stories: Stories) -> None:
     story = await stories.add([("ТАСС", "Запуск ракеты", timedelta(hours=1))], embedding=direction(0),
-                              text="Ракета стартовала с Восточного.\nВторой абзац не показываем.")
+                              text="Ракета стартовала с Восточного.\nВторой абзац.\nТретий.\nЧетвёртый не показываем.")
     page = (await logged_in.get(f"/stories/{story}")).text
-    assert "Ракета стартовала с Восточного." in page and "Второй абзац" not in page
+    # Выдержка — до трёх абзацев: дальше «Читать в источнике»
+    assert "Ракета стартовала с Восточного." in page and "Третий." in page and "Четвёртый" not in page
     assert "Читать в источнике" in page
 
     token = await csrf_from(logged_in, f"/stories/{story}")

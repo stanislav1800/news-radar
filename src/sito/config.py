@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     full_text_enabled: bool = True
     full_text_concurrency: int = 4
 
+    # Сколько знаков текста поста показывать в хронологии сюжета (до трёх абзацев); полностью — у источника
+    story_excerpt_chars: int = 700
+
     # Хранение: тексты и векторы постов старше этого удаляются (заголовок, ссылка и сюжеты остаются)
     post_retention_days: int = 90
 

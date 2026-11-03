@@ -42,7 +42,7 @@
           <span class="post-title">{{ p.title }}</span>
         </summary>
         <div class="post-body">
-          {% if p.lead %}<p>{{ p.lead }}</p>{% else %}<p class="muted small">Текста нет — только заголовок.</p>{% endif %}
+          {% if p.lead %}<p class="excerpt">{{ p.lead }}</p>{% else %}<p class="muted small">Текста нет — только заголовок.</p>{% endif %}
           <a href="{{ p.url | safe_url }}" target="_blank" rel="noopener noreferrer">Читать в источнике ↗</a>
         </div>
       </details>

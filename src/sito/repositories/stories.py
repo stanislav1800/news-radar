@@ -28,7 +28,25 @@ from sito.models.post import (
     STORY_HAS_TEXT_SQL,
 )
 
-LEAD_MAX_CHARS = 300  # ТЗ: из чужих материалов показываем не больше первого абзаца, около 300 знаков
+LEAD_MAX_CHARS = 300  # анонс в карточке ленты: первый абзац, около 300 знаков
+# Выдержка поста в хронологии сюжета: начало материала, а не весь текст (полностью — «Читать в источнике»)
+EXCERPT_CHARS = 700
+EXCERPT_PARAGRAPHS = 3
+
+
+def excerpt(text: str | None, max_chars: int = EXCERPT_CHARS) -> str | None:
+    """Начало текста: до EXCERPT_PARAGRAPHS абзацев и max_chars знаков, обрезано по концу предложения."""
+    if not text:
+        return None
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()][:EXCERPT_PARAGRAPHS]
+    result = "\n".join(paragraphs)
+    if len(result) <= max_chars:
+        return result
+    cut = result[:max_chars]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "), cut.rfind(".\n"))
+    if end > max_chars // 2:
+        return cut[: end + 1]
+    return cut[: cut.rfind(" ")].rstrip(" ,;:—-") + "…"
 HEADLINE_WINDOW = timedelta(hours=3)  # заголовок выбирается среди постов последних часов сюжета
 HEADLINE_SLACK = 0.02                 # «типичный» пост: не дальше от центра, чем самый типичный, на столько
 
@@ -408,15 +426,14 @@ class StoryRepository:
         result = await self.session.execute(_RECOUNT_OUTLETS_SQL)
         return result.rowcount  # type: ignore[attr-defined, no-any-return]
 
-    async def timeline(self, story_id: int) -> list[TimelinePost]:
+    async def timeline(self, story_id: int, excerpt_chars: int = EXCERPT_CHARS) -> list[TimelinePost]:
         """Посты сюжета по времени: как развивалось событие."""
         event_at = literal_column(EVENT_AT_SQL, DateTime(timezone=True))
         query = (
             select(
                 Post.id, Post.title, Post.url, Source.name.label("source_name"), event_at.label("event_at"),
-                func.nullif(
-                    func.left(func.split_part(func.coalesce(Post.text, ""), "\n", 1), LEAD_MAX_CHARS), ""
-                ).label("lead"),
+                # Выдержка — из полного текста статьи, если он есть (у RSS в ленте только анонс)
+                func.left(func.coalesce(func.nullif(Post.full_text, ""), Post.text), excerpt_chars * 2).label("body"),
                 Post.url_normalized, Post.links, literal_column(OUTLET_KEY_SQL).label("outlet"),
             )
             .join(Source, Source.id == Post.source_id)
@@ -428,7 +445,7 @@ class StoryRepository:
         # со ссылкой на статью ТАСС), — та же новость второй раз: в хронологии остаётся статья
         articles = {(row.outlet, row.url_normalized) for row in rows}
         return [
-            TimelinePost(row.id, row.title, row.url, row.source_name, row.event_at, row.lead)
+            TimelinePost(row.id, row.title, row.url, row.source_name, row.event_at, excerpt(row.body, excerpt_chars))
             for row in rows
             if not any((row.outlet, link) in articles and link != row.url_normalized for link in row.links or ())
         ]

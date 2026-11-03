@@ -294,7 +294,7 @@ async def story_page(request: Request, db: DbSession, user: CurrentUser, story_i
     story = await repo.get(story_id)
     if story is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сюжет не найден")
-    timeline = await repo.timeline(story_id)
+    timeline = await repo.timeline(story_id, config.story_excerpt_chars)
     similar = await repo.similar(
         story_id,
         min_similarity=config.related_min_similarity,

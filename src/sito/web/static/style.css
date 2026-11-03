@@ -447,3 +447,4 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 .topic-pick-list { max-height: 14rem; overflow-y: auto; margin: .35rem 0 0 .6rem; display: grid; gap: .3rem;
   padding-left: .6rem; border-left: 2px solid var(--border); }
 .topic-filter { margin: .35rem 0 0 .6rem; width: calc(100% - .6rem); }
+.timeline .excerpt { white-space: pre-line; }

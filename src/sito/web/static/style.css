@@ -416,3 +416,11 @@ textarea { width: 100%; font: inherit; }
 .inline-search { display: flex; gap: .5rem; margin-top: .6rem; }
 .inline-search input { flex: 1; }
 button.secondary.danger { color: var(--error-text); border-color: var(--error-text); }
+.table-tools { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; justify-content: space-between; margin: .75rem 0; }
+.chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.chip { background: none; border: 1px solid var(--border); border-radius: 999px; padding: .15rem .65rem;
+  font-size: .85rem; color: var(--text); cursor: pointer; }
+.chip span { color: var(--muted); margin-left: .2rem; }
+.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip.active span { color: inherit; opacity: .85; }
+.table-tools select { margin-left: .35rem; }

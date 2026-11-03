@@ -83,14 +83,52 @@
     }
   }
 
-  // Поиск по таблице: input[data-filter="#таблица"] скрывает строки, где нет набранного (data-name)
+  // Таблица с поиском (input[data-filter]), фильтром по состоянию (кнопки data-state-filter)
+  // и сортировкой (select[data-sort]): строка видна, если подходит и под поиск, и под фильтр
+  function applyFilters(selector) {
+    const search = document.querySelector(`[data-filter="${selector}"]`);
+    const query = search ? search.value.trim().toLowerCase() : "";
+    const tools = document.querySelector(`[data-table-tools="${selector}"]`);
+    const active = tools ? tools.querySelector(".chip.active") : null;
+    const state = active ? active.dataset.stateFilter : "";
+    document.querySelectorAll(`${selector} tbody tr`).forEach((row) => {
+      const byText = !query || (row.dataset.name || "").includes(query);
+      const byState = !state || row.dataset.state === state;
+      row.hidden = !(byText && byState);
+      if (row.hidden) row.querySelectorAll("input[type=checkbox]").forEach((box) => { box.checked = false; });
+    });
+    updateBulkBars();
+  }
+
+  function sortRows(selector, key) {
+    const body = document.querySelector(`${selector} tbody`);
+    if (!body) return;
+    const desc = !key.startsWith("-");
+    const field = key.replace("-", "") || "order";
+    const value = (row) => field === "name" ? row.dataset.name : Number(row.dataset[field] || 0);
+    const rows = [...body.rows].sort((a, b) => {
+      const [x, y] = [value(a), value(b)];
+      if (field === "name") return x.localeCompare(y, "ru");
+      if (field === "order") return x - y;
+      return desc ? y - x : x - y;
+    });
+    body.append(...rows);
+  }
+
   document.addEventListener("input", (event) => {
     const input = event.target.closest("[data-filter]");
-    if (!input) return;
-    const query = input.value.trim().toLowerCase();
-    document.querySelectorAll(`${input.dataset.filter} tbody tr`).forEach((row) => {
-      row.hidden = Boolean(query) && !(row.dataset.name || "").includes(query);
-    });
+    if (input) applyFilters(input.dataset.filter);
+  });
+  document.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-state-filter]");
+    if (!chip) return;
+    const tools = chip.closest("[data-table-tools]");
+    tools.querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === chip));
+    applyFilters(tools.dataset.tableTools);
+  });
+  document.addEventListener("change", (event) => {
+    const select = event.target.closest("[data-sort]");
+    if (select) sortRows(select.closest("[data-table-tools]").dataset.tableTools, select.value);
   });
 
   // Строка действий над отмеченными: видна, только когда что-то отмечено, и пишет сколько

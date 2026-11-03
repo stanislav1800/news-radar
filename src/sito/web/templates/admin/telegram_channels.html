@@ -36,10 +36,27 @@
 <section class="card">
   <div class="channels-head">
     <h2>Подписки аккаунта</h2>
-    {% set labels = [("collecting", "собираются"), ("waiting", "ждут решения"), ("stopped", "не собираются"),
-                     ("pending", "ждут подписки"), ("error", "с ошибкой"), ("leaving", "отписываюсь"), ("left", "отписан")] %}
-    <p class="muted small">{% for state, label in labels if counts.get(state) %}{{ label }}: {{ counts[state] }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
     <input type="search" data-filter="#channels" placeholder="Найти в списке" aria-label="Найти канал в списке">
+  </div>
+  {% set labels = [("collecting", "Собираются"), ("waiting", "Ждут решения"), ("stopped", "Не собираются"),
+                   ("pending", "Ждут подписки"), ("error", "С ошибкой"), ("leaving", "Отписываюсь"), ("left", "Отписаны")] %}
+  <div class="table-tools" data-table-tools="#channels">
+    <div class="chips" role="group" aria-label="Показать">
+      <button type="button" class="chip active" data-state-filter="">Все <span>{{ rows | length }}</span></button>
+      {% for state, label in labels if counts.get(state) %}
+      <button type="button" class="chip" data-state-filter="{{ state }}">{{ label }} <span>{{ counts[state] }}</span></button>
+      {% endfor %}
+    </div>
+    <label class="small muted">Сортировать
+      <select data-sort>
+        <option value="">по состоянию</option>
+        <option value="name">по названию</option>
+        <option value="subs">по подписчикам</option>
+        <option value="posts">по постам за сутки</option>
+        <option value="last">по последнему посту: свежие</option>
+        <option value="-last">по последнему посту: давно молчат</option>
+      </select>
+    </label>
   </div>
 
   {% if rows %}
@@ -66,6 +83,8 @@
       <tbody>
         {% for row in rows %}{% set s = row.source %}
         <tr id="source-{{ s.id }}" data-name="{{ (s.name ~ ' ' ~ (row.username or '')) | lower }}"
+            data-state="{{ row.state }}" data-subs="{{ s.info.subscribers or 0 }}" data-posts="{{ s.posts_24h or 0 }}"
+            data-last="{{ s.last_post_at.timestamp() | int if s.last_post_at else 0 }}" data-order="{{ loop.index }}"
             class="{% if row.state in ('stopped', 'left', 'leaving') %}disabled{% endif %}">
           <td><input type="checkbox" form="bulk" name="source_id" value="{{ s.id }}" aria-label="Отметить {{ s.name }}"></td>
           <td>

@@ -1,10 +1,10 @@
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import ScalarSelect, delete, func, or_, select, text, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import ScalarSelect, cast, delete, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sito.models import Post, Source, SourceType, Story
@@ -45,6 +45,7 @@ class SourceRow:
     last_post_at: datetime | None  # когда пришёл последний новый пост
     posts_24h: int
     posts_week: int
+    info: dict[str, Any] = field(default_factory=dict)  # что рассказал сервис (подписчики канала и т. п.)
 
     @property
     def failing(self) -> bool:
@@ -101,16 +102,28 @@ class SourceRepository:
         return source
 
     async def get_or_add_external(
-        self, connector_id: int, type_: SourceType, external_id: str, name: str, url: str | None
+        self, connector_id: int, type_: SourceType, external_id: str, name: str, url: str | None,
+        *, enabled: bool = True,
     ) -> Source:
         """Источник слушающего сборщика: найти по id у сервиса или завести.
 
         Гонка двух подключений за один новый канал решается уникальностью (type, external_id):
         второе получит уже заведённый источник.
         """
+        if url is not None:
+            same_url = await self.get_by_url(url)
+            if same_url is not None and same_url.external_id is None:
+                # Канал добавили ссылкой, а пост из него пришёл раньше подписки Сито: это он и есть
+                same_url.external_id = external_id
+                same_url.name = name
+                await self.session.flush()
+                return same_url
+            if same_url is not None and same_url.external_id != external_id:
+                url = None  # адрес занят другим каналом (имя передали): заводим без адреса
         stmt = (
             insert(Source)
-            .values(connector_id=connector_id, type=type_, name=name, url=url, external_id=external_id, state={})
+            .values(connector_id=connector_id, type=type_, name=name, url=url, external_id=external_id, state={},
+                    enabled=enabled)
             .on_conflict_do_nothing(index_elements=["type", "external_id"])
         )
         await self.session.execute(stmt)
@@ -141,6 +154,13 @@ class SourceRepository:
         await self.session.flush()
         return pending
 
+    async def update_info(self, source_id: int, info: Mapping[str, Any]) -> None:
+        """Дополнить сведения об источнике (ключи из info заменяются, остальные остаются)."""
+        await self.session.execute(
+            update(Source).where(Source.id == source_id)
+            .values(info=Source.info.op("||")(cast(dict(info), JSONB)))
+        )
+
     async def list_with_stats(self, connector_id: int | None = None) -> list[SourceRow]:
         """Источники со статистикой: одного подключения или все."""
         def posts_since(interval: str) -> ScalarSelect[int]:
@@ -155,7 +175,7 @@ class SourceRepository:
                 Source.id, Source.name, Source.url, Source.external_id, Source.enabled, Source.poll_interval,
                 Source.last_success_at, Source.last_error, Source.last_error_at, Source.failures,
                 Source.created_at, last_post_at.label("last_post_at"),
-                posts_since("24 hours").label("posts_24h"), posts_since("7 days").label("posts_week"),
+                posts_since("24 hours").label("posts_24h"), posts_since("7 days").label("posts_week"), Source.info,
             )
             .order_by(Source.name)
         )

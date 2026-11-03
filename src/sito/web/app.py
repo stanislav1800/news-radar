@@ -25,7 +25,16 @@ from sito.services.sources import http_trial_fetch
 from sito.services.telegram_login import QrLogins
 from sito.utils.crypto import SecretBox
 from sito.web.deps import LoginRequired, verify_csrf
-from sito.web.routes import account, admin, admin_users, auth, health, stories, topics
+from sito.web.routes import (
+    account,
+    admin,
+    admin_telegram,
+    admin_users,
+    auth,
+    health,
+    stories,
+    topics,
+)
 from sito.web.security import LoginLimiter
 from sito.web.templating import WEB_DIR
 
@@ -133,5 +142,6 @@ def create_app(
     app.include_router(topics.router)
     app.include_router(account.router)
     app.include_router(admin.router)
+    app.include_router(admin_telegram.router)
     app.include_router(admin_users.router)
     return app

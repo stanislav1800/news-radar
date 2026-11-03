@@ -393,3 +393,20 @@ h2.day:first-child { margin-top: 0; }
 .qr-login .qr { display: inline-block; background: #fff; padding: .5rem; border-radius: 8px; }
 .qr-login .qr svg { display: block; }
 .qr-login ol { margin: .75rem 0 0; padding-left: 1.2rem; }
+
+/* Каналы Telegram */
+.status-warn { color: #9a5b00; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .status-warn { color: #e0a64a; } }
+.channels-head { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline; }
+.channels-head h2 { margin: 0; }
+.channels-head p { margin: 0; flex: 1; }
+.channels-head input[type=search] { max-width: 16rem; }
+.bulk-bar { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; margin: .75rem 0; }
+.sources td .about { max-width: 32rem; }
+.sources td.actions form { display: flex; gap: .75rem; }
+.preview-list { display: grid; gap: .6rem; margin-top: 1rem; }
+.preview-item { padding: .6rem .75rem; border: 1px solid var(--border); border-radius: 8px; }
+.preview-item p { margin: .3rem 0 0; }
+.preview-item .recent { margin: .3rem 0 0; padding-left: 1.1rem; color: var(--muted); }
+.preview-item .recent li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 48rem; }
+textarea { width: 100%; font: inherit; }

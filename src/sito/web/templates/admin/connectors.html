@@ -29,7 +29,13 @@
     {% endif %}
   </header>
 
-  {% if section.sources %}
+  {% if section.spec and section.spec.login %}
+  {% set collecting = section.sources | selectattr("enabled") | list | length %}
+  <p>
+    {{ section.sources | length | plural("канал", "канала", "каналов") }}, собирается {{ collecting }}.
+    <a class="button" href="/admin/connectors/{{ c.id }}/channels">Каналы →</a>
+  </p>
+  {% elif section.sources %}
   <div class="table-wrap">
     <table class="sources">
       <thead>
@@ -47,7 +53,7 @@
   <p class="muted">Источников пока нет.</p>
   {% endif %}
 
-  {% if section.spec and section.spec.source_form %}
+  {% if section.spec and section.spec.source_form and not section.spec.login %}
   <details class="add-source" {% if section.form_open %}open{% endif %}>
     <summary>{{ "Добавить канал" if section.spec.login else "Добавить ленту" }}</summary>
     <form class="stack" method="post" action="/admin/connectors/{{ c.id }}/sources">

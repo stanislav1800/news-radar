@@ -12,6 +12,7 @@ from sito.repositories.posts import NewPost, PostRepository
 from sito.repositories.sources import SourceRepository
 from sito.services.collector.base import (
     BaseCollector,
+    Command,
     KnownSource,
     PendingSource,
     RawPost,
@@ -47,7 +48,7 @@ class IngestResult:
 def _known(source: Source) -> KnownSource:
     return KnownSource(
         id=source.id, external_id=source.external_id or "", name=source.name,
-        enabled=source.enabled, state=dict(source.state or {}),
+        enabled=source.enabled, state=dict(source.state or {}), info=dict(source.info or {}),
     )
 
 
@@ -128,13 +129,15 @@ class IngestService:
             found = await SourceRepository(session).list_for_connector(connector_id)
         return [_known(s) for s in found if s.external_id is not None]
 
-    async def source(self, connector_id: int, external_id: str, *, name: str, url: str | None = None) -> KnownSource:
+    async def source(
+        self, connector_id: int, external_id: str, *, name: str, url: str | None = None, enabled: bool = True,
+    ) -> KnownSource:
         async with self.session_factory() as session, session.begin():
             connector = await ConnectorRepository(session).get(connector_id)
             if connector is None:
                 raise LookupError(f"Подключение {connector_id} не найдено")
             found = await SourceRepository(session).get_or_add_external(
-                connector_id, connector.type, external_id, name, url
+                connector_id, connector.type, external_id, name, url, enabled=enabled,
             )
             return _known(found)
 
@@ -157,6 +160,28 @@ class IngestService:
     async def pending_failed(self, source_id: int, error: str) -> None:
         async with self.session_factory() as session, session.begin():
             await SourceRepository(session).mark_failed(source_id, error)
+
+    async def update_info(self, source_id: int, info: Mapping[str, Any]) -> None:
+        async with self.session_factory() as session, session.begin():
+            await SourceRepository(session).update_info(source_id, info)
+
+    async def forget_source(self, source_id: int, *, delete: bool) -> None:
+        async with self.session_factory() as session, session.begin():
+            repo = SourceRepository(session)
+            if delete:
+                await repo.delete(source_id)
+            else:
+                await repo.set_enabled(source_id, False)
+                await repo.update_info(source_id, {"left": True, "leaving": False})
+
+    async def next_command(self, connector_id: int) -> Command | None:
+        async with self.session_factory() as session:
+            found = await ConnectorRepository(session).next_command(connector_id)
+        return Command(found.id, found.kind, dict(found.payload)) if found else None
+
+    async def finish_command(self, command_id: int, result: Any = None, error: str | None = None) -> None:
+        async with self.session_factory() as session, session.begin():
+            await ConnectorRepository(session).finish_command(command_id, result, error)
 
     @staticmethod
     def _prepare(raw_posts: Iterable[RawPost]) -> tuple[list[NewPost], int]:

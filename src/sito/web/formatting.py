@@ -79,3 +79,14 @@ def safe_url(url: str) -> str:
     Иначе лента могла бы подсунуть javascript:... и выполнить код в браузере пользователя.
     """
     return url if url.lower().startswith(("http://", "https://")) else "#"
+
+
+def compact(value: int | None) -> str:
+    """Число подписчиков коротко: 950, 12 тыс., 1,2 млн."""
+    if value is None:
+        return ""
+    if value < 10_000:
+        return f"{value:,}".replace(",", " ")
+    if value < 1_000_000:
+        return f"{round(value / 1000)} тыс."
+    return f"{value / 1_000_000:.1f}".rstrip("0").rstrip(".").replace(".", ",") + " млн"

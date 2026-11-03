@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sito.models import Connector, ConnectorStatus, Source
+from sito.models import Connector, ConnectorCommand, ConnectorStatus, Source
 from sito.services.collector.telegram_client import (
     CodeSent,
     CodeUnavailable,
@@ -155,15 +155,14 @@ async def test_add_channel_by_link(
 
     added = await post(admin, f"/admin/connectors/{connector_id}/sources", url="https://t.me/s/ilyaseredyuk")
     again = await post(admin, f"/admin/connectors/{connector_id}/sources", url="@ilyaseredyuk")
-    bad = await post(admin, f"/admin/connectors/{connector_id}/sources", url="https://t.me/+invite")
+    bad = await post(admin, f"/admin/connectors/{connector_id}/sources", url="https://t.me/addlist/Folder123")
 
-    assert added.status_code == 303
-    assert again.status_code == 400 and "уже есть" in again.text
-    assert bad.status_code == 400 and "приглашения" in bad.text
+    assert added.status_code == again.status_code == bad.status_code == 303
+    page = (await admin.get(f"/admin/connectors/{connector_id}/channels")).text
+    assert "ждёт подписки" in page
     async with session_factory() as session:
         [source] = list(await session.scalars(select(Source).where(Source.connector_id == connector_id)))
     assert (source.name, source.url, source.external_id) == ("@ilyaseredyuk", "https://t.me/ilyaseredyuk", None)
-    assert "ждёт подписки" in (await admin.get("/admin/connectors")).text
 
 
 async def test_resend_falls_back_to_new_code(
@@ -202,3 +201,46 @@ async def test_login_by_qr_code(
     saved = await connector(session_factory)
     assert saved.status == ConnectorStatus.ACTIVE
     assert saved.secrets is not None and BOX.decrypt(saved.secrets)["session"] == "qr-session"
+
+
+async def test_channels_page_actions(
+    admin: httpx.AsyncClient, fake_login: FakeLogin, session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Список каналов: собирать / не собирать, отписаться (поручение worker'у), ссылки с предпросмотром."""
+    await add_account(admin)
+    connector_id = (await connector(session_factory)).id
+    async with session_factory() as session, session.begin():
+        coal = Source(connector_id=connector_id, type="telegram", name="Уголь Кузбасса", url="https://t.me/coal",
+                      external_id="111", state={}, info={"subscribers": 12345})
+        news = Source(connector_id=connector_id, type="telegram", name="Новости", external_id="222", state={},
+                      enabled=False)
+        session.add_all([coal, news])
+    page = (await admin.get(f"/admin/connectors/{connector_id}/channels")).text
+    assert "Уголь Кузбасса" in page and "12 тыс. подписчиков" in page and "ждёт решения" in page
+
+    base = f"/admin/connectors/{connector_id}"
+    await post(admin, f"{base}/channels/action", action="collect", source_id=str(news.id))
+    await post(admin, f"{base}/channels/action", action="leave", source_id=str(coal.id))
+    async with session_factory() as session:
+        sources = {s.name: s for s in await session.scalars(select(Source))}
+        [command] = list(await session.scalars(select(ConnectorCommand)))
+    assert sources["Новости"].enabled and sources["Новости"].info["decided"] is True
+    assert not sources["Уголь Кузбасса"].enabled and sources["Уголь Кузбасса"].info["leaving"] is True
+    assert (command.kind, command.payload) == ("leave", {"source_id": coal.id, "delete": False})
+
+    shown = await post(admin, f"{base}/channels/preview", links="t.me/mash")
+    preview_id = int(shown.headers["location"].split("preview=")[1].split("#")[0])
+    assert "Смотрю каналы" in (await admin.get(f"{base}/commands/{preview_id}")).text
+    async with session_factory() as session, session.begin():
+        done = await session.get(ConnectorCommand, preview_id)
+        assert done is not None
+        done.status, done.result = "done", [{"link": "https://t.me/mash", "title": "Mash", "username": "mash",
+                                             "subscribers": 3_100_000, "recent": [], "subscribed": False,
+                                             "known": False, "error": None, "about": ""}]
+    fragment = (await admin.get(f"{base}/commands/{preview_id}")).text
+    assert "3,1 млн подписчиков" in fragment and "Подписаться на отмеченные" in fragment
+
+    await post(admin, f"{base}/channels/subscribe", link="https://t.me/mash")
+    async with session_factory() as session:
+        mash = await session.scalar(select(Source).where(Source.url == "https://t.me/mash"))
+    assert mash is not None and mash.external_id is None and mash.name == "@mash"

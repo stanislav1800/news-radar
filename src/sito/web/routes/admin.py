@@ -297,21 +297,20 @@ async def add_source(request: Request, db: DbSession, user: AdminUser, connector
 
 
 async def _add_telegram_channel(request: Request, db: DbSession, user: User, connector: Connector) -> Response:
+    """Канал ссылкой без предпросмотра (форма из описания коллектора). Итог — на странице каналов."""
     values = _form_values(await request.form())
-    target = f"source:{connector.id}"
     try:
         form = TelegramSourceForm.model_validate(values)
         source = await SourceService(db, request.app.state.trial_fetch).add_telegram(connector, form)
     except ValidationError as exc:
-        return await _render_connectors(request, db, user, target=target, values=values,
-                                        errors=validation_errors(exc), status_code=status.HTTP_400_BAD_REQUEST)
+        flash(request, "; ".join(validation_errors(exc).values()))
     except SourceError as exc:
-        return await _render_connectors(request, db, user, target=target, values=values,
-                                        errors={"__all__": str(exc)}, status_code=status.HTTP_400_BAD_REQUEST)
-    await db.commit()
-    flash(request, f"Канал {source.name} добавлен. Аккаунт подпишется на него в течение пары минут "
-                   "и заберёт посты за последние сутки.")
-    return RedirectResponse(f"/admin/connectors#source-{source.id}", status.HTTP_303_SEE_OTHER)
+        flash(request, str(exc))
+    else:
+        await db.commit()
+        flash(request, f"Канал {source.name} добавлен. Аккаунт подпишется на него в течение пары минут "
+                       "и заберёт посты за последние сутки.")
+    return RedirectResponse(f"/admin/connectors/{connector.id}/channels", status.HTTP_303_SEE_OTHER)
 
 
 # --- Вход в Telegram ------------------------------------------------------------------------------

@@ -16,16 +16,30 @@ from typing import Any
 
 from telethon import TelegramClient, errors, events
 from telethon.sessions import StringSession
+from telethon.tl import types
+from telethon.tl.functions.account import UpdateNotifySettingsRequest
 from telethon.tl.functions.auth import ResendCodeRequest
-from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.channels import (
+    GetFullChannelRequest,
+    JoinChannelRequest,
+    LeaveChannelRequest,
+)
+from telethon.tl.functions.chatlists import CheckChatlistInviteRequest
+from telethon.tl.functions.messages import (
+    CheckChatInviteRequest,
+    ImportChatInviteRequest,
+)
 from telethon.tl.types import Channel as TlChannel
 from telethon.tl.types import PeerChannel
 
 from sito.services.collector.base import ConnectorConfig, NeedsLogin
 from sito.services.collector.telegram import (
     Channel,
+    ChannelDetails,
+    ChannelPreview,
     Connect,
     JoinError,
+    Link,
     Message,
     MessageHandler,
     TelegramApi,
@@ -35,6 +49,11 @@ logger = logging.getLogger(__name__)
 
 # Одинаковые данные устройства при каждом подключении: «новое устройство» каждый раз выглядело бы подозрительно
 DEVICE: dict[str, str] = {"device_model": "Sito", "system_version": "Linux", "app_version": "Sito 1.0"}
+
+PREVIEW_POSTS = 3     # сколько последних постов показать перед подпиской
+PREVIEW_CHARS = 200
+MUTE_FOREVER = 2**31 - 1  # «без звука навсегда» в Telegram — самая дальняя дата
+ARCHIVE_FOLDER = 1
 
 # Сессия больше не действует: отозвана из приложения, аккаунт удалён или заблокирован
 SESSION_GONE: tuple[type[Exception], ...] = (
@@ -81,20 +100,108 @@ class TelethonApi(TelegramApi):
             if getattr(message, "message", None) is not None:  # служебные сообщения без текста не нужны
                 yield _message(message)
 
-    async def join(self, username: str) -> Channel:
+    async def _entity(self, channel_id: int) -> Any:
+        # Каналы аккаунта Telethon помнит после channels() и входящих сообщений
+        return await self.client.get_input_entity(PeerChannel(channel_id))
+
+    async def _public(self, username: str) -> Any:
         try:
             entity = await self.client.get_entity(username)
         except (ValueError, errors.UsernameInvalidError, errors.UsernameNotOccupiedError) as exc:
             raise JoinError(f"Канала @{username} нет") from exc
         if not _is_broadcast(entity):
             raise JoinError(f"@{username} — не канал (группа, бот или пользователь)")
+        return entity
+
+    async def preview(self, link: Link) -> list[ChannelPreview]:
+        if link.kind == "channel":
+            entity = await self._public(link.value)
+            full = await self.client(GetFullChannelRequest(entity))
+            recent = [m.message[:PREVIEW_CHARS] for m in await self.client.get_messages(entity, limit=6) if m.message]
+            return [ChannelPreview(
+                link=link.url, title=entity.title, username=entity.username, channel_id=entity.id,
+                subscribers=full.full_chat.participants_count, about=full.full_chat.about or "",
+                recent=recent[:PREVIEW_POSTS], subscribed=not entity.left,
+            )]
+        if link.kind == "invite":
+            try:
+                invite = await self.client(CheckChatInviteRequest(link.value))
+            except (errors.InviteHashExpiredError, errors.InviteHashInvalidError, errors.InviteHashEmptyError) as exc:
+                raise JoinError("Приглашение недействительно или устарело") from exc
+            if isinstance(invite, (types.ChatInviteAlready, types.ChatInvitePeek)):
+                chat = invite.chat
+                return [ChannelPreview(link=link.url, title=chat.title, username=getattr(chat, "username", None),
+                                       channel_id=chat.id, subscribers=getattr(chat, "participants_count", None),
+                                       subscribed=isinstance(invite, types.ChatInviteAlready),
+                                       error=None if _is_broadcast(chat) else "Это группа, а не канал")]
+            return [ChannelPreview(link=link.url, title=invite.title, subscribers=invite.participants_count,
+                                   about=invite.about or "",
+                                   error=None if invite.broadcast else "Это группа, а не канал")]
         try:
-            await self.client(JoinChannelRequest(entity))
+            folder = await self.client(CheckChatlistInviteRequest(link.value))
+        except errors.RPCError as exc:
+            raise JoinError(f"Папка не открывается: {exc.message}") from exc
+        found = []
+        for chat in folder.chats:
+            if not _is_broadcast(chat):
+                continue  # в папках бывают и группы: их Сито не читает
+            found.append(ChannelPreview(
+                link=f"https://t.me/{chat.username}" if chat.username else "", title=chat.title,
+                username=chat.username, channel_id=chat.id, subscribers=chat.participants_count,
+                subscribed=not chat.left,
+                error=None if chat.username else "Закрытый канал: подпишитесь в приложении или по приглашению",
+            ))
+        if not found:
+            raise JoinError("В папке нет каналов")
+        return found
+
+    async def join(self, link: Link) -> Channel:
+        if link.kind == "channel":
+            entity = await self._public(link.value)
+            request: Any = JoinChannelRequest(entity)
+        elif link.kind == "invite":
+            entity, request = None, ImportChatInviteRequest(link.value)
+        else:
+            raise JoinError("На папку целиком не подписываемся: выберите каналы из неё")
+        try:
+            updates = await self.client(request)
+        except errors.UserAlreadyParticipantError:
+            updates = None  # уже подписан по приглашению: канал узнаем из проверки приглашения
         except errors.ChannelsTooMuchError as exc:
             raise JoinError("Аккаунт подписан на слишком много каналов: Telegram больше не даёт") from exc
-        except (errors.ChannelPrivateError, errors.InviteRequestSentError) as exc:
-            raise JoinError(f"Канал @{username} закрыт для подписки") from exc
+        except errors.InviteRequestSentError as exc:
+            raise JoinError("Канал пускает по заявке: она отправлена, подпишитесь, когда одобрят") from exc
+        except (errors.ChannelPrivateError, errors.InviteHashExpiredError, errors.InviteHashInvalidError) as exc:
+            raise JoinError("Канал закрыт или приглашение устарело") from exc
+        if entity is None:
+            chats = getattr(updates, "chats", None) or []
+            if not chats:
+                invite = await self.client(CheckChatInviteRequest(link.value))
+                chats = [getattr(invite, "chat", None)]
+            entity = chats[0]
+            if not _is_broadcast(entity):
+                raise JoinError("По приглашению — группа, а не канал")
         return _channel(entity)
+
+    async def leave(self, channel_id: int) -> None:
+        try:
+            await self.client(LeaveChannelRequest(await self._entity(channel_id)))
+        except (errors.UserNotParticipantError, errors.ChannelPrivateError):
+            pass  # уже не подписан — то, что нужно
+
+    async def details(self, channel_id: int) -> ChannelDetails:
+        full = await self.client(GetFullChannelRequest(await self._entity(channel_id)))
+        return ChannelDetails(full.full_chat.participants_count, full.full_chat.about or "")
+
+    async def quiet(self, channel_id: int) -> None:
+        entity = await self._entity(channel_id)
+        await self.client(UpdateNotifySettingsRequest(
+            peer=types.InputNotifyPeer(entity), settings=types.InputPeerNotifySettings(mute_until=MUTE_FOREVER),
+        ))
+        await self.client.edit_folder(entity, ARCHIVE_FOLDER)
+
+    async def mark_read(self, channel_id: int, max_id: int) -> None:
+        await self.client.send_read_acknowledge(await self._entity(channel_id), max_id=max_id)
 
     def on_message(self, handler: MessageHandler) -> None:
         async def handle(event: Any) -> None:

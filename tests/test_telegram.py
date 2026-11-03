@@ -9,11 +9,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sito.models import Post, Source, SourceType
+from sito.models import ConnectorCommand, Post, Source, SourceType
 from sito.services.collector.base import ConnectorConfig
 from sito.services.collector.telegram import (
     Channel,
+    ChannelDetails,
+    ChannelPreview,
     JoinError,
+    Link,
     Message,
     MessageHandler,
     TelegramApi,
@@ -22,6 +25,7 @@ from sito.services.collector.telegram import (
     TelegramSourceForm,
     _Session,
     channel_username,
+    parse_links,
 )
 from sito.services.ingest import IngestService
 from sito.utils.text import clean_html
@@ -53,12 +57,36 @@ class FakeTelegram(TelegramApi):
             if (m.id > after_id) if after_id is not None else (m.date >= since):
                 yield m
 
-    async def join(self, username: str) -> Channel:
-        if username not in self.public:
-            raise JoinError(f"Канала @{username} нет")
-        channel = self.public[username]
+    calls: list[str] = field(default_factory=list)  # что сделано с каналами: leave, quiet, read, details
+
+    async def preview(self, link: Link) -> list[ChannelPreview]:
+        if link.value not in self.public:
+            raise JoinError(f"Канала @{link.value} нет")
+        channel = self.public[link.value]
+        return [ChannelPreview(link=link.url, title=channel.title, username=channel.username,
+                               channel_id=channel.id, subscribers=1200, recent=["Последний пост"],
+                               subscribed=channel in self.subscribed)]
+
+    async def join(self, link: Link) -> Channel:
+        if link.value not in self.public:
+            raise JoinError(f"Канала @{link.value} нет")
+        channel = self.public[link.value]
         self.subscribed.append(channel)
         return channel
+
+    async def leave(self, channel_id: int) -> None:
+        self.calls.append(f"leave {channel_id}")
+        self.subscribed = [c for c in self.subscribed if c.id != channel_id]
+
+    async def details(self, channel_id: int) -> ChannelDetails:
+        self.calls.append(f"details {channel_id}")
+        return ChannelDetails(5000, "Про уголь")
+
+    async def quiet(self, channel_id: int) -> None:
+        self.calls.append(f"quiet {channel_id}")
+
+    async def mark_read(self, channel_id: int, max_id: int) -> None:
+        self.calls.append(f"read {channel_id} {max_id}")
 
     def on_message(self, handler: MessageHandler) -> None:
         self.handler = handler
@@ -214,7 +242,102 @@ def test_bad_channel_link(link: str) -> None:
         channel_username(link)
 
 
+def test_links_of_all_kinds() -> None:
+    links, errors = parse_links(
+        "t.me/coal, https://t.me/+AbCdEf12345\nhttps://t.me/joinchat/XyZ12345678 t.me/addlist/Folder123 "
+        "@coal https://example.com/x"
+    )
+    assert [(link.kind, link.url) for link in links] == [
+        ("channel", "https://t.me/coal"), ("invite", "https://t.me/+AbCdEf12345"),
+        ("invite", "https://t.me/+XyZ12345678"), ("folder", "https://t.me/addlist/Folder123"),
+    ]
+    assert len(errors) == 1 and "example.com" in errors[0]
+
+
 def test_channel_signature_is_cut() -> None:
     cleaned = clean_html("Отремонтировали 489 домов.\n\nИлья Середюк в МАКС. Подписаться")
     assert cleaned.text == "Отремонтировали 489 домов."
     assert clean_html("Скидки на шубы\n#реклама").is_ad
+
+
+async def add_command(factory: async_sessionmaker[AsyncSession], connector_id: int, kind: str,
+                      payload: dict[str, object]) -> int:
+    async with factory() as session, session.begin():
+        command = ConnectorCommand(connector_id=connector_id, kind=kind, payload=payload)
+        session.add(command)
+        await session.flush()
+        return command.id
+
+
+async def command_result(factory: async_sessionmaker[AsyncSession], command_id: int) -> ConnectorCommand:
+    async with factory() as session:
+        command = await session.get(ConnectorCommand, command_id)
+        assert command is not None
+        return command
+
+
+async def test_preview_and_leave_commands(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    """Поручения из веба: показать каналы по ссылкам, отписаться (посты остаются) и отписаться с удалением."""
+    sink, config = setup
+    tg = FakeTelegram(subscribed=[COAL, QUIET], public={"coal": COAL}, history={COAL.id: [message(1)]})
+    session = _Session(config, sink, tg, TelegramRules())
+    await session.run()
+    sources = {s.external_id: s for s in await sink.sources(config.id)}
+    preview = await add_command(session_factory, config.id, "preview", {"links": "t.me/coal\nt.me/nobody bad"})
+    leave = await add_command(session_factory, config.id, "leave", {"source_id": sources["111"].id})
+    delete = await add_command(session_factory, config.id, "leave",
+                               {"source_id": sources["222"].id, "delete": True})
+
+    while (command := await sink.next_command(config.id)) is not None:
+        await session._run_command(command)
+
+    shown = (await command_result(session_factory, preview)).result
+    assert [(item["title"], item.get("known"), item["error"]) for item in shown] == [
+        ("", None, "«bad» — не ссылка на канал: нужна t.me/имя_канала, @имя, t.me/+приглашение или t.me/addlist/папка"),
+        ("Уголь Кузбасса", True, None),
+        ("", None, "Канала @nobody нет"),
+    ]
+    assert (await command_result(session_factory, leave)).status == "done"
+    assert (await command_result(session_factory, delete)).status == "done"
+    assert tg.calls == ["leave 111", "leave 222"]
+    [kept] = await sink.sources(config.id)
+    assert kept.external_id == "111" and not kept.enabled and kept.info["left"] is True
+    assert [p[1] for p in await posts(session_factory)] == ["1"]  # посты отписанного канала остаются
+
+
+async def test_new_channels_can_wait_for_decision(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    sink, config = setup
+    waiting = ConnectorConfig(id=config.id, type=config.type, name="", settings={"new_channels": "wait"}, secrets={})
+    tg = FakeTelegram(subscribed=[COAL], history={COAL.id: [message(1)]})
+
+    await _Session(waiting, sink, tg, TelegramRules()).run()
+
+    [source] = await sink.sources(config.id)
+    assert not source.enabled and await posts(session_factory) == []
+
+
+async def test_maintenance_keeps_phone_quiet(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    """Раз в круг: сведения о каналах, без звука и в архив, прочитано до последнего сохранённого."""
+    sink, config = setup
+    tg = FakeTelegram(subscribed=[COAL], history={COAL.id: [message(5)]})
+    session = _Session(config, sink, tg, TelegramRules())
+    await session.run()
+
+    await session._refresh_sources()
+    await session._update_details()
+    await session._quiet()
+    await session._mark_read()
+    await session._refresh_sources()
+    await session._update_details()  # второй круг: всё уже сделано
+    await session._quiet()
+    await session._mark_read()
+
+    assert tg.calls == ["details 111", "quiet 111", "read 111 5"]
+    [source] = await sink.sources(config.id)
+    assert source.info["subscribers"] == 5000 and source.info["quiet"] is True

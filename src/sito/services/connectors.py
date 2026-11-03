@@ -74,9 +74,13 @@ class ConnectorService:
         settings, secrets = self._split(form)
         connector.name = str(settings.pop("name"))
         current = self.current_secrets(connector)
-        same_account = settings == connector.settings and all(current.get(k) == v for k, v in secrets.items())
+        same_account = (
+            all(connector.settings.get(k) == v for k, v in settings.items())
+            and all(current.get(k) == v for k, v in secrets.items())
+        )
         kept = {k: v for k, v in current.items() if k not in secrets} if same_account else {}
-        connector.settings = settings
+        # Настройки не из формы (заданы на странице каналов) сохраняются
+        connector.settings = {**{k: v for k, v in connector.settings.items() if k not in settings}, **settings}
         connector.secrets = self.encrypt({**kept, **secrets})
         if login and not same_account:
             connector.status = ConnectorStatus.NEEDS_LOGIN
@@ -99,6 +103,10 @@ class ConnectorService:
                 "У подключения есть источники. Удалите их или просто выключите подключение — посты сохранятся."
             )
         await self.session.delete(connector)
+
+    async def set_options(self, connector: Connector, **options: Any) -> None:
+        """Настройки не из формы подключения (например, что делать с новыми каналами). Worker переподключится."""
+        connector.settings = {**connector.settings, **options}
 
     @staticmethod
     def _split(form: BaseModel) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -293,3 +301,4 @@ class ConnectorSupervisor:
     async def close(self) -> None:
         for connector_id in list(self._running):
             await self._stop(connector_id)
+

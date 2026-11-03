@@ -1,0 +1,41 @@
+{# Предпросмотр каналов по ссылкам: ответ worker'а на поручение preview #}
+{% if command.status == "pending" %}
+<div hx-get="/admin/connectors/{{ connector.id }}/commands/{{ command.id }}" hx-trigger="load delay:1s" hx-swap="outerHTML">
+  <p class="muted">Смотрю каналы…{% if slow %} Долго: worker занят догрузкой или не запущен — подождите.{% endif %}</p>
+</div>
+{% elif command.status == "failed" %}
+<div class="error" role="alert">Не получилось: {{ command.error }}</div>
+{% else %}
+<form class="preview-list" method="post" action="/admin/connectors/{{ connector.id }}/channels/subscribe">
+  <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+  {% set can = items | selectattr("error", "none") | rejectattr("subscribed") | rejectattr("known") | list %}
+  {% for item in items %}
+  <div class="preview-item{% if item.error or item.subscribed or item.known %} muted{% endif %}">
+    {% if item.error or not item.link %}
+    <span class="status-error small">{{ item.error }}</span>
+    {% else %}
+    <label class="check">
+      {% if not item.subscribed and not item.known %}<input type="checkbox" name="link" value="{{ item.link }}" checked>{% endif %}
+      <strong>{{ item.title }}</strong>
+    </label>
+    {% endif %}
+    {% if item.title and (item.error or not item.link) %}<strong>{{ item.title }}</strong>{% endif %}
+    <div class="small muted">
+      {% if item.username %}@{{ item.username }}{% endif %}
+      {% if item.subscribers %} · {{ item.subscribers | compact }} подписчиков{% endif %}
+      {% if item.known %} · уже в списке{% elif item.subscribed %} · аккаунт уже подписан{% endif %}
+    </div>
+    {% if item.about %}<p class="small">{{ item.about[:200] }}</p>{% endif %}
+    {% if item.recent %}
+    <ul class="small recent">{% for text in item.recent %}<li>{{ text }}</li>{% endfor %}</ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if can %}
+  <button type="submit">Подписаться на отмеченные</button>
+  <p class="muted small">Аккаунт подписывается по одному каналу в минуту: так Telegram не ограничит.</p>
+  {% else %}
+  <p class="muted small">Подписываться не на что.</p>
+  {% endif %}
+</form>
+{% endif %}

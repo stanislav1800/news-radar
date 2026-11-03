@@ -1,8 +1,11 @@
 """Telegram: слушающий сборщик служебного аккаунта (этап 2 ТЗ).
 
 Подписками управляет аккаунт: Сито слушает новые сообщения всех каналов, на которые он подписан,
-и заводит источник с первым постом нового канала. Канал можно добавить и из Сито ссылкой:
-источник без id канала (pending) — аккаунт подпишется на него сам, по одному с паузой.
+и заводит источник с первым постом нового канала. Каналами управляют и из Сито:
+- канал по ссылке — источник без id канала (pending), аккаунт подпишется сам, по одному в минуту;
+- команды из веба (ConnectorCommand): показать канал по ссылке перед подпиской, отписаться;
+- чтобы телефон служебного аккаунта не сходил с ума, каналы приглушаются, уходят в архив
+  и отмечаются прочитанными (настройка подключения quiet).
 
 Здесь только логика; работа с Telegram — за протоколом TelegramApi (реализация на Telethon —
 telegram_client.py), чтобы логику можно было проверить без сети.
@@ -13,13 +16,14 @@ import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from sito.services.collector.base import (
+    Command,
     ConnectorConfig,
     ConnectorListener,
     KnownSource,
@@ -56,19 +60,65 @@ class TelegramConnectorForm(BaseModel):
 
 
 _USERNAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{3,31}")
-_LINK = re.compile(r"^(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/(?:s/)?([^/?#]+)/?(?:[?#].*)?$", re.IGNORECASE)
+_HASH = re.compile(r"[A-Za-z0-9_-]{8,}")
+_LINK = re.compile(
+    r"^(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/(?:s/)?(.+?)/?(?:[?#].*)?$", re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Link:
+    """Ссылка из Telegram: открытый канал, приглашение в закрытый или папка каналов."""
+
+    kind: str   # channel, invite, folder
+    value: str  # имя канала, код приглашения или код папки
+
+    @property
+    def url(self) -> str:
+        return {"channel": f"https://t.me/{self.value}", "invite": f"https://t.me/+{self.value}",
+                "folder": f"https://t.me/addlist/{self.value}"}[self.kind]
+
+
+def parse_link(text: str) -> Link:
+    """t.me/name, t.me/s/name, @name, name, t.me/+код, t.me/joinchat/код, t.me/addlist/код."""
+    text = text.strip()
+    match = _LINK.match(text)
+    path = match.group(1) if match else text.removeprefix("@")
+    if path.startswith("+") or path.lower().startswith("joinchat/"):
+        code = path.removeprefix("+").split("/", 1)[-1] if path.startswith("+") else path.split("/", 1)[1]
+        if _HASH.fullmatch(code):
+            return Link("invite", code)
+    elif path.lower().startswith("addlist/"):
+        code = path.split("/", 1)[1]
+        if _HASH.fullmatch(code):
+            return Link("folder", code)
+    elif _USERNAME.fullmatch(path):
+        return Link("channel", path)
+    raise ValueError(f"«{text}» — не ссылка на канал: нужна t.me/имя_канала, @имя, t.me/+приглашение или t.me/addlist/папка")
+
+
+def parse_links(text: str) -> tuple[list[Link], list[str]]:
+    """Несколько ссылок через пробел, запятую или с новой строки: (разобранные без повторов, ошибки)."""
+    links: dict[str, Link] = {}
+    errors: list[str] = []
+    for item in re.split(r"[\s,;]+", text):
+        if not item:
+            continue
+        try:
+            link = parse_link(item)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        links.setdefault(link.url.lower(), link)
+    return list(links.values()), errors
 
 
 def channel_username(link: str) -> str:
-    """Имя канала из ссылки: t.me/name, https://t.me/s/name, @name или просто name."""
-    link = link.strip()
-    match = _LINK.match(link)
-    name = match.group(1) if match else link.removeprefix("@")
-    if name.startswith("+") or name == "joinchat":
-        raise ValueError("Ссылки-приглашения в закрытые каналы пока не поддерживаются: нужна публичная ссылка t.me/имя")
-    if not _USERNAME.fullmatch(name):
-        raise ValueError("Нужна ссылка на канал: t.me/имя_канала или @имя_канала")
-    return name
+    """Имя открытого канала из ссылки."""
+    parsed = parse_link(link)
+    if parsed.kind != "channel":
+        raise ValueError("Нужна ссылка на открытый канал: t.me/имя_канала или @имя_канала")
+    return parsed.value
 
 
 def channel_url(username: str) -> str:
@@ -80,12 +130,15 @@ class TelegramSourceForm(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    url: str = Field(title="Ссылка на канал", description="t.me/имя_канала или @имя_канала — открытый канал")
+    url: str = Field(title="Ссылка на канал", description="t.me/имя_канала, @имя_канала или t.me/+приглашение")
 
     @field_validator("url")
     @classmethod
     def _url(cls, value: str) -> str:
-        return channel_url(channel_username(value))
+        link = parse_link(value)
+        if link.kind == "folder":
+            raise ValueError("Папку каналов добавляйте на странице каналов: там можно выбрать, какие из них нужны")
+        return link.url
 
 
 # --- Что сборщику нужно от Telegram ---------------------------------------------------------------
@@ -103,6 +156,27 @@ class Message:
     id: int
     date: datetime
     html: str              # текст с разметкой (ссылки нужны склейке); пустой — пост без текста
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelPreview:
+    """Канал перед подпиской: чтобы было видно, тот ли это канал."""
+
+    link: str                     # по какой ссылке подписываться (t.me/имя или t.me/+приглашение)
+    title: str
+    username: str | None = None
+    channel_id: int | None = None
+    subscribers: int | None = None
+    about: str = ""
+    recent: list[str] = field(default_factory=list)  # начала последних постов
+    subscribed: bool = False      # аккаунт уже подписан
+    error: str | None = None      # почему подписаться нельзя (группа, а не канал; закрытый канал из папки)
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelDetails:
+    subscribers: int | None
+    about: str
 
 
 MessageHandler = Callable[[Channel, Message], Awaitable[None]]
@@ -123,8 +197,28 @@ class TelegramApi(Protocol):
         """Сообщения канала от старых к новым: после after_id, а если его нет — начиная с since."""
         ...
 
-    async def join(self, username: str) -> Channel:
-        """Подписаться на открытый канал. JoinError — не вышло, текст для админки."""
+    async def preview(self, link: Link) -> list[ChannelPreview]:
+        """Что за канал по ссылке (у папки — все её каналы). JoinError — ссылка не работает."""
+        ...
+
+    async def join(self, link: Link) -> Channel:
+        """Подписаться на канал по ссылке (открытый или приглашение). JoinError — не вышло."""
+        ...
+
+    async def leave(self, channel_id: int) -> None:
+        """Отписаться от канала."""
+        ...
+
+    async def details(self, channel_id: int) -> ChannelDetails:
+        """Подписчики и описание канала."""
+        ...
+
+    async def quiet(self, channel_id: int) -> None:
+        """Без звука и в архив: чтобы телефон служебного аккаунта не звенел от сотни каналов."""
+        ...
+
+    async def mark_read(self, channel_id: int, max_id: int) -> None:
+        """Отметить прочитанным до max_id: на телефоне не копятся тысячи непрочитанных."""
         ...
 
     def on_message(self, handler: MessageHandler) -> None:
@@ -151,10 +245,14 @@ def post_url(channel: Channel, message_id: int) -> str:
 @dataclass(frozen=True, slots=True)
 class TelegramRules:
     catch_up: timedelta = timedelta(days=1)  # новый канал: сколько истории взять
-    # Как часто сверять источники (выключенные, добавленные ссылкой). За один раз — не больше одной
-    # подписки на канал: массовые подписки подряд Telegram ограничивает (FloodWait)
+    # Как часто сверять источники и делать медленную работу. За один круг — не больше одной подписки
+    # на канал: массовые подписки подряд Telegram ограничивает (FloodWait)
     refresh_interval: float = 60
+    command_interval: float = 2              # как часто смотреть поручения из веба
     batch: int = 100                         # постов в одной записи при догрузке
+    per_round: int = 5                       # сведений о каналах и приглушений за круг
+    read_per_round: int = 20                 # отметок «прочитано» за круг
+    details_every: timedelta = timedelta(days=1)
 
 
 class TelegramListener(ConnectorListener):
@@ -168,7 +266,7 @@ class TelegramListener(ConnectorListener):
 
 
 class _Session:
-    """Одно соединение подключения: догрузка пропущенного, новые посты, подписки по ссылкам."""
+    """Одно соединение подключения: догрузка пропущенного, новые посты, подписки, поручения из веба."""
 
     def __init__(self, connector: ConnectorConfig, sink: PostSink, api: TelegramApi, rules: TelegramRules) -> None:
         self.connector = connector
@@ -177,7 +275,11 @@ class _Session:
         self.rules = rules
         self.sources: dict[str, KnownSource] = {}
         self.last_ids: dict[int, int] = {}  # канал → последний сохранённый id: курсор только растёт
+        self.read_ids: dict[int, int] = {}  # канал → до какого id отмечено прочитанным
         self.locks: dict[int, asyncio.Lock] = {}
+        # Каналы, на которые подписались в приложении: собирать сразу или ждать решения в Сито
+        self.collect_new = connector.settings.get("new_channels", "collect") == "collect"
+        self.keep_quiet = bool(connector.settings.get("quiet", True))
 
     async def run(self) -> None:
         await self.sink.connected(self.connector.id)
@@ -185,16 +287,20 @@ class _Session:
         # Новые сообщения слушаем ещё до догрузки: то, что придёт во время неё, не потеряется,
         # а пересечения не страшны — пост с тем же id просто обновится
         self.api.on_message(self._on_message)
-        for channel in await self.api.channels():
-            await self._catch_up(channel)
-        logger.info("connector=%s: догрузка закончена, слушаю", self.connector.id)
-
-        maintenance = asyncio.create_task(self._maintenance())
+        commands = asyncio.create_task(self._commands())  # поручения из веба — и во время долгой догрузки
         try:
-            await self.api.disconnected()
+            for channel in await self.api.channels():
+                await self._catch_up(channel)
+            logger.info("connector=%s: догрузка закончена, слушаю", self.connector.id)
+            maintenance = asyncio.create_task(self._maintenance())
+            try:
+                await self.api.disconnected()
+            finally:
+                maintenance.cancel()
+                await asyncio.gather(maintenance, return_exceptions=True)
         finally:
-            maintenance.cancel()
-            await asyncio.gather(maintenance, return_exceptions=True)
+            commands.cancel()
+            await asyncio.gather(commands, return_exceptions=True)
 
     async def _refresh_sources(self) -> None:
         self.sources = {s.external_id: s for s in await self.sink.sources(self.connector.id)}
@@ -208,10 +314,11 @@ class _Session:
         if known is None:
             known = await self.sink.source(
                 self.connector.id, str(channel.id), name=channel.title,
-                url=channel_url(channel.username) if channel.username else None,
+                url=channel_url(channel.username) if channel.username else None, enabled=self.collect_new,
             )
             self.sources[known.external_id] = known
-            logger.info("connector=%s: новый канал «%s»", self.connector.id, channel.title)
+            logger.info("connector=%s: новый канал «%s»%s", self.connector.id, channel.title,
+                        "" if known.enabled else " (ждёт решения в Сито)")
         return known
 
     async def _catch_up(self, channel: Channel) -> None:
@@ -253,15 +360,69 @@ class _Session:
             await self.sink.save(source.id, posts, {"last_id": last_id})
             self.last_ids[channel.id] = last_id
 
+    # --- Поручения из веба -------------------------------------------------------------------------
+
+    async def _commands(self) -> None:
+        while True:
+            await asyncio.sleep(self.rules.command_interval)
+            try:
+                while (command := await self.sink.next_command(self.connector.id)) is not None:
+                    await self._run_command(command)
+            except Exception:
+                logger.exception("connector=%s: ошибка поручений", self.connector.id)
+
+    async def _run_command(self, command: Command) -> None:
+        try:
+            if command.kind == "preview":
+                result: Any = await self._preview(str(command.payload.get("links", "")))
+            elif command.kind == "leave":
+                result = await self._leave(int(command.payload["source_id"]), bool(command.payload.get("delete")))
+            else:
+                raise ValueError(f"Неизвестное поручение {command.kind}")
+        except Exception as exc:
+            logger.warning("connector=%s: поручение %s не выполнено: %s", self.connector.id, command.kind, exc,
+                           exc_info=True)
+            await self.sink.finish_command(command.id, error=str(exc) or type(exc).__name__)
+            return
+        await self.sink.finish_command(command.id, result)
+
+    async def _preview(self, text: str) -> list[dict[str, Any]]:
+        """Каналы по ссылкам — до подписки: название, подписчики, последние посты."""
+        links, errors = parse_links(text)
+        found: list[dict[str, Any]] = [{"link": "", "title": "", "error": e} for e in errors]
+        for link in links:
+            try:
+                previews = await self.api.preview(link)
+            except JoinError as exc:
+                found.append({"link": link.url, "title": "", "error": str(exc)})
+                continue
+            for item in previews:
+                data = asdict(item)
+                data["known"] = item.channel_id is not None and str(item.channel_id) in self.sources
+                found.append(data)
+        return found
+
+    async def _leave(self, source_id: int, delete: bool) -> dict[str, Any]:
+        source = next((s for s in self.sources.values() if s.id == source_id), None)
+        if source is None:
+            raise ValueError("Канал не найден: возможно, он уже удалён")
+        await self.api.leave(int(source.external_id))
+        await self.sink.forget_source(source_id, delete=delete)
+        if delete:
+            self.sources.pop(source.external_id, None)
+        logger.info("connector=%s: отписался от «%s»", self.connector.id, source.name)
+        return {"name": source.name}
+
+    # --- Медленная работа раз в минуту ---------------------------------------------------------------
+
     async def _maintenance(self) -> None:
-        """Раз в минуту: сверить источники (выключенные, добавленные ссылкой) и подписаться на новый канал."""
         while True:
             await asyncio.sleep(self.rules.refresh_interval)
-            try:
-                await self._refresh_sources()
-                await self._join_one()
-            except Exception:
-                logger.exception("connector=%s: ошибка обслуживания", self.connector.id)
+            for step in (self._refresh_sources, self._join_one, self._update_details, self._quiet, self._mark_read):
+                try:
+                    await step()
+                except Exception:
+                    logger.exception("connector=%s: ошибка обслуживания (%s)", self.connector.id, step.__name__)
 
     async def _join_one(self) -> None:
         """Подписаться на один канал, добавленный ссылкой. По одному с паузой: так Telegram не ограничит."""
@@ -270,11 +431,44 @@ class _Session:
             return
         item = pending[0]
         try:
-            channel = await self.api.join(item.url.rsplit("/", 1)[-1])
-        except JoinError as exc:
+            channel = await self.api.join(parse_link(item.url))
+        except (JoinError, ValueError) as exc:
             await self.sink.pending_failed(item.id, str(exc) or "Не удалось подписаться")
             return
         known = await self.sink.bind_pending(item.id, str(channel.id), name=channel.title)
         self.sources[known.external_id] = known
         logger.info("connector=%s: подписался на «%s»", self.connector.id, channel.title)
         await self._catch_up(channel)
+
+    def _live(self) -> list[KnownSource]:
+        """Каналы, на которые аккаунт подписан (не отписанные из Сито)."""
+        return [s for s in self.sources.values() if not s.info.get("left")]
+
+    async def _update_details(self) -> None:
+        """Подписчики и описание — раз в сутки на канал, по нескольку за круг."""
+        now = datetime.now(UTC)
+        stale = [
+            s for s in self._live()
+            if not s.info.get("details_at")
+            or now - datetime.fromisoformat(str(s.info["details_at"])) > self.rules.details_every
+        ]
+        for source in stale[: self.rules.per_round]:
+            details = await self.api.details(int(source.external_id))
+            await self.sink.update_info(source.id, {
+                "subscribers": details.subscribers, "about": details.about, "details_at": now.isoformat(),
+            })
+
+    async def _quiet(self) -> None:
+        if not self.keep_quiet:
+            return
+        for source in [s for s in self._live() if not s.info.get("quiet")][: self.rules.per_round]:
+            await self.api.quiet(int(source.external_id))
+            await self.sink.update_info(source.id, {"quiet": True})
+
+    async def _mark_read(self) -> None:
+        if not self.keep_quiet:
+            return
+        behind = [(cid, last) for cid, last in self.last_ids.items() if last > self.read_ids.get(cid, 0)]
+        for channel_id, last_id in behind[: self.rules.read_per_round]:
+            await self.api.mark_read(channel_id, last_id)
+            self.read_ids[channel_id] = last_id

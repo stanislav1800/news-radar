@@ -66,6 +66,16 @@ class KnownSource:
     name: str
     enabled: bool
     state: Mapping[str, Any]
+    info: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Command:
+    """Поручение из веба (ConnectorCommand): показать канал по ссылке, отписаться."""
+
+    id: int
+    kind: str
+    payload: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +108,9 @@ class PostSink(Protocol):
         """Источники подключения: при старте — откуда догружать пропущенное (по state)."""
         ...
 
-    async def source(self, connector_id: int, external_id: str, *, name: str, url: str | None = None) -> KnownSource:
+    async def source(
+        self, connector_id: int, external_id: str, *, name: str, url: str | None = None, enabled: bool = True,
+    ) -> KnownSource:
         """Источник по его id у сервиса; если его ещё нет — завести (первый пост с нового канала).
 
         Если источник уже завело другое подключение того же типа (канал читают два аккаунта),
@@ -130,6 +142,21 @@ class PostSink(Protocol):
 
     async def pending_failed(self, source_id: int, error: str) -> None:
         """Подписаться не вышло (нет такого канала): ошибка видна в админке, повторов нет."""
+        ...
+
+    async def update_info(self, source_id: int, info: Mapping[str, Any]) -> None:
+        """Сведения об источнике для админки (подписчики, описание, приглушён ли)."""
+        ...
+
+    async def forget_source(self, source_id: int, *, delete: bool) -> None:
+        """Подключение отписалось: источник выключается (посты остаются) или удаляется вместе с постами."""
+        ...
+
+    async def next_command(self, connector_id: int) -> Command | None:
+        """Следующее поручение из веба или None."""
+        ...
+
+    async def finish_command(self, command_id: int, result: Any = None, error: str | None = None) -> None:
         ...
 
 

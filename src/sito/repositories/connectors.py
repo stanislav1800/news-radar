@@ -1,9 +1,10 @@
 from collections.abc import Collection
+from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sito.models import Connector, ConnectorStatus, Source, SourceType
+from sito.models import Connector, ConnectorCommand, ConnectorStatus, Source, SourceType
 
 ERROR_MAX_LENGTH = 2000
 
@@ -35,4 +36,30 @@ class ConnectorRepository:
         await self.session.execute(
             update(Connector).where(Connector.id == connector_id)
             .values(status=status, last_error=error[:ERROR_MAX_LENGTH] if error else None)
+        )
+
+    # --- Команды из веба (выполняет worker) ---------------------------------------------------------
+
+    async def add_command(self, connector_id: int, kind: str, payload: dict[str, Any]) -> ConnectorCommand:
+        command = ConnectorCommand(connector_id=connector_id, kind=kind, payload=payload)
+        self.session.add(command)
+        await self.session.flush()
+        return command
+
+    async def get_command(self, command_id: int) -> ConnectorCommand | None:
+        return await self.session.get(ConnectorCommand, command_id)
+
+    async def next_command(self, connector_id: int) -> ConnectorCommand | None:
+        return await self.session.scalar(
+            select(ConnectorCommand)
+            .where(ConnectorCommand.connector_id == connector_id, ConnectorCommand.status == "pending")
+            .order_by(ConnectorCommand.id).limit(1)
+        )
+
+    async def finish_command(self, command_id: int, result: Any = None, error: str | None = None) -> None:
+        await self.session.execute(
+            update(ConnectorCommand).where(ConnectorCommand.id == command_id).values(
+                status="failed" if error else "done", result=result,
+                error=error[:ERROR_MAX_LENGTH] if error else None, finished_at=func.now(),
+            )
         )

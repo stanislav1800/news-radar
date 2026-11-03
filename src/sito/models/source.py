@@ -38,6 +38,9 @@ class Source(IdMixin, TimestampMixin, Base):
     # Курсор сборщика, формат знает только он: у RSS — ETag и Last-Modified,
     # у Telegram — номер последнего сохранённого сообщения (догрузка после простоя)
     state: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+    # Что сервис рассказывает об источнике, для админки: у Telegram-канала — подписчики, описание,
+    # отписан ли аккаунт, приглушён ли канал на телефоне. Формат знает сборщик
+    info: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
 
     last_success_at: Mapped[datetime | None]
     last_error: Mapped[str | None]

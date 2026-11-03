@@ -83,6 +83,24 @@
     }
   }
 
+  // Поиск по таблице: input[data-filter="#таблица"] скрывает строки, где нет набранного (data-name)
+  document.addEventListener("input", (event) => {
+    const input = event.target.closest("[data-filter]");
+    if (!input) return;
+    const query = input.value.trim().toLowerCase();
+    document.querySelectorAll(`${input.dataset.filter} tbody tr`).forEach((row) => {
+      row.hidden = Boolean(query) && !(row.dataset.name || "").includes(query);
+    });
+  });
+
+  // «Отметить все» — только видимые строки: можно найти в списке и отметить найденное
+  document.addEventListener("change", (event) => {
+    const all = event.target.closest("[data-check-all]");
+    if (!all) return;
+    document.querySelectorAll(`${all.dataset.checkAll} tbody tr:not([hidden]) input[type=checkbox]`)
+      .forEach((box) => { box.checked = all.checked; });
+  });
+
   document.addEventListener("htmx:load", (event) => scheduleExpiry(event.target));
   document.addEventListener("DOMContentLoaded", () => {
     setup();

@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Каналы · {{ connector.name }} · Сито{% endblock %}
+{% block main_class %}page wide{% endblock %}
+{% block content %}
+{% set admin_tab = "sources" %}{% include "admin/_tabs.html" %}
+<a class="back" href="/admin/connectors#connector-{{ connector.id }}">← К источникам</a>
+<h1>Каналы Telegram</h1>
+<p class="muted">
+  {{ connector.name }} · {{ connector.settings.phone }} ·
+  {% if connector.status == "needs_login" %}<a href="/admin/connectors/{{ connector.id }}/login" class="status-error">нужен вход</a>
+  {% elif connector.status == "error" %}<span class="status-error">ошибка: {{ (connector.last_error or "")[:120] }}</span>
+  {% else %}<span class="status-ok">работает</span>{% endif %}
+</p>
+
+<section class="card" id="add">
+  <h2>Добавить каналы</h2>
+  <form class="stack" method="post" action="/admin/connectors/{{ connector.id }}/channels/preview">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <textarea name="links" rows="3" required
+              placeholder="t.me/имя_канала, @имя, t.me/+приглашение или t.me/addlist/папка — можно несколько, с новой строки"></textarea>
+    <button type="submit">Показать</button>
+  </form>
+  {% if preview_id %}
+  <div hx-get="/admin/connectors/{{ connector.id }}/commands/{{ preview_id }}" hx-trigger="load" hx-swap="outerHTML">
+    <p class="muted">Смотрю каналы…</p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="channels-head">
+    <h2>Подписки аккаунта</h2>
+    <p class="muted small">
+      {% for state, label in [("collecting", "собираются"), ("waiting", "ждут решения"), ("stopped", "не собираются"),
+                              ("pending", "ждут подписки"), ("error", "с ошибкой"), ("leaving", "отписываюсь"), ("left", "отписан")] %}
+      {% if counts.get(state) %}<span class="count-{{ state }}">{{ label }}: {{ counts[state] }}</span>{% if not loop.last %} · {% endif %}{% endif %}
+      {% endfor %}
+    </p>
+    <input type="search" data-filter="#channels" placeholder="Найти в списке" aria-label="Найти канал в списке">
+  </div>
+
+  {% if rows %}
+  <form id="bulk" method="post" action="/admin/connectors/{{ connector.id }}/channels/action">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+  </form>
+  <div class="bulk-bar">
+    <span class="muted small">Отмеченные:</span>
+    <button class="secondary" form="bulk" name="action" value="collect">Собирать</button>
+    <button class="secondary" form="bulk" name="action" value="stop">Не собирать</button>
+    <button class="link" form="bulk" name="action" value="leave">Отписаться</button>
+    <button class="link danger" form="bulk" name="action" value="delete"
+            onclick="return confirm('Отписаться и удалить отмеченные каналы вместе с их постами?')">Отписаться и удалить посты</button>
+  </div>
+  <div class="table-wrap">
+    <table class="sources" id="channels">
+      <thead>
+        <tr>
+          <th><input type="checkbox" data-check-all="#channels" aria-label="Отметить все видимые"></th>
+          <th>Канал</th><th>Состояние</th><th class="num">Постов за сутки</th><th>Последний пост</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}{% set s = row.source %}
+        <tr id="source-{{ s.id }}" data-name="{{ (s.name ~ ' ' ~ (row.username or '')) | lower }}"
+            class="{% if row.state in ('stopped', 'left', 'leaving') %}disabled{% endif %}">
+          <td><input type="checkbox" form="bulk" name="source_id" value="{{ s.id }}" aria-label="Отметить {{ s.name }}"></td>
+          <td>
+            <strong>{{ s.name }}</strong>
+            <div class="muted small">
+              {% if row.username %}<a href="https://t.me/{{ row.username }}" target="_blank" rel="noopener noreferrer">@{{ row.username }}</a>
+              {% elif s.url %}{{ s.url }}{% else %}закрытый канал{% endif %}
+              {% if s.info.subscribers %} · {{ s.info.subscribers | compact }} подписчиков{% endif %}
+            </div>
+            {% if s.info.about %}<div class="muted small about">{{ s.info.about[:140] }}</div>{% endif %}
+          </td>
+          <td>
+            {% if row.state == "collecting" %}<span class="status-ok">собирается</span>
+            {% elif row.state == "waiting" %}<span class="status-warn">ждёт решения</span>
+              <div class="small muted">подписались в приложении</div>
+            {% elif row.state == "stopped" %}<span class="muted">не собирается</span>
+            {% elif row.state == "pending" %}<span class="muted">ждёт подписки</span>
+              <div class="small muted">по одному каналу в минуту</div>
+            {% elif row.state == "error" %}<span class="status-error">не вышло</span>
+              <div class="small field-error">{{ (s.last_error or "")[:120] }}</div>
+            {% elif row.state == "leaving" %}<span class="muted">отписываюсь…</span>
+            {% else %}<span class="muted">отписан</span>{% endif %}
+          </td>
+          <td class="num">{{ s.posts_24h or "" }}</td>
+          <td class="small">{% if s.last_post_at %}{{ s.last_post_at | ago(user.timezone, now) }}{% endif %}</td>
+          <td class="actions">
+            <form method="post" action="/admin/connectors/{{ connector.id }}/channels/action">
+              <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+              <input type="hidden" name="source_id" value="{{ s.id }}">
+              {% if row.state in ("waiting", "stopped") %}
+              <button class="link" name="action" value="collect">Собирать</button>
+              {% elif row.state == "collecting" %}
+              <button class="link" name="action" value="stop">Не собирать</button>
+              {% elif row.state == "left" and s.url %}
+              <button class="link" name="action" value="rejoin">Подписаться снова</button>
+              {% elif row.state in ("pending", "error") %}
+              <button class="link" name="action" value="forget">Убрать</button>
+              {% endif %}
+              {% if row.state in ("waiting", "stopped", "collecting") %}
+              <button class="link" name="action" value="leave">Отписаться</button>
+              {% endif %}
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Каналов пока нет. Подпишите аккаунт в приложении Telegram или добавьте каналы ссылками выше.</p>
+  {% endif %}
+</section>
+
+<section class="card settings">
+  <h2>Настройки</h2>
+  <form class="stack" method="post" action="/admin/connectors/{{ connector.id }}/channels/options">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <fieldset>
+      <legend>Каналы, на которые подписались в приложении Telegram</legend>
+      <label class="check"><input type="radio" name="new_channels" value="collect" {% if new_channels == "collect" %}checked{% endif %}> собирать сразу</label>
+      <label class="check"><input type="radio" name="new_channels" value="wait" {% if new_channels == "wait" %}checked{% endif %}> ждать решения здесь</label>
+    </fieldset>
+    <label class="check"><input type="checkbox" name="quiet" value="true" {% if quiet %}checked{% endif %}>
+      Тишина на телефоне: каналы без звука, в архиве и прочитаны</label>
+    <p class="muted small">Чтобы телефон служебного аккаунта не звенел от сотни каналов и не копил тысячи непрочитанных.</p>
+    <button type="submit">Сохранить</button>
+  </form>
+</section>
+{% endblock %}

@@ -296,6 +296,8 @@ async def make_report(
     except LlmError as exc:
         error = str(exc)
     await db.commit()  # расход токенов записан и при ошибке
+    if report is not None:
+        await db.refresh(report)  # время создания ставит база: перечитать до шаблона
     context = await report_block(request, db, user, topic, report, open_report=True, error=error,
                                  question=question if error else "")
     return templates.TemplateResponse(request, "_topic_report_block.html", context)

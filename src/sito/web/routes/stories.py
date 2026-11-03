@@ -339,6 +339,8 @@ async def story_summary(request: Request, db: DbSession, user: CurrentUser, stor
     except LlmError as exc:
         error, summary = str(exc), await service.get(story_id)
     await db.commit()  # расход токенов записан и при ошибке разбора ответа
+    if summary is not None:
+        await db.refresh(summary)  # время обновления ставит база: перечитать до шаблона
     return templates.TemplateResponse(request, "_summary.html", {
         "user": user, "story": story, "summary": summary, "llm": True, "error": error, "now": datetime.now(UTC),
     })

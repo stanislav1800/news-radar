@@ -81,6 +81,11 @@ async def test_summary_button_saves_and_counts_usage(
     assert [(u.input_tokens, u.output_tokens, u.cost) for u in usage] == [(1000, 100, 0.12)]
     assert "Кузбасс добыл рекорд угля" in (await logged_in.get(f"/stories/{story_id}")).text
 
+    # «Пересказать заново»: пересказ обновляется, и ответ показывается сразу (время обновления ставит база)
+    app.state.llm = fake_llm([answer("Рекорд угля в Кузбассе\n\nОбновлённый пересказ.")], seen)
+    response = await logged_in.post(f"/stories/{story_id}/summary", data={"csrf_token": token})
+    assert response.status_code == 200 and "Обновлённый пересказ." in response.text
+
 
 async def test_daily_limit(
     app: FastAPI, logged_in: httpx.AsyncClient, stories: Stories,

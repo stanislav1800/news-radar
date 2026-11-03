@@ -429,3 +429,6 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 .table-wrap.with-menus { overflow: visible; }
 .table-tools select { width: auto; display: inline-block; }
 .table-tools label { display: flex; align-items: center; gap: .35rem; }
+.rename summary { cursor: pointer; color: var(--accent); font-size: .9rem; list-style: none; }
+.rename summary::-webkit-details-marker { display: none; }
+.rename .inline-search { margin-top: .35rem; min-width: 16rem; }

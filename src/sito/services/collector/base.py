@@ -152,6 +152,10 @@ class PostSink(Protocol):
         """Подключение отписалось: источник выключается (посты остаются) или удаляется вместе с постами."""
         ...
 
+    async def remove_posts(self, source_id: int, external_ids: Sequence[str]) -> None:
+        """Источник удалил посты: убрать их (сюжеты пересчитываются)."""
+        ...
+
     async def next_command(self, connector_id: int) -> Command | None:
         """Следующее поручение из веба или None."""
         ...

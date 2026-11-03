@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from telethon import TelegramClient, errors, events
+from telethon import TelegramClient, errors, events, utils
 from telethon.sessions import StringSession
 from telethon.tl import types
 from telethon.tl.functions.account import UpdateNotifySettingsRequest
@@ -40,6 +40,7 @@ from sito.services.collector.telegram import (
     ChannelDetails,
     ChannelPreview,
     Connect,
+    DeletedHandler,
     JoinError,
     Link,
     Message,
@@ -238,6 +239,19 @@ class TelethonApi(TelegramApi):
 
         self.client.add_event_handler(handle, events.NewMessage())
         self.client.add_event_handler(handle, events.MessageEdited())
+
+    def on_deleted(self, handler: DeletedHandler) -> None:
+        async def handle(event: Any) -> None:
+            if event.chat_id is None:
+                return  # удаление в личных чатах и группах без указания чата — не наше
+            channel_id, kind = utils.resolve_id(event.chat_id)
+            if kind is PeerChannel:
+                await handler(channel_id, list(event.deleted_ids))
+
+        self.client.add_event_handler(handle, events.MessageDeleted())
+
+    async def notify(self, text: str) -> None:
+        await self.client.send_message("me", text)
 
     async def disconnected(self) -> None:
         await self.client.disconnected

@@ -56,6 +56,12 @@ class ConnectorRepository:
             .order_by(ConnectorCommand.id).limit(1)
         )
 
+    async def last_command(self, connector_id: int, kind: str) -> ConnectorCommand | None:
+        return await self.session.scalar(
+            select(ConnectorCommand).where(ConnectorCommand.connector_id == connector_id, ConnectorCommand.kind == kind)
+            .order_by(ConnectorCommand.id.desc()).limit(1)
+        )
+
     async def finish_command(self, command_id: int, result: Any = None, error: str | None = None) -> None:
         await self.session.execute(
             update(ConnectorCommand).where(ConnectorCommand.id == command_id).values(

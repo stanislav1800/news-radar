@@ -98,6 +98,10 @@ class Settings(BaseSettings):
     topic_wide_per_day: float = 3
     topic_ask_inline: int = 2              # сколько спорных сюжетов спросить «Подходит?» прямо в ленте темы
 
+    # Полный текст статей RSS со страниц (для выжимок LLM); сколько страниц качать одновременно
+    full_text_enabled: bool = True
+    full_text_concurrency: int = 4
+
     # Хранение: тексты и векторы постов старше этого удаляются (заголовок, ссылка и сюжеты остаются)
     post_retention_days: int = 90
 

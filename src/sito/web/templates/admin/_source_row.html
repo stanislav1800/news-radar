@@ -19,6 +19,9 @@
     <div class="small muted">новых постов нет {{ s.silent_since(now) | ago(user.timezone, now) | replace(" назад", "") }}, обычно чаще</div>
     {% elif s.last_success_at %}
     <span class="status-ok">сбор {{ s.last_success_at | ago(user.timezone, now) }}</span>
+    {% if s.late %}<div class="small status-warn" title="Медиана за сутки: от публикации до сбора">
+      новости приходят с опозданием ~{{ (s.delay_minutes / 60) | round(1) if s.delay_minutes >= 90 else s.delay_minutes | round | int }}
+      {{- " ч" if s.delay_minutes >= 90 else " мин" }}</div>{% endif %}
     {% else %}
     <span class="muted">ещё не опрашивался</span>
     {% endif %}
@@ -26,6 +29,7 @@
   <td class="num">{{ s.posts_24h }}</td>
   <td class="num">{{ (s.poll_interval // 60) ~ " мин" if s.poll_interval else "сразу" }}</td>
   <td class="actions">
+    {% set rename_next = "/admin/connectors" %}{% include "admin/_rename.html" %}
     <form method="post" action="/admin/sources/{{ s.id }}/enabled"
           hx-post="/admin/sources/{{ s.id }}/enabled" hx-target="closest tr" hx-swap="outerHTML">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">

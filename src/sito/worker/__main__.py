@@ -11,11 +11,13 @@ import httpx
 from sito.config import settings
 from sito.db.engine import async_session, engine
 from sito.log import setup_logging
-from sito.models import SourceType
+from sito.models import ConnectorStatus, SourceType
 from sito.models.post import EMBEDDING_DIM
+from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.pipeline import PipelineRepository
 from sito.repositories.sources import SourceRepository
 from sito.repositories.stories import StoryRepository
+from sito.services.alerts import Problem, alert_text, find_problems
 from sito.services.cleaning import CleaningService
 from sito.services.clustering import ClusteringRules, ClusteringService
 from sito.services.collector.base import ConnectorListener
@@ -24,6 +26,7 @@ from sito.services.collector.telegram import TelegramListener, TelegramRules
 from sito.services.collector.telegram_client import telethon_connect
 from sito.services.connectors import ConnectorSupervisor
 from sito.services.embedding import EmbeddingService, SentenceTransformerEmbedder
+from sito.services.fulltext import FullTextService
 from sito.services.ingest import IngestService
 from sito.services.topics import TopicMatchingService, TopicRules
 from sito.utils.crypto import SecretBox
@@ -176,6 +179,37 @@ async def retention_loop(stop: asyncio.Event) -> None:
         await sleep_until_stop(stop, RETENTION_SECONDS)
 
 
+ALERT_SECONDS = 300
+
+
+async def alerts_loop(stop: asyncio.Event) -> None:
+    """Раз в 5 минут: если что-то сломалось или починилось — сообщение в «Избранное» служебного Telegram.
+
+    Отправляет подключение Telegram (поручение notify). Какие проблемы уже сообщены, видно по прошлому
+    поручению: после перезапуска worker'а уведомления не повторяются.
+    """
+    while not stop.is_set():
+        try:
+            async with async_session() as session, session.begin():
+                repo = ConnectorRepository(session)
+                target = next((c for c in await repo.list_enabled([SourceType.TELEGRAM])
+                               if c.status == ConnectorStatus.ACTIVE and c.settings.get("alerts", True)), None)
+                if target is not None:
+                    problems = {p.key: p for p in await find_problems(session, datetime.now(UTC))}
+                    last = await repo.last_command(target.id, "notify")
+                    known: dict[str, str] = dict(last.payload.get("problems", {})) if last else {}
+                    appeared = [p for key, p in problems.items() if key not in known]
+                    fixed = [Problem(key, text) for key, text in known.items() if key not in problems]
+                    if appeared or fixed:
+                        await repo.add_command(target.id, "notify", {
+                            "text": alert_text(appeared, fixed),
+                            "problems": {key: p.text for key, p in problems.items()},
+                        })
+        except Exception:
+            logger.exception("ошибка уведомлений")
+        await sleep_until_stop(stop, ALERT_SECONDS)
+
+
 async def main() -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -216,6 +250,10 @@ async def main() -> None:
             tasks.create_task(supervisor.run(stop, settings.connector_check_seconds))
             tasks.create_task(heartbeat_loop(stop))
             tasks.create_task(retention_loop(stop))
+            tasks.create_task(alerts_loop(stop))
+            if settings.full_text_enabled:
+                full_text = FullTextService(async_session, client, concurrency=settings.full_text_concurrency)
+                tasks.create_task(drain_loop("полный текст", full_text.process_batch, 30, stop))
 
     await engine.dispose()
     logger.info("worker остановлен")

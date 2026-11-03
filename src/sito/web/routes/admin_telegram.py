@@ -81,7 +81,8 @@ async def channels_page(
         "user": user, "connector": connector, "rows": rows, "counts": counts, "preview_id": preview,
         "subscribed": sum(r.state not in ("left", "pending", "error") for r in rows), "limit": CHANNELS_LIMIT,
         "new_channels": connector.settings.get("new_channels", "collect"),
-        "quiet": bool(connector.settings.get("quiet", True)), "now": datetime.now(UTC),
+        "quiet": bool(connector.settings.get("quiet", True)), "alerts": bool(connector.settings.get("alerts", True)),
+        "now": datetime.now(UTC),
     })
 
 
@@ -89,10 +90,11 @@ async def channels_page(
 async def save_options(
     request: Request, db: DbSession, connector_id: int,
     new_channels: Annotated[str, Form()] = "collect", quiet: Annotated[bool, Form()] = False,
+    alerts: Annotated[bool, Form()] = False,
 ) -> Response:
     connector = await _telegram(db, connector_id)
     await ConnectorService(db, request.app.state.secret_box).set_options(
-        connector, new_channels="wait" if new_channels == "wait" else "collect", quiet=quiet,
+        connector, new_channels="wait" if new_channels == "wait" else "collect", quiet=quiet, alerts=alerts,
     )
     await db.commit()
     flash(request, "Настройки сохранены. Worker переподключится в течение минуты.")

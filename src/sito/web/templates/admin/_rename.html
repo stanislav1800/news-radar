@@ -1,0 +1,10 @@
+{# Переименовать источник: s — строка источника, rename_next — куда вернуться #}
+<details class="rename">
+  <summary class="link">Переименовать</summary>
+  <form class="inline-search" method="post" action="/admin/sources/{{ s.id }}/rename">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="next" value="{{ rename_next }}#source-{{ s.id }}">
+    <input name="name" value="{{ s.name }}" required maxlength="200" aria-label="Новое название">
+    <button class="secondary" type="submit">Сохранить</button>
+  </form>
+</details>

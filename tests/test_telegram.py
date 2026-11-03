@@ -15,6 +15,7 @@ from sito.services.collector.telegram import (
     Channel,
     ChannelDetails,
     ChannelPreview,
+    DeletedHandler,
     JoinError,
     Link,
     Message,
@@ -96,6 +97,14 @@ class FakeTelegram(TelegramApi):
 
     async def log_out(self) -> None:
         self.calls.append("log_out")
+
+    deleted_handler: DeletedHandler | None = None
+
+    def on_deleted(self, handler: DeletedHandler) -> None:
+        self.deleted_handler = handler
+
+    async def notify(self, text: str) -> None:
+        self.calls.append(f"notify {text}")
 
     async def details(self, channel_id: int) -> ChannelDetails:
         self.calls.append(f"details {channel_id}")
@@ -455,3 +464,21 @@ async def test_repost_keeps_link_to_original(
 ])
 def test_chatter(text: str, chatter: bool) -> None:
     assert is_chatter(text) is chatter
+
+
+async def test_deleted_post_leaves_and_notify_command(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    sink, config = setup
+    tg = FakeTelegram(subscribed=[COAL], history={COAL.id: [message(1), message(2)]})
+    session = _Session(config, sink, tg, TelegramRules())
+    await session.run()
+    assert tg.deleted_handler is not None
+
+    await tg.deleted_handler(COAL.id, [1])
+    await add_command(session_factory, config.id, "notify", {"text": "Сломалось"})
+    while (command := await sink.next_command(config.id)) is not None:
+        await session._run_command(command)
+
+    assert [p[1] for p in await posts(session_factory)] == ["2"]
+    assert tg.calls == ["notify Сломалось"]

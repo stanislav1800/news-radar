@@ -15,6 +15,7 @@ from sito.models import Connector, ConnectorStatus, User
 from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.pipeline import PipelineRepository
 from sito.repositories.sources import SourceRepository
+from sito.services.alerts import find_problems
 from sito.services.collector.registry import COLLECTORS, CollectorSpec, RssSourceForm
 from sito.services.collector.telegram import TelegramSourceForm
 from sito.services.connectors import ConnectorError, ConnectorService, secret_fields
@@ -23,7 +24,7 @@ from sito.services.telegram_login import LoginError, QrAttempt, TelegramLoginSer
 from sito.web.deps import AdminUser, DbSession, require_admin
 from sito.web.forms import FormField, form_fields, validation_errors
 from sito.web.routes.health import worker_state
-from sito.web.security import flash
+from sito.web.security import flash, safe_next
 from sito.web.templating import templates
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
@@ -64,20 +65,10 @@ async def _broken_connectors(db: DbSession) -> list[Connector]:
 async def alert(db: DbSession) -> HTMLResponse:
     """Красная точка у меню аккаунта, если что-то сломалось. Подгружается в шапку каждой страницы."""
     now = datetime.now(UTC)
-    pipeline = PipelineRepository(db)
-    beat = await pipeline.heartbeat("worker")
-    sources = await SourceRepository(db).list_with_stats()
-    problems = []
+    beat = await PipelineRepository(db).heartbeat("worker")
+    problems = [p.text for p in await find_problems(db, now)]
     if worker_state(beat.beat_at if beat else None, now) != "ok":
-        problems.append("worker не работает")
-    if connectors := await _broken_connectors(db):
-        problems.append("подключения: " + ", ".join(c.name for c in connectors))
-    if failing := sum(s.failing for s in sources):
-        problems.append(f"источников с ошибкой: {failing}")
-    if silent := sum(s.silent_since(now) is not None for s in sources):
-        problems.append(f"молчат: {silent}")
-    if failed := (await pipeline.summary()).by_status.get("failed", 0):
-        problems.append(f"постов с ошибкой: {failed}")
+        problems.insert(0, "worker не работает")
     if not problems:
         return HTMLResponse("")
     return HTMLResponse(f'<span class="alert-dot" title="{escape("; ".join(problems))}"></span>')
@@ -425,6 +416,22 @@ async def set_source_enabled(
             {"user": user, "s": await repo.get_row(source_id), "now": datetime.now(UTC)},
         )
     return RedirectResponse(f"/admin/connectors#source-{source_id}", status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/sources/{source_id}/rename")
+async def rename_source(
+    request: Request, db: DbSession, source_id: int, name: Annotated[str, Form()], next: Annotated[str, Form()] = "",
+) -> Response:
+    """Своё название источника в ленте: «TACC» латиницей, как назвал себя канал, — в «ТАСС»."""
+    name = " ".join(name.split())[:200]
+    if not name:
+        flash(request, "Название не может быть пустым")
+    elif not await SourceRepository(db).rename(source_id, name):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Источник не найден")
+    else:
+        await db.commit()
+        flash(request, f"Переименован в «{name}».")
+    return RedirectResponse(safe_next(next or "/admin/connectors"), status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/sources/{source_id}/delete")

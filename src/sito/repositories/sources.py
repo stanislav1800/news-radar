@@ -20,7 +20,8 @@ SILENCE_FACTOR = 10
 SILENCE_MIN = timedelta(hours=6)
 SILENCE_MAX = timedelta(days=3)
 HISTORY = timedelta(days=7)
-MIN_POLL_SECONDS = 60  # чаще раза в минуту ленты не опрашиваются
+MIN_POLL_SECONDS = 60
+LATE_MINUTES = 60  # RSS, у которой новости в среднем приходят позже, — «с опозданием»  # чаще раза в минуту ленты не опрашиваются
 
 
 def silence_limit(posts_week: int) -> timedelta:
@@ -47,6 +48,13 @@ class SourceRow:
     posts_24h: int
     posts_week: int
     info: dict[str, Any] = field(default_factory=dict)  # что рассказал сервис (подписчики канала и т. п.)
+    type: str = "rss"
+    # Медиана задержки «опубликовано → собрано» за сутки, минут: лента отдаёт новости поздно
+    delay_minutes: float | None = None
+
+    @property
+    def late(self) -> bool:
+        return self.type == "rss" and self.delay_minutes is not None and self.delay_minutes > LATE_MINUTES
 
     @property
     def failing(self) -> bool:
@@ -213,12 +221,20 @@ class SourceRepository:
                 .scalar_subquery()
             )
         last_post_at = select(func.max(Post.fetched_at)).where(Post.source_id == Source.id).scalar_subquery()
+        delay = (
+            select(func.percentile_cont(0.5).within_group(
+                func.extract("epoch", Post.fetched_at - Post.published_at) / 60))
+            .where(Post.source_id == Source.id, Post.fetched_at > func.now() - text("interval '24 hours'"),
+                   Post.published_at <= Post.fetched_at)
+            .scalar_subquery()
+        )
         query = (
             select(
                 Source.id, Source.name, Source.url, Source.external_id, Source.enabled, Source.poll_interval,
                 Source.last_success_at, Source.last_error, Source.last_error_at, Source.failures,
                 Source.created_at, last_post_at.label("last_post_at"),
                 posts_since("24 hours").label("posts_24h"), posts_since("7 days").label("posts_week"), Source.info,
+                Source.type, delay.label("delay_minutes"),
             )
             .order_by(Source.name)
         )
@@ -233,6 +249,33 @@ class SourceRepository:
         rows = [r for r in await self.list_with_stats(source.connector_id) if r.id == source_id]
         return rows[0] if rows else None
 
+    async def delete_posts(self, source_id: int, external_ids: Collection[str]) -> int:
+        """Убрать посты, которые источник удалил (канал удалил пост). Сюжеты пересчитываются."""
+        story_ids = list(await self.session.scalars(
+            select(Post.story_id).where(Post.source_id == source_id, Post.external_id.in_(external_ids),
+                                        Post.story_id.is_not(None)).distinct()
+        ))
+        result = await self.session.execute(
+            delete(Post).where(Post.source_id == source_id, Post.external_id.in_(external_ids))
+        )
+        await self._refresh_stories(story_ids)
+        return result.rowcount  # type: ignore[attr-defined, no-any-return]
+
+    async def _refresh_stories(self, story_ids: Collection[int | None]) -> None:
+        if not story_ids:
+            return
+        has_posts = select(Post.id).where(Post.story_id == Story.id).exists()
+        await self.session.execute(delete(Story).where(Story.id.in_(story_ids), ~has_posts))
+        stories = StoryRepository(self.session)
+        for story_id in await self.session.scalars(select(Story.id).where(Story.id.in_(story_ids))):
+            await stories.refresh(story_id)
+
+    async def rename(self, source_id: int, name: str) -> bool:
+        result = await self.session.execute(
+            update(Source).where(Source.id == source_id).values(name=name).returning(Source.id)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def delete(self, source_id: int) -> bool:
         """Удалить источник вместе с его постами. Сюжеты, где были посты, пересчитываются, опустевшие удаляются."""
         story_ids = list(await self.session.scalars(
@@ -241,12 +284,7 @@ class SourceRepository:
         result = await self.session.execute(delete(Source).where(Source.id == source_id).returning(Source.id))
         if result.scalar_one_or_none() is None:
             return False
-        if story_ids:
-            has_posts = select(Post.id).where(Post.story_id == Story.id).exists()
-            await self.session.execute(delete(Story).where(Story.id.in_(story_ids), ~has_posts))
-            stories = StoryRepository(self.session)
-            for story_id in await self.session.scalars(select(Story.id).where(Story.id.in_(story_ids))):
-                await stories.refresh(story_id)
+        await self._refresh_stories(story_ids)
         return True
 
     async def set_enabled(self, source_id: int, enabled: bool) -> bool:

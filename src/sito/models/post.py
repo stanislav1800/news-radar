@@ -66,6 +66,10 @@ class Post(IdMixin, TimestampMixin, Base):
     raw_text: Mapped[str | None]
     text: Mapped[str | None]       # очищенный, шаг 3
     links: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")  # ссылки из текста, шаг 3
+    # Полный текст статьи со страницы (у RSS в ленте только анонс): для выжимок LLM. Пусто и
+    # full_text_at задан — достать не вышло (страница закрыта, не статья)
+    full_text: Mapped[str | None]
+    full_text_at: Mapped[datetime | None]
     # Слова в начальной форме для поиска (шаг 3). NULL у заголовка — пост ещё не обработан
     title_lemmas: Mapped[str | None]
     text_lemmas: Mapped[str | None]

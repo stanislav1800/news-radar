@@ -182,6 +182,7 @@ class ChannelDetails:
 
 
 MessageHandler = Callable[[Channel, Message], Awaitable[None]]
+DeletedHandler = Callable[[int, list[int]], Awaitable[None]]
 
 
 class JoinError(Exception):
@@ -237,6 +238,14 @@ class TelegramApi(Protocol):
 
     def on_message(self, handler: MessageHandler) -> None:
         """Новые и отредактированные сообщения каналов."""
+        ...
+
+    def on_deleted(self, handler: DeletedHandler) -> None:
+        """Канал удалил сообщения: (id канала, номера сообщений)."""
+        ...
+
+    async def notify(self, text: str) -> None:
+        """Сообщение в «Избранное» аккаунта: так администратор узнаёт о поломках на телефоне."""
         ...
 
     async def disconnected(self) -> None:
@@ -309,6 +318,7 @@ class _Session:
         # Новые сообщения слушаем ещё до догрузки: то, что придёт во время неё, не потеряется,
         # а пересечения не страшны — пост с тем же id просто обновится
         self.api.on_message(self._on_message)
+        self.api.on_deleted(self._on_deleted)
         # Поручения из веба и обслуживание (подписчики, тишина, подписки по ссылкам) идут параллельно
         # с догрузкой: у сотен каналов она занимает минуты, и ждать её незачем
         background = [asyncio.create_task(self._commands()), asyncio.create_task(self._maintenance())]
@@ -378,6 +388,16 @@ class _Session:
             logger.exception("connector=%s: не сохранилось сообщение %s канала %s, догружу позже",
                              self.connector.id, message.id, channel.id)
 
+    async def _on_deleted(self, channel_id: int, message_ids: list[int]) -> None:
+        """Канал удалил пост — обычно ошибка или фейк: из Сито он тоже уходит."""
+        source = self.sources.get(str(channel_id))
+        if source is None:
+            return
+        try:
+            await self.sink.remove_posts(source.id, [str(i) for i in message_ids])
+        except Exception:
+            logger.exception("connector=%s: не удалось убрать удалённые посты канала %s", self.connector.id, channel_id)
+
     async def _save(self, channel: Channel, source: KnownSource, messages: Sequence[Message]) -> None:
         posts = [
             RawPost(
@@ -412,6 +432,9 @@ class _Session:
                 result = self._found(await self.api.search(str(command.payload.get("query", ""))))
             elif command.kind == "similar":
                 result = self._found(await self.api.similar(int(self._by_id(int(command.payload["source_id"])).external_id)))
+            elif command.kind == "notify":
+                await self.api.notify(str(command.payload.get("text", "")))
+                result = {}
             elif command.kind == "logout":
                 # После выхода соединение закроется, подключение станет «нужен вход»
                 await self.sink.finish_command(command.id, {})

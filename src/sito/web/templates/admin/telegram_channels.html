@@ -139,6 +139,7 @@
                     {{ "Отписаться и удалить посты" if row.state != "left" else "Удалить посты" }}</button>
                   {% endif %}
                 </form>
+                {% set rename_next = "/admin/connectors/" ~ connector.id ~ "/channels" %}{% include "admin/_rename.html" %}
                 {% if row.state in ("waiting", "stopped", "collecting") %}
                 <form method="post" action="/admin/connectors/{{ connector.id }}/channels/similar">
                   <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
@@ -169,6 +170,8 @@
       <label class="check"><input type="radio" name="new_channels" value="collect" {% if new_channels == "collect" %}checked{% endif %}> собирать сразу</label>
       <label class="check"><input type="radio" name="new_channels" value="wait" {% if new_channels == "wait" %}checked{% endif %}> ждать решения здесь</label>
     </fieldset>
+    <label class="check"><input type="checkbox" name="alerts" value="true" {% if alerts %}checked{% endif %}>
+      Сообщать о поломках в «Избранное» этого аккаунта (пропала лента, нужен вход и т. п.)</label>
     <label class="check"><input type="checkbox" name="quiet" value="true" {% if quiet %}checked{% endif %}>
       Тишина на телефоне: каналы без звука, в архиве и прочитаны</label>
     <p class="muted small">Чтобы телефон служебного аккаунта не звенел от сотни каналов и не копил тысячи непрочитанных.</p>

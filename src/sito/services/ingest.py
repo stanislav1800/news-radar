@@ -174,6 +174,12 @@ class IngestService:
                 await repo.set_enabled(source_id, False)
                 await repo.update_info(source_id, {"left": True, "leaving": False})
 
+    async def remove_posts(self, source_id: int, external_ids: Sequence[str]) -> None:
+        async with self.session_factory() as session, session.begin():
+            removed = await SourceRepository(session).delete_posts(source_id, external_ids)
+        if removed:
+            logger.info("source=%s: источник удалил постов: %d", source_id, removed)
+
     async def next_command(self, connector_id: int) -> Command | None:
         async with self.session_factory() as session:
             found = await ConnectorRepository(session).next_command(connector_id)

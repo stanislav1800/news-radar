@@ -32,6 +32,7 @@ class LlmAnswer:
     output_tokens: int
     cost: float | None
     seconds: float
+    truncated: bool = False  # упёрся в max_tokens
 
 
 class LlmClient:
@@ -97,6 +98,7 @@ class LlmClient:
             raise LlmError(f"сервис LLM ответил ошибкой: {str(message)[:200]}")
         try:
             text = data["choices"][0]["message"]["content"] or ""
+            truncated = data["choices"][0].get("finish_reason") == "length"
         except (KeyError, IndexError, TypeError) as exc:
             raise LlmError("сервис LLM вернул ответ непонятного вида") from exc
         usage = data.get("usage") or {}
@@ -105,6 +107,7 @@ class LlmClient:
             text=text.strip(), model=str(data.get("model") or body["model"]),
             input_tokens=int(usage.get("prompt_tokens") or 0), output_tokens=int(usage.get("completion_tokens") or 0),
             cost=float(cost) if isinstance(cost, int | float) else None, seconds=time.monotonic() - started,
+            truncated=truncated,
         )
 
 
@@ -272,18 +275,18 @@ _TOPIC_RULES = """Пиши только то, что есть в материа�
 TOPIC_SUMMARY_SYSTEM = _TOPIC_INTRO + """
 
 Напиши обзор темы за период:
-- начни с раздела «## Главное»: самое важное за период;
+- начни с раздела «## Главное»: 3–5 коротких пунктов, по одному предложению — самое важное за период;
 - затем разделы по направлениям или подтемам: что произошло, подробности, цифры, заявления, как развивались события;
 - в конце, если есть, «## Что дальше»: объявленные планы, сроки, ожидаемые решения.
 Объём — по материалу: если сюжетов мало, обзор короткий, без лишних разделов; если много — подробный. \
-Важное описывай подробнее, мелочи — одной строкой или пропусти.
+Важное описывай подробнее, мелочи — одной строкой или пропусти. Весь обзор — не длиннее {words} слов.
 
 """ + _TOPIC_RULES
 
 TOPIC_QUESTION_SYSTEM = _TOPIC_INTRO + """
 
 Ответь на вопрос пользователя только по этим материалам. Если ответа в них нет или он неполный — прямо скажи \
-об этом. Объём ответа — по вопросу.
+об этом. Объём ответа — по вопросу, но не длиннее {words} слов.
 
 """ + _TOPIC_RULES
 
@@ -376,7 +379,8 @@ class TopicReportService:
             [s[0] for s in stories if not s[4]], body_chars=3000
         )
         system = (TOPIC_QUESTION_SYSTEM if question else TOPIC_SUMMARY_SYSTEM).format(
-            name=topic.name, period={1: "сутки", 7: "7 дней", 30: "30 дней"}[days]
+            name=topic.name, period={1: "сутки", 7: "7 дней", 30: "30 дней"}[days],
+            words={1: 500, 7: 1000, 30: 1500}[days],
         )
         if topic.llm_prompt and topic.llm_prompt.strip():
             system += USER_PROMPT.format(prompt=topic.llm_prompt.strip())
@@ -391,8 +395,9 @@ class TopicReportService:
         if not answer.text:
             await self.session.flush()
             raise LlmError("модель вернула пустой ответ, попробуйте ещё раз")
+        text = answer.text + ("\n\n(Ответ обрезан: модель упёрлась в лимит длины.)" if answer.truncated else "")
         report = TopicReport(
-            topic_id=topic.id, kind=kind, days=days, question=question, text=answer.text,
+            topic_id=topic.id, kind=kind, days=days, question=question, text=text,
             story_ids=[s[0] for s in stories], model=answer.model, input_tokens=answer.input_tokens,
             output_tokens=answer.output_tokens, cost=answer.cost,
         )

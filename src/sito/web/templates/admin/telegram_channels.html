@@ -93,7 +93,9 @@
             <div class="muted small">
               {% if row.username %}<a href="https://t.me/{{ row.username }}" target="_blank" rel="noopener noreferrer">@{{ row.username }}</a>
               {% elif s.url %}{{ s.url }}{% else %}закрытый канал{% endif %}
-              {% if s.info.subscribers %} · {{ s.info.subscribers | compact }} подписчиков{% endif %}
+              {% if s.info.subscribers %} · {{ s.info.subscribers | compact }} подписчиков
+              {%- elif s.info.details_at %} · подписчики скрыты
+              {%- elif row.state in ("collecting", "waiting", "stopped") %} · подписчики: загружаются{% endif %}
             </div>
             {% if s.info.about %}<div class="muted small about">{{ s.info.about[:140] }}</div>{% endif %}
           </td>

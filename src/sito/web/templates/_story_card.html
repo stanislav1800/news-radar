@@ -17,21 +17,31 @@
     <details class="menu card-menu">
       <summary aria-label="Действия с сюжетом">⋯</summary>
       <div class="menu-body right">
-        {% for r in reasons %}
+        {% macro vote_form(r, vote, label, title="") %}
         <form method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="#story-{{ s.id }}" hx-swap="outerHTML">
           <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
           <input type="hidden" name="topic_id" value="{{ r.topic_id }}">
           <input type="hidden" name="story_id" value="{{ s.id }}">
-          <input type="hidden" name="vote" value="{{ 'dislike' if r.matched else 'like' }}">
+          <input type="hidden" name="vote" value="{{ vote }}">
           <input type="hidden" name="mode" value="feed">
           <input type="hidden" name="next" value="/">
-          {% if r.matched %}
-          <button class="link" type="submit">Не по теме{% if reasons | length > 1 %} «{{ r.topic_name }}»{% endif %}</button>
-          {% else %}
-          <button class="link" type="submit" title="Тема будет находить похожие">Добавить в тему «{{ r.topic_name }}»</button>
-          {% endif %}
+          <button class="link one-line" type="submit" title="{{ title or r.topic_name }}">{{ label }}</button>
         </form>
+        {% endmacro %}
+        {% set matched = reasons | selectattr("matched") | list %}
+        {% set other = reasons | rejectattr("matched") | list %}
+        {% for r in matched %}
+        {{ vote_form(r, "dislike", "Не по теме" ~ (" «" ~ r.topic_name ~ "»" if matched | length > 1 else ""), "Убрать из темы «" ~ r.topic_name ~ "» этот сюжет и похожие") }}
         {% endfor %}
+        {% if other %}
+        <details class="topic-pick" data-list="{{ s.id }}">
+          <summary class="link">Добавить в тему…</summary>
+          {% if other | length > 8 %}<input type="search" class="topic-filter" placeholder="Найти тему" aria-label="Найти тему">{% endif %}
+          <div class="topic-pick-list">
+            {% for r in other %}{{ vote_form(r, "like", r.topic_name, "Добавить в тему «" ~ r.topic_name ~ "»: она будет находить похожие") }}{% endfor %}
+          </div>
+        </details>
+        {% endif %}
         {% if hide_next and s.first_source_id %}
         <form method="post" action="/settings/hidden-sources">
           <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">

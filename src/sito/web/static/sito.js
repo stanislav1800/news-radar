@@ -115,6 +115,16 @@
     body.append(...rows);
   }
 
+  // Поиск темы в «Добавить в тему…»
+  document.addEventListener("input", (event) => {
+    const input = event.target.closest(".topic-filter");
+    if (!input) return;
+    const query = input.value.trim().toLowerCase();
+    input.closest(".topic-pick").querySelectorAll(".topic-pick-list form").forEach((form) => {
+      form.hidden = Boolean(query) && !form.textContent.toLowerCase().includes(query);
+    });
+  });
+
   document.addEventListener("input", (event) => {
     const input = event.target.closest("[data-filter]");
     if (input) applyFilters(input.dataset.filter);

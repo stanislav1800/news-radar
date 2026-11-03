@@ -1,9 +1,11 @@
 {# Вкладки ленты: сначала общие (главное, все новости), потом свои темы. Число — новых с прошлого визита #}
 <nav class="tabs" aria-label="Ленты" hx-boost="true" hx-target="#feed-area" hx-select="#feed-area" hx-swap="outerHTML show:window:top">
-  <a class="tab{% if view.kind == 'top' %} active{% endif %}" href="/?view=top">Главное</a>
-  <a class="tab{% if view.kind == 'all' %} active{% endif %}" href="/?view=all">Все новости</a>
+  {% set show_top = user.show_top or not topics or view.kind == 'top' %}
+  {% set show_all = user.show_all or not topics or view.kind == 'all' %}
+  {% if show_top %}<a class="tab{% if view.kind == 'top' %} active{% endif %}" href="/?view=top">Главное</a>{% endif %}
+  {% if show_all %}<a class="tab{% if view.kind == 'all' %} active{% endif %}" href="/?view=all">Все новости</a>{% endif %}
   {% if topics %}
-  <span class="tabs-sep" aria-hidden="true"></span>
+  {% if show_top or show_all %}<span class="tabs-sep" aria-hidden="true"></span>{% endif %}
   <a class="tab{% if view.kind == 'my' %} active{% endif %}" href="/?view=my">Мои темы{% if new_total %} <span class="count">{{ new_total }}</span>{% endif %}</a>
   {% for t in topics %}
   <a class="tab{% if view.topic_id == t.id %} active{% endif %}{% if t.paused %} paused{% endif %}" href="/?topic={{ t.id }}"

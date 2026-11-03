@@ -4,6 +4,39 @@
 <a class="back" href="/">← К ленте</a>
 <h1>Настройки</h1>
 
+<h2>Вкладки ленты</h2>
+<section class="card">
+  <form class="stack" method="post" action="/settings/tabs">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <label class="check"><input type="checkbox" name="show_top" value="true" {% if user.show_top %}checked{% endif %}> «Главное» — сюжеты, которые подхватили многие издания</label>
+    <label class="check"><input type="checkbox" name="show_all" value="true" {% if user.show_all %}checked{% endif %}> «Все новости» — всё подряд</label>
+    <p class="muted small">Если живёте только своими темами, уберите обе: в ленте останутся «Мои темы» и вкладки тем. Пока тем нет, общие вкладки видны всё равно.</p>
+    <button type="submit">Сохранить</button>
+  </form>
+</section>
+
+<h2>Скрытые источники</h2>
+<section class="card">
+  {% if hidden_sources %}
+  <p class="muted small">Сюжеты только из этих источников не показываются в «Главном» и «Всех новостях». В ваших темах они остаются.</p>
+  <ul class="hidden-sources">
+    {% for source in hidden_sources %}
+    <li>
+      <span>{{ source.name }}</span>
+      <form method="post" action="/settings/hidden-sources">
+        <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="source_id" value="{{ source.id }}">
+        <input type="hidden" name="action" value="show">
+        <button class="link" type="submit">Показывать снова</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted small">Нет. Чтобы скрыть источник, в ленте у его сюжета нажмите «⋯ → Не показывать».</p>
+  {% endif %}
+</section>
+
 <h2>Часовой пояс</h2>
 <section class="card">
   <form class="inline-form" method="post" action="/settings/timezone">

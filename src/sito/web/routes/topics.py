@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from sito.config import Settings
 from sito.models import Topic, User
+from sito.repositories.sources import SourceRepository
 from sito.repositories.stories import StoryRepository
 from sito.repositories.topics import TopicReason, TopicRepository
 from sito.services.search import DEFAULT_PERIOD, SearchService
@@ -214,6 +215,8 @@ async def _render_topic(
         "words": parse_query(topic.query).words if topic.query else [],
         "fields": form_fields(TopicForm, form_values, errors), "form_open": errors is not None,
         "rss_url": f"{request.base_url}rss/{topic.rss_token}",
+        "all_sources": await SourceRepository(db).list_all(),
+        "topic_sources": set(topic.source_ids or []),
         "default_similarity": request.app.state.settings.topic_example_min_similarity,
         "next": f"/topics/{topic.id}",
         "now": datetime.now(UTC),
@@ -238,6 +241,18 @@ async def update_topic(request: Request, db: DbSession, user: CurrentUser, topic
     await db.commit()
     flash(request, "Тема сохранена")
     return _redirect(f"/topics/{topic_id}")
+
+
+@router.post("/topics/{topic_id}/sources")
+async def set_topic_sources(request: Request, db: DbSession, user: CurrentUser, topic_id: int) -> Response:
+    """Искать только в отмеченных источниках (ничего не отмечено — во всех)."""
+    await _owned(db, user, topic_id)
+    form = await request.form()
+    ids = [int(v) for v in form.getlist("source_id") if isinstance(v, str) and v.isdigit()]
+    topic = await _service(request, db).set_sources(user, topic_id, ids)
+    await db.commit()
+    flash(request, f"Тема ищет в источниках: {len(ids)}." if ids else "Тема ищет во всех источниках.")
+    return _redirect(f"/topics/{topic.id}")
 
 
 @router.post("/topics/{topic_id}/pause")

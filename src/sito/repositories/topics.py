@@ -3,7 +3,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import bindparam, case, delete, func, literal, select, text
+from sqlalchemy import BigInteger, bindparam, case, delete, func, literal, select, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -60,6 +61,10 @@ _PREVIEW_SQL = text(f"""
 """)
 
 
+def _source_params(topic: Topic) -> dict[str, object]:
+    return {"sources": list(topic.source_ids or []), "all_sources": not topic.source_ids}
+
+
 def _word_params(query: str | None) -> dict[str, object]:
     """Параметры _WORD_MATCH_SQL: все слова запроса в любой форме («уголь в кузбассе» → уголь & кузбасс)."""
     parsed = parse_query(query) if query else None
@@ -69,6 +74,13 @@ def _word_params(query: str | None) -> dict[str, object]:
         "single_words": (parsed.single_word or []) if parsed else [],
     }
 
+
+# У темы могут быть свои источники (тема «IT» — только Хабр и OpenNET): сюжет подходит, если в нём есть
+# пост из них. Добавленные вручную (👍) сюжеты остаются в теме в любом случае
+_IN_TOPIC_SOURCES_SQL = (
+    "(:all_sources OR EXISTS (SELECT 1 FROM post AS p WHERE p.story_id = story.id AND p.source_id = ANY(:sources)))"
+)
+_SOURCES_PARAM = bindparam("sources", type_=ARRAY(BigInteger))
 
 # Правило совпадения (шаг 7). Сюжет подходит к теме, если:
 #   — пользователь сам отметил его 👍; или
@@ -83,10 +95,11 @@ _REMATCH_SQL = text(f"""
     cand AS (
         SELECT id, centroid FROM story
         WHERE centroid IS NOT NULL AND updated_at > :updated_after AND last_post_at >= :active_after
+          AND ({_IN_TOPIC_SOURCES_SQL} OR story.id IN (SELECT story_id FROM ex WHERE liked))
     ),
     words AS (
         SELECT DISTINCT post.story_id FROM post JOIN cand ON cand.id = post.story_id
-        WHERE :words <> '' AND {_WORD_MATCH_SQL}
+        WHERE :words <> '' AND {_WORD_MATCH_SQL} AND (:all_sources OR post.source_id = ANY(:sources))
     ),
     scored AS (
         SELECT cand.id AS story_id,
@@ -134,7 +147,7 @@ _REMATCH_SQL = text(f"""
     SELECT (SELECT count(*) FROM upserted WHERE inserted) AS added,
            (SELECT count(*) FROM removed) AS removed,
            (SELECT max(updated_at) FROM story WHERE updated_at > :updated_after) AS last_updated
-""")
+""").bindparams(_SOURCES_PARAM)
 
 # «Ещё может подойти»: свежие сюжеты не из темы, ближайшие к 👍-примерам (или к запросу, пока примеров нет).
 # Похожие на 👎-пример сильнее, чем на 👍, не предлагаются: «Не подходит» на подсказке убирает и такие
@@ -144,8 +157,8 @@ _NEGATIVE_SQL = """
         WHERE ex.topic_id = :topic_id AND NOT ex.liked
     ) AS neg
 """
-_FRESH_NOT_IN_TOPIC_SQL = """
-    story.centroid IS NOT NULL AND story.last_post_at >= :since
+_FRESH_NOT_IN_TOPIC_SQL = f"""
+    {_IN_TOPIC_SOURCES_SQL} AND story.centroid IS NOT NULL AND story.last_post_at >= :since
       AND story.id NOT IN (SELECT story_id FROM topic_match WHERE topic_id = :topic_id)
       AND story.id NOT IN (SELECT story_id FROM topic_example WHERE topic_id = :topic_id AND story_id IS NOT NULL)
 """
@@ -170,7 +183,7 @@ _SUGGESTIONS_BY_ANCHORS_SQL = text(f"""
                AND neg.similarity > 1 - nearest.distance)
     ORDER BY nearest.distance
     LIMIT :limit
-""")
+""").bindparams(_SOURCES_PARAM)
 
 _SUGGESTIONS_BY_QUERY_SQL = text(f"""
     SELECT story.id, 1 - (story.centroid <=> :embedding) AS similarity FROM story
@@ -179,7 +192,7 @@ _SUGGESTIONS_BY_QUERY_SQL = text(f"""
       AND coalesce(neg.similarity, -1) < :dislike_min_similarity
     ORDER BY story.centroid <=> :embedding
     LIMIT :limit
-""").bindparams(bindparam("embedding", type_=Vector(EMBEDDING_DIM)))
+""").bindparams(bindparam("embedding", type_=Vector(EMBEDDING_DIM)), _SOURCES_PARAM)
 
 # Насколько каждый пример темы похож на другие 👍-примеры: по этому подстраивается порог темы
 _EXAMPLE_SIMILARITIES_SQL = text("""
@@ -299,6 +312,7 @@ class TopicRepository:
         row = (await self.session.execute(_REMATCH_SQL, {
             "topic_id": topic.id,
             **_word_params(topic.query),
+            **_source_params(topic),
             "updated_after": updated_after,
             "active_after": active_after,
             "min_similarity": min_similarity,
@@ -357,6 +371,7 @@ class TopicRepository:
         )
         params: dict[str, object] = {
             "topic_id": topic.id, "since": since, "limit": limit, "dislike_min_similarity": dislike_min_similarity,
+            **_source_params(topic),
         }
         has_word_matches = not has_likes and await self.session.scalar(
             select(TopicMatch.story_id).where(TopicMatch.topic_id == topic.id, TopicMatch.by_words).limit(1)
@@ -379,6 +394,17 @@ class TopicRepository:
         if not params["words"]:
             return 0
         return await self.session.scalar(_PREVIEW_SQL, {**params, "since": since}) or 0
+
+    async def prune_by_sources(self, topic: Topic) -> None:
+        """Источники темы изменились: убрать совпадения, где нет постов из её источников (кроме добавленных вручную)."""
+        if not topic.source_ids:
+            return
+        await self.session.execute(text("""
+            DELETE FROM topic_match AS m WHERE m.topic_id = :topic_id
+              AND NOT EXISTS (SELECT 1 FROM post WHERE post.story_id = m.story_id AND post.source_id = ANY(:sources))
+              AND m.story_id NOT IN (SELECT story_id FROM topic_example WHERE topic_id = :topic_id AND liked
+                                     AND story_id IS NOT NULL)
+        """).bindparams(_SOURCES_PARAM), {"topic_id": topic.id, "sources": list(topic.source_ids)})
 
     async def example_similarities(self, topic_id: int) -> tuple[list[float], list[float]]:
         """Похожесть каждого 👍 и каждого 👎 темы на остальные 👍-примеры (для подстройки порога)."""

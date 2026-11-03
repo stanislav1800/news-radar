@@ -15,6 +15,7 @@ from sito.config import Settings
 from sito.models import Topic, User
 from sito.repositories.stories import FeedStory, StoryRepository
 from sito.repositories.topics import TopicReason, TopicRepository
+from sito.repositories.users import UserRepository
 from sito.services.reading import ReadingService
 from sito.services.search import SearchService
 from sito.web.deps import CurrentUser, DbSession
@@ -82,14 +83,19 @@ class FeedView:
     topic_id: int | None = None
 
     @classmethod
-    def parse(cls, view: str | None, topic: int | None, topics: list[Topic]) -> "FeedView":
+    def parse(cls, view: str | None, topic: int | None, topics: list[Topic], user: User | None = None) -> "FeedView":
         known = {t.id for t in topics}
         if topic is not None and topic in known:
             return cls("topic", topic)
-        if view in ("my", "top", "all"):
-            return cls(view) if view != "my" or topics else cls("top")
-        # По умолчанию — свои темы, а пока их нет — главное
-        return cls("my" if topics else "top")
+        hidden = {"top": user is not None and not user.show_top, "all": user is not None and not user.show_all}
+        if view in ("top", "all") and not (hidden[view] and topics):
+            return cls(view)
+        if view == "my" and topics:
+            return cls("my")
+        # По умолчанию — свои темы, а пока их нет — общая вкладка (даже убранная: больше показать нечего)
+        if topics:
+            return cls("my")
+        return cls("all" if hidden["top"] and not hidden["all"] else "top")
 
     def query(self, **extra: object) -> str:
         params: dict[str, object] = {"topic": self.topic_id} if self.kind == "topic" else {"view": self.kind}
@@ -113,11 +119,13 @@ async def _feed_context(
     elif view.kind == "topic":
         topic_ids = [view.topic_id] if view.topic_id is not None else []
     min_sources = config.top_min_sources if view.kind == "top" else 1
+    # Скрытые пользователем источники не показываются в общих вкладках; в темах решают темы
+    hidden = await UserRepository(db).hidden_source_ids(user.id) if view.kind in ("top", "all") else []
 
     # На один больше, чем показываем: так понятно, есть ли что-то дальше
     stories = await StoryRepository(db).feed(
         config.feed_page_size + 1, user_id=user.id, read_all_before=user.read_all_before,
-        min_sources=min_sources, before=before, topic_ids=topic_ids,
+        min_sources=min_sources, before=before, topic_ids=topic_ids, hidden_source_ids=hidden,
     )
     has_more = len(stories) > config.feed_page_size
     stories = stories[: config.feed_page_size]
@@ -209,7 +217,7 @@ async def feed(
         view = last["view"][0] if last.get("view") else None
         topic_raw = (last.get("topic") or [""])[0]
         topic = int(topic_raw) if topic_raw.isdigit() else None
-    feed_view = FeedView.parse(view, topic, topics)
+    feed_view = FeedView.parse(view, topic, topics, user)
     request.session[LAST_FEED_KEY] = feed_view.query()
     context = await _feed_context(request, db, user, feed_view, topics, cursor)
     return templates.TemplateResponse(request, "feed.html", {
@@ -224,7 +232,7 @@ async def feed_items(
 ) -> HTMLResponse:
     """Следующая порция карточек для HTMX: дописывается в конец ленты."""
     topics = await TopicRepository(db).list_for_user(user.id)
-    context = await _feed_context(request, db, user, FeedView.parse(view, topic, topics), topics, cursor)
+    context = await _feed_context(request, db, user, FeedView.parse(view, topic, topics, user), topics, cursor)
     return templates.TemplateResponse(request, "_feed_items.html", {"user": user, **context})
 
 
@@ -240,7 +248,7 @@ async def feed_newer(
     config: Settings = request.app.state.settings
     moment = _parse_cursor(f"{since}-0")
     topics = await TopicRepository(db).list_for_user(user.id)
-    feed_view = FeedView.parse(view, topic, topics)
+    feed_view = FeedView.parse(view, topic, topics, user)
     if moment is None:
         return HTMLResponse("")
     topic_ids = (
@@ -251,6 +259,7 @@ async def feed_newer(
         config.feed_page_size, user_id=user.id, read_all_before=user.read_all_before,
         min_sources=config.top_min_sources if feed_view.kind == "top" else 1,
         topic_ids=topic_ids, after=moment[0],
+        hidden_source_ids=await UserRepository(db).hidden_source_ids(user.id) if topic_ids is None else [],
     )
     if not stories:
         return HTMLResponse("")

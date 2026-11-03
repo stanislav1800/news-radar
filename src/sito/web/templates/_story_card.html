@@ -8,11 +8,12 @@
   {%- elif r.by_words %}есть слова: {{ r.words | join(", ") }}{% endif -%}
 {%- endmacro %}
 
-{% macro story_card(s, note=none, reasons=[], suggest=none) %}
+{# hide_next — адрес ленты: в меню есть «Не показывать источник», после него вернуться туда #}
+{% macro story_card(s, note=none, reasons=[], suggest=none, hide_next=none) %}
 <article class="story-card {{ s.read_state }}" id="story-{{ s.id }}">
   <div class="card-head">
     <a class="story-title" href="/stories/{{ s.id }}">{{ s.title }}</a>
-    {% if reasons %}
+    {% if reasons or (hide_next and s.first_source_id) %}
     <details class="menu card-menu">
       <summary aria-label="Действия с сюжетом">⋯</summary>
       <div class="menu-body right">
@@ -27,6 +28,14 @@
           <button class="link" type="submit">Не по теме{% if reasons | length > 1 %} «{{ r.topic_name }}»{% endif %}</button>
         </form>
         {% endfor %}
+        {% if hide_next and s.first_source_id %}
+        <form method="post" action="/settings/hidden-sources">
+          <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+          <input type="hidden" name="source_id" value="{{ s.first_source_id }}">
+          <input type="hidden" name="next" value="{{ hide_next }}">
+          <button class="link" type="submit" title="Сюжеты только из этого источника не будут показываться в «Главном» и «Всех новостях»">Не показывать «{{ s.first_source_name }}»</button>
+        </form>
+        {% endif %}
       </div>
     </details>
     {% endif %}

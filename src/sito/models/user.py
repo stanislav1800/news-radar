@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from sqlalchemy import BigInteger, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sito.db.base import Base, IdMixin, TimestampMixin
@@ -23,3 +24,15 @@ class User(IdMixin, TimestampMixin, Base):
     previous_visit_at: Mapped[datetime | None]  # последний заход в прошлый визит: граница «нового»
     # «Отметить всё прочитанным»: сюжеты, не менявшиеся после этого момента, считаются прочитанными
     read_all_before: Mapped[datetime | None]
+    # Какие общие вкладки показывать: кто живёт только своими темами, может убрать «Главное» и «Все новости»
+    show_top: Mapped[bool] = mapped_column(server_default="true")
+    show_all: Mapped[bool] = mapped_column(server_default="true")
+
+
+class UserHiddenSource(Base):
+    """Источник, который пользователь не хочет видеть в «Главном» и «Всех новостях» (темы — сами по себе)."""
+
+    __tablename__ = "user_hidden_source"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user_account.id", ondelete="CASCADE"), primary_key=True)
+    source_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("source.id", ondelete="CASCADE"), primary_key=True)

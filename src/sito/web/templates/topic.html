@@ -35,6 +35,30 @@
 </p>
 {% endif %}
 
+<h2>Источники</h2>
+<section class="card">
+  <details{% if topic_sources %} open{% endif %}>
+    <summary>{% if topic_sources %}Ищет только в {{ topic_sources | length | plural("источнике", "источниках", "источниках") }}{% else %}Ищет во всех источниках{% endif %} — изменить</summary>
+    <p class="muted small">Например, тема «IT» только в Хабре и OpenNET — чтобы «Python» не ловил новости про змей.
+      Ничего не отмечено — ищет везде. Сюжеты, которые вы добавили в тему сами, остаются в ней всё равно.</p>
+    <form method="post" action="/topics/{{ topic.id }}/sources">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <input type="search" data-filter="#topic-sources" placeholder="Найти источник" aria-label="Найти источник">
+      <div class="source-pick">
+        <table id="topic-sources"><tbody>
+          {% for source in all_sources | sort(attribute="name") %}
+          <tr data-name="{{ source.name | lower }}"><td>
+            <label class="check"><input type="checkbox" name="source_id" value="{{ source.id }}" {% if source.id in topic_sources %}checked{% endif %}>
+              {{ source.name }} <span class="muted small">{{ "Telegram" if source.type == "telegram" else "RSS" }}</span></label>
+          </td></tr>
+          {% endfor %}
+        </tbody></table>
+      </div>
+      <button type="submit">Сохранить</button>
+    </form>
+  </details>
+</section>
+
 <h2>Управление</h2>
 <section class="card settings">
   <div class="setting row">

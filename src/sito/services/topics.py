@@ -176,6 +176,16 @@ class TopicService:
             await self.rematch(topic)
         return topic
 
+    async def set_sources(self, user: User, topic_id: int, source_ids: Collection[int]) -> Topic:
+        """Искать только в этих источниках; пусто — во всех. Тема пересчитывается."""
+        topic = await self.owned(user, topic_id, lock=True)
+        chosen = sorted(set(source_ids))
+        if chosen != sorted(topic.source_ids or []):
+            topic.source_ids = chosen
+            await self.topics.prune_by_sources(topic)
+            await self.rematch(topic)
+        return topic
+
     async def set_paused(self, user: User, topic_id: int, paused: bool) -> Topic:
         """Пауза: тема не пополняется и не видна в ленте. После паузы догоняет пропущенное."""
         topic = await self.owned(user, topic_id, lock=True)

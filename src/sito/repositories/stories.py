@@ -67,6 +67,7 @@ class FeedStory:
     last_post_at: datetime
     first_source_name: str | None
     read_state: str  # new — не открывал; updated — открывал, но с тех пор появились посты; read
+    first_source_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,7 +313,7 @@ class StoryRepository:
         query = (
             select(
                 Story.id, Story.title, Story.lead, Story.sources_count, Story.posts_count,
-                Story.started_at, Story.last_post_at, Source.name.label("first_source_name"),
+                Story.started_at, Story.last_post_at, Source.name.label("first_source_name"), Story.first_source_id,
                 read_state.label("read_state"),
             )
             .outerjoin(Source, Source.id == Story.first_source_id)
@@ -331,6 +332,7 @@ class StoryRepository:
         unread_only: bool = False,
         topic_ids: Sequence[int] | None = None,
         after: datetime | None = None,
+        hidden_source_ids: Sequence[int] = (),
     ) -> list[FeedStory]:
         """Сюжеты, новые сверху (по времени первого поста), с отметками прочитанного для пользователя.
 
@@ -350,6 +352,10 @@ class StoryRepository:
             query = query.where(Story.started_at > after)
         if unread_only:
             query = query.where(read_state != "read")
+        if hidden_source_ids:
+            # Сюжет виден, если в нём есть хоть один пост не из скрытых источников
+            visible = select(Post.id).where(Post.story_id == Story.id, Post.source_id.not_in(hidden_source_ids))
+            query = query.where(visible.exists())
         if topic_ids is not None:
             matched = select(TopicMatch.story_id).where(
                 TopicMatch.story_id == Story.id, TopicMatch.topic_id.in_(topic_ids)

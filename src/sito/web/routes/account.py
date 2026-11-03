@@ -5,9 +5,10 @@ from typing import Annotated
 from fastapi import APIRouter, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from sito.repositories.users import UserRepository
 from sito.services.users import UserError, UserService
 from sito.web.deps import CurrentUser, DbSession
-from sito.web.security import flash
+from sito.web.security import flash, safe_next
 from sito.web.templating import templates
 
 router = APIRouter(prefix="/settings")
@@ -35,8 +36,10 @@ def _back() -> RedirectResponse:
 
 
 @router.get("", response_class=HTMLResponse)
-async def settings_page(request: Request, user: CurrentUser) -> HTMLResponse:
-    return templates.TemplateResponse(request, "settings.html", {"user": user, "timezones": TIMEZONES})
+async def settings_page(request: Request, db: DbSession, user: CurrentUser) -> HTMLResponse:
+    return templates.TemplateResponse(request, "settings.html", {
+        "user": user, "timezones": TIMEZONES, "hidden_sources": await UserRepository(db).hidden_sources(user.id),
+    })
 
 
 @router.post("/timezone")
@@ -69,3 +72,32 @@ async def change_password(
     request.session["session_version"] = user.session_version
     flash(request, "Пароль изменён. На других устройствах нужно будет войти заново.")
     return _back()
+
+
+@router.post("/tabs")
+async def set_tabs(
+    request: Request, db: DbSession, user: CurrentUser,
+    show_top: Annotated[bool, Form()] = False, show_all: Annotated[bool, Form()] = False,
+) -> Response:
+    user.show_top, user.show_all = show_top, show_all
+    await db.commit()
+    flash(request, "Вкладки сохранены")
+    return _back()
+
+
+@router.post("/hidden-sources")
+async def hide_source(
+    request: Request, db: DbSession, user: CurrentUser, source_id: Annotated[int, Form()],
+    action: Annotated[str, Form()] = "hide", next: Annotated[str, Form()] = "",
+) -> Response:
+    """Скрыть источник из «Главного» и «Всех новостей» или вернуть его."""
+    repo = UserRepository(db)
+    if action == "show":
+        await repo.unhide_source(user.id, source_id)
+        message = "Источник снова показывается"
+    else:
+        await repo.hide_source(user.id, source_id)
+        message = "Источник скрыт из «Главного» и «Всех новостей». Вернуть — в Настройках."
+    await db.commit()
+    flash(request, message)
+    return RedirectResponse(safe_next(next) if next else "/settings", status.HTTP_303_SEE_OTHER)

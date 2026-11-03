@@ -1,7 +1,8 @@
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sito.models import User
+from sito.models import Source, User, UserHiddenSource
 
 
 class UserRepository:
@@ -25,3 +26,26 @@ class UserRepository:
         self.session.add(user)
         await self.session.flush()
         return user
+
+    # --- Скрытые источники ---------------------------------------------------------------------------
+
+    async def hidden_source_ids(self, user_id: int) -> list[int]:
+        return list(await self.session.scalars(
+            select(UserHiddenSource.source_id).where(UserHiddenSource.user_id == user_id)
+        ))
+
+    async def hidden_sources(self, user_id: int) -> list[Source]:
+        return list(await self.session.scalars(
+            select(Source).join(UserHiddenSource, UserHiddenSource.source_id == Source.id)
+            .where(UserHiddenSource.user_id == user_id).order_by(func.lower(Source.name))
+        ))
+
+    async def hide_source(self, user_id: int, source_id: int) -> None:
+        await self.session.execute(
+            insert(UserHiddenSource).values(user_id=user_id, source_id=source_id).on_conflict_do_nothing()
+        )
+
+    async def unhide_source(self, user_id: int, source_id: int) -> None:
+        await self.session.execute(delete(UserHiddenSource).where(
+            UserHiddenSource.user_id == user_id, UserHiddenSource.source_id == source_id,
+        ))

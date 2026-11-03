@@ -7,7 +7,7 @@
 {% if s.id == divider_before %}
 <div class="divider" role="separator">Вы были здесь {{ user.previous_visit_at | ago(user.timezone, now) }}</div>
 {% endif %}
-{{ cards.story_card(s, reasons=(reasons or {}).get(s.id, [])) }}
+{{ cards.story_card(s, reasons=(reasons or {}).get(s.id, []), hide_next=view.url() if view.kind in ("top", "all") else none) }}
 {% if s.id == ask_after %}
 <section class="ask">
   <h2>Подходит к теме «{{ ask_topic.name }}»?</h2>

@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, ForeignKey, Index, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sito.db.base import Base, IdMixin, TimestampMixin
@@ -27,6 +28,8 @@ class Topic(IdMixin, TimestampMixin, Base):
     matched_until: Mapped[datetime | None]
     # Свой порог похожести на 👍-примеры, подстроенный по отметкам пользователя; None — общий
     min_similarity: Mapped[float | None]
+    # Искать только в этих источниках (тема «IT» — Хабр и OpenNET); пусто — во всех
+    source_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), server_default="{}")
 
 
 class TopicExample(IdMixin, Base):

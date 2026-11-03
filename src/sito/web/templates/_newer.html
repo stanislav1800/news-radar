@@ -1,4 +1,4 @@
 {# Новые сюжеты: вставляются в начало ленты с подсветкой; опросчик обновляет свою отметку since #}
 {% import "_story_card.html" as cards with context %}
-{% for s in stories %}<div class="fresh-item">{{ cards.story_card(s, reasons=(reasons or {}).get(s.id, [])) }}</div>{% endfor %}
+{% for s in stories %}<div class="fresh-item">{{ cards.story_card(s, reasons=(reasons or {}).get(s.id, []), hide_next=view.url() if view.kind in ("top", "all") else none) }}</div>{% endfor %}
 {% with oob=true %}{% include "_newer_poller.html" %}{% endwith %}

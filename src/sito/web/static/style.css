@@ -438,8 +438,9 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 .source-pick { max-height: 22rem; overflow-y: auto; margin: .5rem 0; border: 1px solid var(--border); border-radius: 8px; padding: .25rem .5rem; }
 .source-pick table { width: 100%; }
 /* «Добавить в тему…» в меню карточки: список тем в одну строку, длинный — с прокруткой и поиском */
-.card-menu .menu-body { max-width: 20rem; }
-.one-line { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.card-menu .menu-body { width: min(20rem, 85vw); box-sizing: border-box; }
+.card-menu .menu-body form, .topic-pick, .topic-pick-list { min-width: 0; max-width: 100%; }
+.one-line { display: block; width: 100%; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .topic-pick summary { list-style: none; cursor: pointer; }
 .topic-pick summary::-webkit-details-marker { display: none; }
 .topic-pick[open] summary { font-weight: 600; }

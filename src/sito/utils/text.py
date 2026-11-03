@@ -140,7 +140,7 @@ def tidy_title(title: str) -> str:
         is_common_word,  # словарь грузится при первом обращении
     )
 
-    title = _HASHTAG.sub("", _EMOJI.sub(" ", title))
+    title = _URL.sub(" ", _HASHTAG.sub("", _EMOJI.sub(" ", title)))
     title = " ".join(title.split()).strip(" -–—|:•·")
     letters = [ch for ch in title if ch.isalpha()]
     if len(letters) >= 10 and sum(ch.isupper() for ch in letters) >= 0.7 * len(letters):

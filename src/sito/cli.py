@@ -22,6 +22,7 @@ from sito.log import setup_logging
 from sito.models import SourceType
 from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.sources import SourceRepository
+from sito.repositories.stories import StoryRepository
 from sito.repositories.users import UserRepository
 from sito.services.clustering import ClusteringRules, ClusteringService
 from sito.services.collector.registry import RssSourceForm
@@ -231,6 +232,27 @@ def pipeline_recluster(
                 errors += result.errors
                 status.update(f"Склейка... {attached + new_stories + errors} из {total}")
         console.print(f"Готово: сюжетов {new_stories}, приклеено постов {attached}, ошибок {errors}")
+
+    _run(run())
+
+
+@pipeline_app.command("reprocess")
+def pipeline_reprocess(
+    source_type: Annotated[str, typer.Option("--type", help="Тип источников: telegram или rss.")] = "telegram",
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Не спрашивать подтверждение.")] = False,
+) -> None:
+    """Пропустить посты одного типа заново через весь конвейер: после смены правил очистки.
+
+    Посты выйдут из сюжетов, worker заново очистит их, посчитает векторы и склеит. Сюжеты, где
+    остались только такие посты, пропадут до пересклейки (вместе с отметками «прочитано»).
+    """
+    if not yes:
+        typer.confirm(f"Посты типа {source_type} будут обработаны заново. Продолжить?", abort=True)
+
+    async def run() -> None:
+        async with async_session() as session, session.begin():
+            total = await StoryRepository(session).reprocess(source_type)
+        console.print(f"Отправлено в обработку постов: {total}. Worker обработает их в фоне.")
 
     _run(run())
 

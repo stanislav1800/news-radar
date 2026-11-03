@@ -33,6 +33,15 @@ def _lemma(word: str) -> str | None:
     return str(parsed.normal_form).replace("ё", "е")
 
 
+@lru_cache(maxsize=50_000)
+def is_common_word(word: str) -> bool:
+    """Обычное слово из словаря, а не аббревиатура: «под» — да, «ГОФ», «ДНР», «МЧС» — нет."""
+    lower = word.lower()
+    if not _morph().word_is_known(lower):
+        return False
+    return "Abbr" not in _morph().parse(lower)[0].tag
+
+
 def lemmatize(text: str | None) -> list[str]:
     """Значимые слова текста в начальной форме, в исходном порядке."""
     if not text:

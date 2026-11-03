@@ -29,7 +29,7 @@ from sito.services.collector.telegram import (
     parse_links,
 )
 from sito.services.ingest import IngestService
-from sito.utils.text import clean_html
+from sito.utils.text import clean_html, embedding_plain, split_headline, tidy_title
 from tests.test_connectors import add_connector
 
 NOW = datetime.now(UTC)
@@ -375,3 +375,22 @@ async def test_search_similar_and_logout_commands(
         ("Уголь Кузбасса", True)]
     assert [i["title"] for i in (await command_result(session_factory, similar)).result] == ["Mash"]
     assert tg.calls == ["search уголь", "similar 111", "log_out"]
+
+
+def test_headline_of_telegram_post() -> None:
+    """Заголовок — жирная первая строка или отделённая пустой строкой; сплошной текст — без заголовка."""
+    assert split_headline("<strong>В Иране пригрозили ударами</strong>\n<a href='x'>x</a>\n\nТекст") == (
+        "<strong>В Иране пригрозили ударами</strong>", "<a href='x'>x</a>\n\nТекст")
+    assert split_headline("🔥 ДИВЕРСИЯ ПОД ВИДОМ БИЗНЕСА?\n\nРостовский бизнесмен…") is not None
+    assert split_headline("Евгений Шестернин покинул пост министра. Губернатор объяснил уход.") is None
+
+
+def test_tidy_title() -> None:
+    assert tidy_title("🔥 ДИВЕРСИЯ ПОД ВИДОМ БИЗНЕСА? ГОФ «КРАСНАЯ ЗВЕЗДА» НА ГРАНИ ГИБЕЛИ! 🔥") == (
+        "Диверсия под видом бизнеса? ГОФ «Красная звезда» на грани гибели!")
+    assert tidy_title("В ДНР открыли школу #новости") == "В ДНР открыли школу"
+
+
+def test_embedding_text_without_noise() -> None:
+    text = "🔥 Первый абзац про уголь #уголь\nhttps://t.me/x\nВторой абзац.\nТретий.\nЧетвёртый — рассуждения."
+    assert embedding_plain(text) == "Первый абзац про уголь Второй абзац. Третий."

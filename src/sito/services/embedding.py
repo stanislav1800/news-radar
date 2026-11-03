@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sito.models import PostStatus
 from sito.repositories.posts import PostRepository
 from sito.services.pipeline import mark_post_done, record_post_error
+from sito.utils.text import embedding_plain
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
@@ -85,8 +86,11 @@ class LazyEmbedder(Embedder):
 
 
 def embedding_text(title: str, text: str | None, max_chars: int = 1000) -> str:
-    """Заголовок и начало текста (как в ТЗ). Главное в новости всегда в начале."""
-    body = (text or "").replace("\n", " ")
+    """Заголовок и начало текста (как в ТЗ). Главное в новости всегда в начале.
+
+    Без эмодзи, хэштегов и ссылок и не дальше пары абзацев: так пост Telegram сравним с новостью из RSS.
+    """
+    body = embedding_plain(text or "")
     if len(body) > max_chars:
         cut = body.rfind(" ", 0, max_chars)  # не резать слово пополам
         body = body[: cut if cut > 0 else max_chars]

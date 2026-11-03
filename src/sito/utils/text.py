@@ -64,7 +64,8 @@ def clean_html(raw: str | None, own_url: str | None = None) -> CleanText:
 
     lines = (" ".join(line.split()) for line in soup.get_text().translate(_INVISIBLE).splitlines())
     text = "\n".join(
-        line for line in lines if line and not _JUNK_LINE.match(line) and not _SIGNATURE_LINE.match(line)
+        line for line in lines
+        if line and not _JUNK_LINE.match(line) and not _SIGNATURE_LINE.match(line) and not _URL.fullmatch(line)
     )
     return CleanText(text, links, is_ad=bool(_AD_MARK.search(text)))
 
@@ -79,6 +80,76 @@ def _extract_links(soup: BeautifulSoup, own_url: str | None) -> list[str]:
         if url.startswith("https://") and url != own_url:
             links.setdefault(url, None)
     return list(links)
+
+
+# --- Посты без заголовка (Telegram) -----------------------------------------------------------------
+
+# Эмодзи и значки: в заголовке и в тексте для смыслового отпечатка они только шум
+_EMOJI = re.compile(
+    "[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\u2300-\u23FF\uFE0F\u200D\u20E3\u2190-\u21FF]+"
+)
+_HASHTAG = re.compile(r"(?<!\w)#\w+")
+_URL = re.compile(r"https?://\S+")
+_BOLD = re.compile(r"</?(?:b|strong)>", re.IGNORECASE)
+_TAG = re.compile(r"<[^>]+>")
+HEADLINE_MAX_CHARS = 200
+
+
+def split_headline(raw: str) -> tuple[str, str] | None:
+    """Заголовок, если он у поста явно есть: первая строка жирным или отделённая пустой строкой.
+
+    Возвращает (заголовок в HTML, остальной текст). None — явного заголовка нет, текст сплошной.
+    """
+    lines = raw.strip().split("\n")
+    first = lines[0]
+    plain = _TAG.sub("", first).strip()
+    if not plain or len(plain) > HEADLINE_MAX_CHARS:
+        return None
+    letters = sum(ch.isalpha() for ch in plain)
+    bold = "".join(re.findall(r"<(?:b|strong)>(.*?)</(?:b|strong)>", first, re.IGNORECASE | re.DOTALL))
+    bold_letters = sum(ch.isalpha() for ch in _TAG.sub("", bold))
+    is_bold = letters > 0 and bold_letters >= 0.8 * letters
+    separated = len(lines) > 1 and not lines[1].strip()
+    if not (is_bold or separated):
+        return None
+    return first, "\n".join(lines[1:])
+
+
+def tidy_title(title: str) -> str:
+    """Заголовок поста Telegram как у новости: без эмодзи и хэштегов, КАПС — обычными буквами.
+
+    Аббревиатуры (ГОФ, ДНР, МЧС) остаются заглавными: обычные слова узнаёт словарь.
+    """
+    from sito.utils.lemmas import (
+        is_common_word,  # словарь грузится при первом обращении
+    )
+
+    title = _HASHTAG.sub("", _EMOJI.sub(" ", title))
+    title = " ".join(title.split()).strip(" -–—|:•·")
+    letters = [ch for ch in title if ch.isalpha()]
+    if len(letters) >= 10 and sum(ch.isupper() for ch in letters) >= 0.7 * len(letters):
+        def fix(match: re.Match[str]) -> str:
+            word = match.group(0)
+            return word.lower() if word.isupper() and is_common_word(word) else word
+        title = re.sub(r"\w+", fix, title)
+        # С заглавной: начало, после «?!.» и после открывающей кавычки (название)
+        title = re.sub(r"(^|[.!?…]\s+|«)(\w)", lambda m: m.group(1) + m.group(2).upper(), title)
+    return title
+
+
+def embedding_plain(text: str, max_paragraphs: int = 3) -> str:
+    """Текст для смыслового отпечатка: начало новости без эмодзи, хэштегов и ссылок.
+
+    Как у RSS — заголовок и пара абзацев: рассуждения в конце длинного поста отпечаток только размывают.
+    """
+    paragraphs = []
+    for line in text.splitlines():
+        line = " ".join(_URL.sub(" ", _HASHTAG.sub(" ", _EMOJI.sub(" ", line))).split())
+        if sum(ch.isalpha() for ch in line) >= 3:
+            paragraphs.append(line)
+        if len(paragraphs) >= max_paragraphs:
+            break
+    return " ".join(paragraphs)
 
 
 TITLE_MAX_CHARS = 140

@@ -398,6 +398,32 @@ class StoryRepository:
         )
         return [TimelinePost(**row._mapping) for row in await self.session.execute(query)]
 
+    async def reprocess(self, source_type: str) -> int:
+        """Отправить посты источников этого типа заново через весь конвейер: очистка, вектор, склейка.
+
+        Для смены правил очистки (заголовки Telegram). Нужен исходный текст, поэтому посты старше срока
+        хранения текстов остаются как есть. Опустевшие сюжеты удаляются, остальные пересчитываются.
+        Заголовок обнуляется только у типов без своих заголовков: его заново выведет очистка.
+        """
+        moved = await self.session.execute(text("""
+            WITH moved AS (
+                SELECT post.id, post.story_id FROM post JOIN source ON source.id = post.source_id
+                WHERE source.type = :type AND post.raw_text IS NOT NULL
+            )
+            UPDATE post SET status = 'new', story_id = NULL, attempt = 0, last_error = NULL,
+                            title = CASE WHEN :type = 'telegram' THEN '' ELSE post.title END
+            FROM moved WHERE post.id = moved.id
+            RETURNING moved.story_id
+        """), {"type": source_type})
+        rows = moved.all()
+        story_ids = {row.story_id for row in rows if row.story_id is not None}
+        await self.session.execute(text(
+            "DELETE FROM story WHERE NOT EXISTS (SELECT 1 FROM post WHERE post.story_id = story.id)"
+        ))
+        for story_id in list(await self.session.scalars(select(Story.id).where(Story.id.in_(story_ids)))):
+            await self.refresh(story_id)
+        return len(rows)
+
     async def reset_all(self) -> int:
         """Снять с постов привязку к сюжетам, чтобы склеить заново. Возвращает число постов к пересклейке.
 

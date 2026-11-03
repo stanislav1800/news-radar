@@ -118,13 +118,29 @@ _LINK_CANDIDATES_SQL = text(f"""
     ORDER BY post.embedding <=> :embedding
 """).bindparams(bindparam("embedding", type_=Vector(EMBEDDING_DIM)))
 
+# Издание поста: у источника оно может быть определено (ТАСС из RSS и из Telegram — tass.ru), иначе сам источник
+OUTLET_KEY_SQL = "coalesce(source.outlet, 'source:' || source.id)"
+
+# Пересчитать «N изданий» у свежих сюжетов после того, как у источников определились издания
+_RECOUNT_OUTLETS_SQL = text(f"""
+    UPDATE story SET sources_count = counted.n
+    FROM (
+        SELECT post.story_id, count(DISTINCT {OUTLET_KEY_SQL}) AS n
+        FROM post JOIN source ON source.id = post.source_id JOIN story ON story.id = post.story_id
+        WHERE story.last_post_at > now() - interval '7 days'
+        GROUP BY post.story_id
+    ) AS counted
+    WHERE story.id = counted.story_id AND story.sources_count <> counted.n
+""")
+
 _REFRESH_SQL = text(f"""
     WITH members AS (
-        SELECT post.id, post.source_id, post.title, post.text, post.embedding, {EVENT_AT_SQL} AS event_at
-        FROM post WHERE post.story_id = :story_id
+        SELECT post.id, post.source_id, post.title, post.text, post.embedding, {EVENT_AT_SQL} AS event_at,
+               {OUTLET_KEY_SQL} AS outlet
+        FROM post JOIN source ON source.id = post.source_id WHERE post.story_id = :story_id
     ),
     totals AS (
-        SELECT count(*) AS posts, count(DISTINCT source_id) AS sources,
+        SELECT count(*) AS posts, count(DISTINCT outlet) AS sources,
                min(event_at) AS started, max(event_at) AS last, avg(embedding) AS centroid
         FROM members
     ),
@@ -382,6 +398,10 @@ class StoryRepository:
             stmt.on_conflict_do_update(index_elements=["user_id", "story_id"], set_={"read_at": stmt.excluded.read_at})
         )
 
+    async def recount_outlets(self) -> int:
+        result = await self.session.execute(_RECOUNT_OUTLETS_SQL)
+        return result.rowcount  # type: ignore[attr-defined, no-any-return]
+
     async def timeline(self, story_id: int) -> list[TimelinePost]:
         """Посты сюжета по времени: как развивалось событие."""
         event_at = literal_column(EVENT_AT_SQL, DateTime(timezone=True))
@@ -391,12 +411,21 @@ class StoryRepository:
                 func.nullif(
                     func.left(func.split_part(func.coalesce(Post.text, ""), "\n", 1), LEAD_MAX_CHARS), ""
                 ).label("lead"),
+                Post.url_normalized, Post.links, literal_column(OUTLET_KEY_SQL).label("outlet"),
             )
             .join(Source, Source.id == Post.source_id)
             .where(Post.story_id == story_id)
             .order_by(event_at, Post.id)
         )
-        return [TimelinePost(**row._mapping) for row in await self.session.execute(query)]
+        rows = list(await self.session.execute(query))
+        # Пост издания, который только ссылается на статью того же издания из этого же сюжета (ТАСС в Telegram
+        # со ссылкой на статью ТАСС), — та же новость второй раз: в хронологии остаётся статья
+        articles = {(row.outlet, row.url_normalized) for row in rows}
+        return [
+            TimelinePost(row.id, row.title, row.url, row.source_name, row.event_at, row.lead)
+            for row in rows
+            if not any((row.outlet, link) in articles and link != row.url_normalized for link in row.links or ())
+        ]
 
     async def reprocess(self, source_type: str) -> int:
         """Отправить посты источников этого типа заново через весь конвейер: очистка, вектор, склейка.

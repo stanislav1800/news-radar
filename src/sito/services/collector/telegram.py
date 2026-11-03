@@ -156,6 +156,8 @@ class Message:
     id: int
     date: datetime
     html: str              # текст с разметкой (ссылки нужны склейке); пустой — пост без текста
+    # Ссылки не из текста: на оригинал репоста и из предпросмотра ссылки — по ним пост склеится наверняка
+    links: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +267,9 @@ class TelegramRules:
     per_round: int = 5                       # сведений о каналах за круг
     read_per_round: int = 20                 # отметок «прочитано» за круг
     details_every: timedelta = timedelta(days=1)
+    # Соединение «повисло»: столько тишины при watch_channels+ собираемых каналах не бывает — переподключиться
+    silence_limit: timedelta = timedelta(minutes=15)
+    watch_channels: int = 20
 
 
 class TelegramListener(ConnectorListener):
@@ -289,6 +294,11 @@ class _Session:
         self.last_ids: dict[int, int] = {}  # канал → последний сохранённый id: курсор только растёт
         self.read_ids: dict[int, int] = {}  # канал → до какого id отмечено прочитанным
         self.locks: dict[int, asyncio.Lock] = {}
+        self.channels: dict[int, Channel] = {}
+        # Канал → с какого сообщения догрузить: сохранение не удалось, а курсор мог уйти дальше
+        self.gaps: dict[int, int] = {}
+        self.last_event = 0.0  # когда пришло последнее сообщение (часы цикла)
+        self.stale = asyncio.Event()
         # Каналы, на которые подписались в приложении: собирать сразу или ждать решения в Сито
         self.collect_new = connector.settings.get("new_channels", "collect") == "collect"
         self.keep_quiet = bool(connector.settings.get("quiet", True))
@@ -302,11 +312,19 @@ class _Session:
         # Поручения из веба и обслуживание (подписчики, тишина, подписки по ссылкам) идут параллельно
         # с догрузкой: у сотен каналов она занимает минуты, и ждать её незачем
         background = [asyncio.create_task(self._commands()), asyncio.create_task(self._maintenance())]
+        self.last_event = asyncio.get_running_loop().time()
         try:
             for channel in await self.api.channels():
                 await self._catch_up(channel)
             logger.info("connector=%s: догрузка закончена, слушаю", self.connector.id)
-            await self.api.disconnected()
+            closed = asyncio.create_task(self.api.disconnected())
+            stale = asyncio.create_task(self.stale.wait())
+            await asyncio.wait([closed, stale], return_when=asyncio.FIRST_COMPLETED)
+            closed.cancel()
+            stale.cancel()
+            if self.stale.is_set():
+                # Соединение не оборвалось, но сообщения перестали приходить: переподключение всё починит
+                raise ConnectionError(f"Telegram молчит дольше {self.rules.silence_limit}: переподключаюсь")
         finally:
             for task in background:
                 task.cancel()
@@ -320,6 +338,7 @@ class _Session:
                 self.last_ids.setdefault(int(source.external_id), last_id)
 
     async def _source(self, channel: Channel) -> KnownSource:
+        self.channels[channel.id] = channel
         known = self.sources.get(str(channel.id))
         if known is None:
             known = await self.sink.source(
@@ -347,20 +366,24 @@ class _Session:
             await self._save(channel, source, batch)
 
     async def _on_message(self, channel: Channel, message: Message) -> None:
+        self.last_event = asyncio.get_running_loop().time()
         try:
             source = await self._source(channel)
             if source.enabled:
                 await self._save(channel, source, [message])
         except Exception:
-            # Ошибка одного сообщения не должна рвать соединение: при следующем запуске оно догрузится
-            logger.exception("connector=%s: не сохранилось сообщение %s канала %s",
+            # Ошибка одного сообщения не должна рвать соединение. Курсор канала могут сдвинуть следующие
+            # сообщения, поэтому место запоминается: на ближайшем круге канал догрузится с него
+            self.gaps[channel.id] = min(self.gaps.get(channel.id, message.id), message.id)
+            logger.exception("connector=%s: не сохранилось сообщение %s канала %s, догружу позже",
                              self.connector.id, message.id, channel.id)
 
     async def _save(self, channel: Channel, source: KnownSource, messages: Sequence[Message]) -> None:
         posts = [
             RawPost(
                 source_id=source.id, external_id=str(m.id), url=post_url(channel, m.id),
-                published_at=m.date, title="", text=m.html,
+                # Ссылки не из текста — пустыми ссылками в конце: очистка достанет их вместе с остальными
+                published_at=m.date, title="", text=m.html + "".join(f'<a href="{link}"></a>' for link in m.links),
             )
             for m in messages if m.html.strip()  # фото и видео без подписи склейке не помогут
         ]
@@ -447,7 +470,8 @@ class _Session:
         loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(self.rules.refresh_interval)
-            for step in (self._refresh_sources, self._join_one, self._update_details, self._quiet, self._mark_read):
+            for step in (self._refresh_sources, self._check_alive, self._fill_gaps, self._join_one,
+                         self._update_details, self._quiet, self._mark_read):
                 name = step.__name__
                 if loop.time() < paused_until.get(name, 0):
                     continue
@@ -461,6 +485,22 @@ class _Session:
                                        self.connector.id, wait // 60 + 1, name)
                     else:
                         logger.exception("connector=%s: ошибка обслуживания (%s)", self.connector.id, name)
+
+    async def _check_alive(self) -> None:
+        collected = sum(s.enabled for s in self.sources.values())
+        silent = asyncio.get_running_loop().time() - self.last_event
+        if collected >= self.rules.watch_channels and silent > self.rules.silence_limit.total_seconds():
+            self.stale.set()
+
+    async def _fill_gaps(self) -> None:
+        """Догрузить каналы, где сообщение не сохранилось: с него и до последнего."""
+        for channel_id, from_id in list(self.gaps.items()):
+            channel, source = self.channels.get(channel_id), self.sources.get(str(channel_id))
+            if channel is not None and source is not None and source.enabled:
+                batch = [m async for m in self.api.messages(channel, after_id=from_id - 1, since=datetime.now(UTC))]
+                if batch:
+                    await self._save(channel, source, batch)
+            del self.gaps[channel_id]
 
     async def _join_one(self) -> None:
         """Подписаться на один канал, добавленный ссылкой. По одному с паузой: так Telegram не ограничит."""

@@ -15,6 +15,7 @@ from sito.models import SourceType
 from sito.models.post import EMBEDDING_DIM
 from sito.repositories.pipeline import PipelineRepository
 from sito.repositories.sources import SourceRepository
+from sito.repositories.stories import StoryRepository
 from sito.services.cleaning import CleaningService
 from sito.services.clustering import ClusteringRules, ClusteringService
 from sito.services.collector.base import ConnectorListener
@@ -163,6 +164,15 @@ async def retention_loop(stop: asyncio.Event) -> None:
                 logger.info("хранение: убраны тексты и векторы %d старых постов", total, extra={"purged": total})
         except Exception:
             logger.exception("ошибка чистки старых постов")
+        try:
+            # Издания источников (ТАСС из RSS и из Telegram — одно) и «N изданий» у свежих сюжетов
+            async with async_session() as session, session.begin():
+                changed = await SourceRepository(session).detect_outlets()
+                if changed:
+                    recounted = await StoryRepository(session).recount_outlets()
+                    logger.info("издания: определены у %d источников, пересчитано сюжетов: %d", changed, recounted)
+        except Exception:
+            logger.exception("ошибка определения изданий")
         await sleep_until_stop(stop, RETENTION_SECONDS)
 
 

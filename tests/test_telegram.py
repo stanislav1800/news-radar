@@ -394,3 +394,46 @@ def test_tidy_title() -> None:
 def test_embedding_text_without_noise() -> None:
     text = "🔥 Первый абзац про уголь #уголь\nhttps://t.me/x\nВторой абзац.\nТретий.\nЧетвёртый — рассуждения."
     assert embedding_plain(text) == "Первый абзац про уголь Второй абзац. Третий."
+
+
+async def test_gap_after_failed_save_is_filled(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    """Сообщение не сохранилось, а следующие сдвинули курсор — канал догружается с пропущенного."""
+    sink, config = setup
+    tg = FakeTelegram(subscribed=[COAL], history={COAL.id: [message(1), message(2), message(3)]})
+    session = _Session(config, sink, tg, TelegramRules())
+    await session.run()
+    async with session_factory() as db, db.begin():
+        await db.execute(Post.__table__.delete().where(Post.external_id == "2"))  # будто 2 не сохранилось
+    session.gaps[COAL.id] = 2
+
+    await session._fill_gaps()
+
+    assert [p[1] for p in await posts(session_factory)] == ["1", "2", "3"] and session.gaps == {}
+
+
+async def test_silent_connection_is_restarted(setup: tuple[IngestService, ConnectorConfig]) -> None:
+    sink, config = setup
+    session = _Session(config, sink, FakeTelegram(subscribed=[COAL]), TelegramRules(silence_limit=timedelta(0),
+                                                                                      watch_channels=1))
+    await session.run()
+    session.last_event = 0
+
+    await session._check_alive()
+
+    assert session.stale.is_set()
+
+
+async def test_repost_keeps_link_to_original(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    sink, config = setup
+    tg = FakeTelegram(subscribed=[COAL], history={COAL.id: [
+        Message(id=1, date=NOW, html="Репост новости", links=("https://t.me/tass_agency/77",)),
+    ]})
+    await _Session(config, sink, tg, TelegramRules()).run()
+
+    async with session_factory() as db:
+        post = await db.scalar(select(Post))
+    assert post is not None and '<a href="https://t.me/tass_agency/77"></a>' in (post.raw_text or "")

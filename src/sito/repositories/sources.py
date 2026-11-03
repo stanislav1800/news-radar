@@ -154,6 +154,48 @@ class SourceRepository:
         await self.session.flush()
         return pending
 
+    async def detect_outlets(self) -> int:
+        """Определить издание у источников по ссылкам их постов за неделю. Возвращает число изменённых.
+
+        RSS-лента — сайт, откуда её статьи (tass.ru). Telegram-канал — то же издание, если больше половины
+        его постов со ссылками ведут на сайт одной из RSS-лент: так канал ТАСС узнаётся как ТАСС.
+        Только сайты RSS-лент: иначе каналы, которые все ссылаются на youtube.com, стали бы «одним изданием».
+        """
+        result = await self.session.execute(text(r"""
+            WITH rss AS (
+                SELECT DISTINCT ON (post.source_id) post.source_id,
+                       regexp_replace(split_part(split_part(post.url_normalized, '://', 2), '/', 1), '^www\.', '') AS host
+                FROM post JOIN source ON source.id = post.source_id
+                WHERE source.type = 'rss' AND post.fetched_at > now() - interval '7 days'
+                GROUP BY post.source_id, 2 ORDER BY post.source_id, count(*) DESC
+            ),
+            linked AS (
+                SELECT post.source_id,
+                       regexp_replace(split_part(split_part(link, '://', 2), '/', 1), '^www\.', '') AS host,
+                       count(DISTINCT post.id) AS posts
+                FROM post JOIN source ON source.id = post.source_id, unnest(post.links) AS link
+                WHERE source.type <> 'rss' AND post.fetched_at > now() - interval '7 days'
+                GROUP BY 1, 2
+            ),
+            with_links AS (
+                SELECT post.source_id, count(*) AS posts FROM post JOIN source ON source.id = post.source_id
+                WHERE source.type <> 'rss' AND post.fetched_at > now() - interval '7 days'
+                  AND cardinality(post.links) > 0
+                GROUP BY 1
+            ),
+            channel AS (
+                SELECT DISTINCT ON (linked.source_id) linked.source_id, linked.host
+                FROM linked JOIN with_links USING (source_id)
+                WHERE linked.host IN (SELECT host FROM rss) AND linked.posts >= 5
+                  AND linked.posts * 2 > with_links.posts
+                ORDER BY linked.source_id, linked.posts DESC
+            ),
+            found AS (SELECT source_id, host FROM rss UNION ALL SELECT source_id, host FROM channel)
+            UPDATE source SET outlet = found.host FROM found
+            WHERE source.id = found.source_id AND source.outlet IS DISTINCT FROM found.host
+        """))
+        return result.rowcount  # type: ignore[attr-defined, no-any-return]
+
     async def update_info(self, source_id: int, info: Mapping[str, Any]) -> None:
         """Дополнить сведения об источнике (ключи из info заменяются, остальные остаются)."""
         await self.session.execute(

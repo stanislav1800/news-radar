@@ -78,7 +78,18 @@ def _channel(entity: TlChannel) -> Channel:
 
 
 def _message(message: Any) -> Message:
-    return Message(id=message.id, date=message.date, html=message.text or "")
+    links = []
+    forwarded = getattr(message, "fwd_from", None)
+    if forwarded is not None and isinstance(forwarded.from_id, PeerChannel) and forwarded.channel_post:
+        # Репост: ссылка на оригинал (в том же виде, как Сито строит адрес поста канала)
+        chat = getattr(message.forward, "chat", None) if message.forward else None
+        username = getattr(chat, "username", None)
+        links.append(f"https://t.me/{username}/{forwarded.channel_post}" if username
+                     else f"https://t.me/c/{forwarded.from_id.channel_id}/{forwarded.channel_post}")
+    page_url = getattr(getattr(getattr(message, "media", None), "webpage", None), "url", None)
+    if isinstance(page_url, str):
+        links.append(page_url)  # предпросмотр ссылки: статья, о которой пост
+    return Message(id=message.id, date=message.date, html=message.text or "", links=tuple(links))
 
 
 def _is_broadcast(entity: object) -> bool:

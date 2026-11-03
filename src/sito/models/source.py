@@ -33,6 +33,9 @@ class Source(IdMixin, TimestampMixin, Base):
     url: Mapped[str | None] = mapped_column(unique=True)  # адрес ленты (RSS) или страницы источника
     external_id: Mapped[str | None]                       # id у сервиса: канал Telegram
     enabled: Mapped[bool] = mapped_column(server_default="true")
+    # Издание (домен сайта: tass.ru). ТАСС из RSS и Telegram-канал ТАСС — одно издание, в сюжете это
+    # «1 издание», а не «2». Определяет worker по ссылкам постов (SourceRepository.detect_outlets)
+    outlet: Mapped[str | None]
     poll_interval: Mapped[int | None]  # секунд; только у опрашиваемых типов
 
     # Курсор сборщика, формат знает только он: у RSS — ETag и Last-Modified,

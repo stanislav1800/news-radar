@@ -262,7 +262,7 @@ class TelegramRules:
     refresh_interval: float = 60
     command_interval: float = 2              # как часто смотреть поручения из веба
     batch: int = 100                         # постов в одной записи при догрузке
-    per_round: int = 5                       # сведений о каналах и приглушений за круг
+    per_round: int = 5                       # сведений о каналах за круг
     read_per_round: int = 20                 # отметок «прочитано» за круг
     details_every: timedelta = timedelta(days=1)
 
@@ -445,13 +445,24 @@ class _Session:
     # --- Медленная работа раз в минуту ---------------------------------------------------------------
 
     async def _maintenance(self) -> None:
+        paused_until: dict[str, float] = {}  # шаг → когда Telegram разрешит его снова (FloodWait)
+        loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(self.rules.refresh_interval)
             for step in (self._refresh_sources, self._join_one, self._update_details, self._quiet, self._mark_read):
+                name = step.__name__
+                if loop.time() < paused_until.get(name, 0):
+                    continue
                 try:
                     await step()
-                except Exception:
-                    logger.exception("connector=%s: ошибка обслуживания (%s)", self.connector.id, step.__name__)
+                except Exception as exc:
+                    wait = getattr(exc, "seconds", None)  # FloodWait: Telegram просит не повторять столько секунд
+                    if isinstance(wait, int):
+                        paused_until[name] = loop.time() + wait
+                        logger.warning("connector=%s: Telegram просит подождать %d мин, шаг %s отложен",
+                                       self.connector.id, wait // 60 + 1, name)
+                    else:
+                        logger.exception("connector=%s: ошибка обслуживания (%s)", self.connector.id, name)
 
     async def _join_one(self) -> None:
         """Подписаться на один канал, добавленный ссылкой. По одному с паузой: так Telegram не ограничит."""
@@ -490,7 +501,8 @@ class _Session:
     async def _quiet(self) -> None:
         if not self.keep_quiet:
             return
-        for source in [s for s in self._live() if not s.info.get("quiet")][: self.rules.per_round]:
+        # По одному каналу за круг: настройки уведомлений Telegram ограничивает строже всего
+        for source in [s for s in self._live() if not s.info.get("quiet")][:1]:
             await self.api.quiet(int(source.external_id))
             await self.sink.update_info(source.id, {"quiet": True})
 

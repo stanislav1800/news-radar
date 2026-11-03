@@ -424,3 +424,4 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chip.active span { color: inherit; opacity: .85; }
 .table-tools select { margin-left: .35rem; }
+.bulk-clear { margin-left: auto; }

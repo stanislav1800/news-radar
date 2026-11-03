@@ -145,6 +145,12 @@
   document.addEventListener("change", (event) => {
     if (event.target.matches("input[type=checkbox]")) updateBulkBars();
   });
+  document.addEventListener("click", (event) => {
+    const clear = event.target.closest("[data-bulk-clear]");
+    if (!clear) return;
+    document.querySelectorAll(`${clear.dataset.bulkClear} input[type=checkbox]`).forEach((box) => { box.checked = false; });
+    updateBulkBars();
+  });
 
   // «Отметить все» — только видимые строки: можно найти в списке и отметить найденное
   document.addEventListener("change", (event) => {

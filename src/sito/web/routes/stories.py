@@ -12,10 +12,11 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from sito.config import Settings
-from sito.models import Topic, User
+from sito.models import StorySummary, Topic, User
 from sito.repositories.stories import FeedStory, StoryRepository
 from sito.repositories.topics import TopicReason, TopicRepository
 from sito.repositories.users import UserRepository
+from sito.services.llm import LlmError, StorySummaryService
 from sito.services.reading import ReadingService
 from sito.services.search import SearchService
 from sito.web.deps import CurrentUser, DbSession
@@ -312,5 +313,25 @@ async def story_page(request: Request, db: DbSession, user: CurrentUser, story_i
     back_url = f"/?{request.session.get(LAST_FEED_KEY, '')}#story-{story_id}"
     return templates.TemplateResponse(request, "story.html", {
         "user": user, "story": story, "timeline": timeline, "similar": similar,
+        "summary": await db.get(StorySummary, story_id), "llm": request.app.state.llm is not None,
         "reasons": reasons, "next": f"/stories/{story_id}", "back_url": back_url, "now": datetime.now(UTC),
+    })
+
+
+@router.post("/stories/{story_id}/summary", response_class=HTMLResponse)
+async def story_summary(request: Request, db: DbSession, user: CurrentUser, story_id: int) -> HTMLResponse:
+    """Пересказ сюжета от LLM — только по нажатию: в фоне LLM ничего не тратит."""
+    client = request.app.state.llm
+    story = await StoryRepository(db).get(story_id)
+    if client is None or story is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Нет сюжета или LLM не настроена")
+    service = StorySummaryService(db, client, request.app.state.settings)
+    error = None
+    try:
+        summary: StorySummary | None = (await service.summarize(story_id, user_id=user.id, timezone=user.timezone))[0]
+    except LlmError as exc:
+        error, summary = str(exc), await service.get(story_id)
+    await db.commit()  # расход токенов записан и при ошибке разбора ответа
+    return templates.TemplateResponse(request, "_summary.html", {
+        "user": user, "story": story, "summary": summary, "llm": True, "error": error, "now": datetime.now(UTC),
     })

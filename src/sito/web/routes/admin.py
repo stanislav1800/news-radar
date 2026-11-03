@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 from typing import Annotated
 
@@ -19,6 +19,7 @@ from sito.services.alerts import find_problems
 from sito.services.collector.registry import COLLECTORS, CollectorSpec, RssSourceForm
 from sito.services.collector.telegram import TelegramSourceForm
 from sito.services.connectors import ConnectorError, ConnectorService, secret_fields
+from sito.services.llm import usage_since
 from sito.services.sources import SourceError, SourceService
 from sito.services.telegram_login import LoginError, QrAttempt, TelegramLoginService
 from sito.web.deps import AdminUser, DbSession, require_admin
@@ -49,6 +50,10 @@ async def summary_page(request: Request, db: DbSession, user: AdminUser) -> HTML
         "silent": [(s, since) for s in sources if (since := s.silent_since(now))],
         "worker": worker_state(beat.beat_at if beat else None, now),
         "beat": beat,
+        "llm": request.app.state.llm,
+        "llm_day": await usage_since(db, now - timedelta(days=1)),
+        "llm_month": await usage_since(db, now - timedelta(days=30)),
+        "llm_limit": request.app.state.settings.llm_daily_tokens,
         "now": now,
     })
 

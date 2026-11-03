@@ -36,6 +36,22 @@
   отсеяно {{ summary.by_status.get("skipped", 0) }}.
   Если очередь растёт, а самый старый пост всё старше, — конвейер не успевает за сбором.</p>
 
+<h2>LLM</h2>
+{% if llm %}
+<p>Модель <code>{{ llm.model }}</code>, работает только по кнопкам пользователей.</p>
+<p class="small">
+  {% for label, u in (("За сутки", llm_day), ("За 30 дней", llm_month)) %}
+  {{ label }}: {{ u.requests | plural("запрос", "запроса", "запросов") }},
+  токенов {{ "{:,}".format(u.input_tokens).replace(",", " ") }} → {{ "{:,}".format(u.output_tokens).replace(",", " ") }}
+  {%- if u.cost is not none %}, цена {{ "%.2f" | format(u.cost) }}{% endif %}.<br>
+  {% endfor %}
+  <span class="muted">Лимит за сутки: {{ "{:,}".format(llm_limit).replace(",", " ") }} токенов
+    (использовано {{ ((llm_day.input_tokens + llm_day.output_tokens) * 100 / llm_limit) | round | int }}%).</span>
+</p>
+{% else %}
+<p class="muted">Не настроена: задайте LLM_BASE_URL, LLM_API_KEY и LLM_MODEL в .env.</p>
+{% endif %}
+
 <h2>Источники с проблемами</h2>
 {% if broken or silent or broken_connectors %}
 <section class="card">

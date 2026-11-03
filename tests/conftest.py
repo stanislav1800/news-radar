@@ -156,7 +156,8 @@ def app(session_factory: async_sessionmaker[AsyncSession], embedder: FakeEmbedde
 
     return create_app(
         session_factory,
-        settings.model_copy(update={"secret_key": SecretStr("test-secret-key-0123")}),
+        # LLM из .env в тестах не нужна: они не должны ходить в настоящий сервис
+        settings.model_copy(update={"secret_key": SecretStr("test-secret-key-0123"), "llm_api_key": None}),
         embedder,  # type: ignore[arg-type]
     )
 

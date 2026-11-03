@@ -16,6 +16,8 @@
     {% endif %}
   </p>
 
+  {% if summary or llm %}{% include "_summary.html" %}{% endif %}
+
   <section class="story-topics">
     <div id="topic-lines">{% for r in reasons %}{% include "_reason.html" %}{% endfor %}</div>
     {% if not reasons | selectattr("matched") | list %}

@@ -21,6 +21,7 @@ from sito.db.engine import async_session
 from sito.models.post import EMBEDDING_DIM
 from sito.services.collector.telegram_client import TelethonLogin
 from sito.services.embedding import Embedder, LazyEmbedder, SentenceTransformerEmbedder
+from sito.services.llm import LlmClient
 from sito.services.sources import http_trial_fetch
 from sito.services.telegram_login import QrLogins
 from sito.utils.crypto import SecretBox
@@ -104,6 +105,7 @@ def create_app(
     app.state.secret_box = SecretBox(config.secret_key.get_secret_value())  # секреты подключений
     app.state.trial_fetch = http_trial_fetch(config)  # тесты подменяют, чтобы не ходить в сеть
     app.state.telegram_login = TelethonLogin()        # и вход в Telegram тоже
+    app.state.llm = LlmClient.from_settings(config)    # None — LLM не настроена, кнопок нет
     # Входы по QR-коду идут фоном, пока QR-код не отсканируют (один процесс веба)
     app.state.qr_logins = QrLogins(app.state.session_factory, app.state.secret_box,
                                    lambda: app.state.telegram_login)

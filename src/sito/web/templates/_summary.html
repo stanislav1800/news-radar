@@ -1,0 +1,25 @@
+{# Пересказ сюжета от LLM. Нужны story, summary (или None), llm (настроена ли), error #}
+<section class="story-summary" id="summary">
+  {% macro button(label) %}
+  <form method="post" action="/stories/{{ story.id }}/summary" hx-post="/stories/{{ story.id }}/summary"
+        hx-target="#summary" hx-swap="outerHTML" hx-disabled-elt="find button"
+        hx-on::before-request="this.querySelector('button').textContent = 'Пересказываю…'">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button class="{{ 'link' if summary else 'secondary' }}" type="submit">{{ label }}</button>
+  </form>
+  {% endmacro %}
+  {% if summary %}
+  <h2>{{ summary.title }}</h2>
+  {% for para in summary.summary.split("\n") if para.strip() %}<p>{{ para }}</p>{% endfor %}
+  <div class="muted small summary-meta">
+    <span>Пересказ LLM по {{ summary.posts_count | plural("посту", "постам", "постам") }}
+      ({{ summary.model.split("/")[-1] }}, {{ summary.updated_at | ago(user.timezone, now) }}). Может ошибаться: проверяйте в источниках.</span>
+    {% if llm and story.posts_count > summary.posts_count %}
+    {{ button("Обновить: новых постов " ~ (story.posts_count - summary.posts_count)) }}
+    {% endif %}
+  </div>
+  {% elif llm %}
+  {{ button("Кратко пересказать сюжет") }}
+  {% endif %}
+  {% if error %}<p class="small field-error" role="alert">Не получилось: {{ error }}</p>{% endif %}
+</section>

@@ -34,6 +34,8 @@ source_app = typer.Typer(help="Источники встроенного RSS-п�
 app.add_typer(source_app, name="source")
 user_app = typer.Typer(help="Пользователи веба.", no_args_is_help=True)
 app.add_typer(user_app, name="user")
+llm_app = typer.Typer(help="LLM: пересказы сюжетов.", no_args_is_help=True)
+app.add_typer(llm_app, name="llm")
 pipeline_app = typer.Typer(help="Обслуживание пайплайна.", no_args_is_help=True)
 app.add_typer(pipeline_app, name="pipeline")
 
@@ -254,6 +256,39 @@ def pipeline_reprocess(
         async with async_session() as session, session.begin():
             total = await StoryRepository(session).reprocess(source_type, untitled=untitled)
         console.print(f"Отправлено в обработку постов: {total}. Worker обработает их в фоне.")
+
+    _run(run())
+
+
+@llm_app.command("summarize")
+def llm_summarize(
+    story_id: int,
+    model: Annotated[list[str] | None, typer.Option(help="Модель (можно несколько — для сравнения).")] = None,
+    save: Annotated[bool, typer.Option(help="Сохранить пересказ (как кнопка на сайте).")] = False,
+    timezone: str = "Europe/Moscow",
+) -> None:
+    """Пересказать сюжет и показать ответ, расход токенов и время."""
+    from sito.services.llm import LlmClient, LlmError, StorySummaryService
+
+    client = LlmClient.from_settings(settings)
+    if client is None:
+        console.print("[red]LLM не настроена: нужны LLM_BASE_URL, LLM_API_KEY и LLM_MODEL в .env[/red]")
+        raise typer.Exit(1)
+
+    async def run() -> None:
+        for name in model or [client.model]:
+            async with async_session() as session, session.begin():
+                try:
+                    result, answer = await StorySummaryService(session, client, settings).summarize(
+                        story_id, user_id=None, timezone=timezone, model=name, save=save,
+                    )
+                except LlmError as exc:
+                    console.print(f"[red]{name}: {exc}[/red]")
+                    continue
+            cost = f", цена {answer.cost}" if answer.cost is not None else ""
+            console.rule(f"{answer.model}: {answer.input_tokens} → {answer.output_tokens} токенов, "
+                         f"{answer.seconds:.1f} с{cost}")
+            console.print(f"[bold]{result.title}[/bold]\n{result.summary}\n")
 
     _run(run())
 

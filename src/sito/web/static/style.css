@@ -448,3 +448,10 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
   padding-left: .6rem; border-left: 2px solid var(--border); }
 .topic-filter { margin: .35rem 0 0 .6rem; width: calc(100% - .6rem); }
 .timeline .excerpt { white-space: pre-line; }
+
+/* Пересказ сюжета от LLM */
+.story-summary { margin: 1rem 0; padding: .75rem 1rem; border-left: 3px solid var(--accent); background: var(--surface, transparent); border-radius: 4px; }
+.story-summary h2 { margin: 0 0 .4rem; font-size: 1.1rem; }
+.story-summary p { margin: 0 0 .5rem; }
+.story-summary .summary-meta { display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: baseline; }
+.story-summary form { display: inline; }

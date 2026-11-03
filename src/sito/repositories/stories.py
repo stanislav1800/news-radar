@@ -8,6 +8,7 @@ from sqlalchemy import (
     ColumnElement,
     DateTime,
     Select,
+    Text,
     bindparam,
     case,
     false,
@@ -98,6 +99,17 @@ class TimelinePost:
     source_name: str
     event_at: datetime
     lead: str | None  # первый абзац, не длиннее LEAD_MAX_CHARS
+
+
+@dataclass(frozen=True, slots=True)
+class MaterialPost:
+    """Пост сюжета с полным текстом: материал для пересказа LLM."""
+
+    source_name: str
+    outlet: str
+    title: str
+    event_at: datetime
+    body: str
 
 
 _vector = bindparam("embedding", type_=Vector(EMBEDDING_DIM))
@@ -448,6 +460,23 @@ class StoryRepository:
             TimelinePost(row.id, row.title, row.url, row.source_name, row.event_at, excerpt(row.body, excerpt_chars))
             for row in rows
             if not any((row.outlet, link) in articles and link != row.url_normalized for link in row.links or ())
+        ]
+
+    async def material(self, story_id: int) -> list[MaterialPost]:
+        """Посты сюжета по времени с полным текстом (статья со страницы, если есть, иначе текст поста)."""
+        event_at = literal_column(EVENT_AT_SQL, DateTime(timezone=True))
+        query = (
+            select(
+                Source.name, literal_column(OUTLET_KEY_SQL, Text).label("outlet"), Post.title, event_at.label("event_at"),
+                func.coalesce(func.nullif(Post.full_text, ""), Post.text, "").label("body"),
+            )
+            .join(Source, Source.id == Post.source_id)
+            .where(Post.story_id == story_id)
+            .order_by(event_at, Post.id)
+        )
+        return [
+            MaterialPost(row.name, row.outlet, row.title, row.event_at, row.body)
+            for row in await self.session.execute(query)
         ]
 
     async def reprocess(self, source_type: str, *, untitled: bool = False) -> int:

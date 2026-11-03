@@ -14,6 +14,7 @@ from sito.utils.lemmas import lemma_text
 from sito.utils.text import (
     clean_html,
     clean_line,
+    is_chatter,
     split_headline,
     tidy_title,
     title_from_text,
@@ -94,6 +95,7 @@ class CleaningService:
     @staticmethod
     def _clean(post: Post) -> PostStatus:
         raw, title = post.raw_text, clean_line(post.title)
+        derived = not title  # у поста нет своего заголовка — Telegram
         headline = None
         if not title and raw and (split := split_headline(raw)):
             # Пост без заголовка (Telegram), но первая строка явно заголовок: жирная или отделена пустой строкой
@@ -109,7 +111,9 @@ class CleaningService:
         post.links = cleaned.links
         set_lemmas(post)
 
-        # Короткий пост без текста — не мусор: для склейки хватит заголовка
-        junk = cleaned.is_ad or not (post.title or post.text)
+        # Короткий пост без текста — не мусор: для склейки хватит заголовка. Но пост без своего заголовка
+        # (Telegram), где нет ни имён, ни мест, ни чисел, — болтовня канала, а не новость
+        chatter = derived and is_chatter(f"{post.title}\n{post.text or ''}")
+        junk = cleaned.is_ad or chatter or not (post.title or post.text)
         mark_post_done(post, PostStatus.SKIPPED if junk else PostStatus.CLEANED)
         return post.status

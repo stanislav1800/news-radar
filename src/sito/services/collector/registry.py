@@ -21,7 +21,9 @@ class RssSourceForm(BaseModel):
     )
     url: HttpUrl = Field(title="Адрес ленты", description="Ссылка на RSS или Atom")
     poll_interval: int = Field(
-        300, title="Как часто опрашивать, секунд", description="Не чаще раза в минуту", ge=60, le=86_400
+        300, title="Опрашивать не реже, секунд",
+        description="Активные ленты опрашиваются чаще, по частоте их новостей, но не чаще раза в минуту",
+        ge=60, le=86_400
     )
 
 

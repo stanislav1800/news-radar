@@ -12,3 +12,4 @@ wheels/
 # Local settings and secrets
 .env
 compose.override.yaml
+backups/

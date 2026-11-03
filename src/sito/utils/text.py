@@ -152,6 +152,22 @@ def embedding_plain(text: str, max_paragraphs: int = 3) -> str:
     return " ".join(paragraphs)
 
 
+def is_chatter(text: str) -> bool:
+    """Короткий пост без новости: «Доброе утро)», «Ке акукека мака!». Только для постов без заголовка (Telegram).
+
+    Новость, даже короткая, почти всегда называет место, человека или организацию (слово с заглавной
+    не в начале фразы) или число: «Взрывы в Белгороде», «Курс доллара — 92 рубля».
+    """
+    plain = _URL.sub(" ", _HASHTAG.sub(" ", _EMOJI.sub(" ", text)))
+    if sum(ch.isalpha() for ch in plain) >= CHATTER_MAX_LETTERS or any(ch.isdigit() for ch in plain):
+        return False
+    words = re.findall(r"[^\W\d_]+", plain)
+    starts = {0} | {i + 1 for i, w in enumerate(words[:-1]) if re.search(rf"{re.escape(w)}[.!?…]", plain)}
+    return not any(w[0].isupper() for i, w in enumerate(words) if i not in starts)
+
+
+CHATTER_MAX_LETTERS = 60
+
 TITLE_MAX_CHARS = 140
 _SENTENCE_END = re.compile(r"[.!?…](?=\s)")
 

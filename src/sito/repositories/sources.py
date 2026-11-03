@@ -20,6 +20,7 @@ SILENCE_FACTOR = 10
 SILENCE_MIN = timedelta(hours=6)
 SILENCE_MAX = timedelta(days=3)
 HISTORY = timedelta(days=7)
+MIN_POLL_SECONDS = 60  # чаще раза в минуту ленты не опрашиваются
 
 
 def silence_limit(posts_week: int) -> timedelta:
@@ -265,8 +266,18 @@ class SourceRepository:
         каждые 5 минут, а починившийся снова подхватывается сам.
         """
         last_attempt = func.greatest(Source.last_success_at, Source.last_error_at)  # NULL не учитывается
+        # Активная лента опрашивается чаще: раз в половину обычного промежутка между её постами за неделю,
+        # но не чаще раза в минуту и не реже poll_interval. У ТАСС новости выходят каждые пару минут
+        posts_week = (
+            select(func.count()).where(Post.source_id == Source.id, Post.fetched_at > func.now() - text("interval '7 days'"))
+            .scalar_subquery()
+        )
+        interval = func.least(
+            Source.poll_interval,
+            func.greatest(MIN_POLL_SECONDS, HISTORY.total_seconds() / func.greatest(posts_week, 1) / 2),
+        )
         pause = func.least(
-            Source.poll_interval * func.power(2, func.greatest(Source.failures - 1, 0)),
+            interval * func.power(2, func.greatest(Source.failures - 1, 0)),
             max_backoff.total_seconds(),
         )
         next_poll = last_attempt + func.make_interval(0, 0, 0, 0, 0, 0, pause)

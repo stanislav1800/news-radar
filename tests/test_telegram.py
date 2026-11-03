@@ -29,7 +29,13 @@ from sito.services.collector.telegram import (
     parse_links,
 )
 from sito.services.ingest import IngestService
-from sito.utils.text import clean_html, embedding_plain, split_headline, tidy_title
+from sito.utils.text import (
+    clean_html,
+    embedding_plain,
+    is_chatter,
+    split_headline,
+    tidy_title,
+)
 from tests.test_connectors import add_connector
 
 NOW = datetime.now(UTC)
@@ -437,3 +443,15 @@ async def test_repost_keeps_link_to_original(
     async with session_factory() as db:
         post = await db.scalar(select(Post))
     assert post is not None and '<a href="https://t.me/tass_agency/77"></a>' in (post.raw_text or "")
+
+
+@pytest.mark.parametrize(("text", "chatter"), [
+    ("Доброе утро)", True),
+    ("🧡 Ке акукека мака!", True),
+    ("Всем хороших выходных! Берегите себя.", True),
+    ("⚡️Взрывы в Белгороде", False),
+    ("Курс доллара — 92 рубля", False),
+    ("Сильный ветер повалил деревья, есть пострадавшие. Подробности позже, оставайтесь на связи с нами", False),
+])
+def test_chatter(text: str, chatter: bool) -> None:
+    assert is_chatter(text) is chatter

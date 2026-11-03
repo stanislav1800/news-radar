@@ -33,6 +33,34 @@ services:
       timeout: 3s
       retries: 20
 
+  # Резервная копия базы раз в сутки: ./backups/sito-ГГГГММДД-ЧЧММ.dump, хранятся BACKUP_KEEP последних (7).
+  # Восстановить: docker compose exec -T db pg_restore -U postgres -d sito --clean --if-exists < backups/файл.dump
+  # Секреты подключений (сессия Telegram) в копии зашифрованы: без SITO_SECRET_KEY из .env их не открыть
+  backup:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-pass}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        while true; do
+          f=/backups/sito-$$(date +%Y%m%d-%H%M).dump
+          if pg_dump -h db -U postgres -Fc sito -f "$$f.tmp" && mv "$$f.tmp" "$$f"; then
+            echo "backup: $$f ($$(du -h "$$f" | cut -f1))"
+            ls -1t /backups/sito-*.dump | tail -n +$$((BACKUP_KEEP + 1)) | xargs -r rm --
+          else
+            rm -f "$$f.tmp"; echo "backup: ОШИБКА, следующая попытка через час"; sleep 3600; continue
+          fi
+          sleep 86400
+        done
+
   # Применяет миграции и завершается; веб и worker стартуют после него
   migrate:
     <<: *app

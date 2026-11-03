@@ -299,20 +299,18 @@ class _Session:
         # Новые сообщения слушаем ещё до догрузки: то, что придёт во время неё, не потеряется,
         # а пересечения не страшны — пост с тем же id просто обновится
         self.api.on_message(self._on_message)
-        commands = asyncio.create_task(self._commands())  # поручения из веба — и во время долгой догрузки
+        # Поручения из веба и обслуживание (подписчики, тишина, подписки по ссылкам) идут параллельно
+        # с догрузкой: у сотен каналов она занимает минуты, и ждать её незачем
+        background = [asyncio.create_task(self._commands()), asyncio.create_task(self._maintenance())]
         try:
             for channel in await self.api.channels():
                 await self._catch_up(channel)
             logger.info("connector=%s: догрузка закончена, слушаю", self.connector.id)
-            maintenance = asyncio.create_task(self._maintenance())
-            try:
-                await self.api.disconnected()
-            finally:
-                maintenance.cancel()
-                await asyncio.gather(maintenance, return_exceptions=True)
+            await self.api.disconnected()
         finally:
-            commands.cancel()
-            await asyncio.gather(commands, return_exceptions=True)
+            for task in background:
+                task.cancel()
+            await asyncio.gather(*background, return_exceptions=True)
 
     async def _refresh_sources(self) -> None:
         self.sources = {s.external_id: s for s in await self.sink.sources(self.connector.id)}

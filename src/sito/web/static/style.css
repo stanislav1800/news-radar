@@ -373,7 +373,7 @@ h2.day:first-child { margin-top: 0; }
 .card-menu summary::after { content: none; }
 
 /* Шапка и вкладки закреплены при прокрутке */
-:root { --topbar-h: 3.4rem; }
+:root { --topbar-h: 3.4rem; --tabs-h: 2.9rem; }  /* высота шапки и закреплённых под ней вкладок */
 .topbar { position: sticky; top: 0; z-index: 20; min-height: var(--topbar-h); }
 .tabs { position: sticky; top: var(--topbar-h); z-index: 10; background: var(--bg); padding-top: .5rem; margin-top: -.5rem; }
 #fresh { display: grid; gap: .75rem; }
@@ -402,7 +402,7 @@ h2.day:first-child { margin-top: 0; }
 .channels-head p { margin: 0; flex: 1; }
 .channels-head input[type=search] { max-width: 16rem; }
 .bulk-bar[hidden] { display: none; }
-.bulk-bar { position: sticky; top: calc(var(--topbar-h) + .5rem); z-index: 2; background: var(--surface); padding: .5rem; border: 1px solid var(--accent); border-radius: 8px; display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; margin: .75rem 0; }
+.bulk-bar { position: sticky; top: calc(var(--topbar-h) + var(--tabs-h) + .25rem); z-index: 2; background: var(--surface); padding: .5rem; border: 1px solid var(--accent); border-radius: 8px; display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; margin: .75rem 0; }
 .sources td .about { max-width: 32rem; }
 .sources td.actions { width: 2.5rem; }
 .sources td.actions .menu-body form { display: grid; gap: .35rem; justify-items: start; }

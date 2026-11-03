@@ -66,8 +66,10 @@ def clean_html(raw: str | None, own_url: str | None = None) -> CleanText:
     text = "\n".join(
         line for line in lines
         if line and not _JUNK_LINE.match(line) and not _SIGNATURE_LINE.match(line) and not _URL.fullmatch(line)
+        and not _HASHTAG_LINE.fullmatch(line)
     )
-    return CleanText(text, links, is_ad=bool(_AD_MARK.search(text)))
+    # Реклама — по всему тексту: метка «#реклама» стоит строкой из хэштегов, а такие строки выше вырезаны
+    return CleanText(text, links, is_ad=bool(_AD_MARK.search(soup.get_text())))
 
 
 def _extract_links(soup: BeautifulSoup, own_url: str | None) -> list[str]:
@@ -89,10 +91,17 @@ _EMOJI = re.compile(
     "[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\u2300-\u23FF\uFE0F\u200D\u20E3\u2190-\u21FF]+"
 )
 _HASHTAG = re.compile(r"(?<!\w)#\w+")
+_HASHTAG_LINE = re.compile(r"(?:\s*#\w+[\s,]*)+")  # строка из одних хэштегов: «#погрузка #РЖД»
 _URL = re.compile(r"https?://\S+")
 _BOLD = re.compile(r"</?(?:b|strong)>", re.IGNORECASE)
 _TAG = re.compile(r"<[^>]+>")
 HEADLINE_MAX_CHARS = 200
+
+
+def _has_words(text: str) -> bool:
+    """Есть ли в строке хоть одно слово (не считая хэштегов, ссылок и эмодзи)."""
+    plain = _URL.sub(" ", _HASHTAG.sub(" ", _EMOJI.sub(" ", text)))
+    return sum(ch.isalpha() for ch in plain) >= 2
 
 
 def split_headline(raw: str) -> tuple[str, str] | None:
@@ -101,9 +110,16 @@ def split_headline(raw: str) -> tuple[str, str] | None:
     Возвращает (заголовок в HTML, остальной текст). None — явного заголовка нет, текст сплошной.
     """
     lines = raw.strip().split("\n")
+    # Строки из одних хэштегов и эмодзи («#погрузка») — не заголовок: пропустить их
+    while lines and not _has_words(_TAG.sub("", lines[0])):
+        lines = lines[1:]
+        while lines and not lines[0].strip():
+            lines = lines[1:]
+    if not lines:
+        return None
     first = lines[0]
     plain = _TAG.sub("", first).strip()
-    if not plain or len(plain) > HEADLINE_MAX_CHARS:
+    if len(plain) > HEADLINE_MAX_CHARS:
         return None
     letters = sum(ch.isalpha() for ch in plain)
     bold = "".join(re.findall(r"<(?:b|strong)>(.*?)</(?:b|strong)>", first, re.IGNORECASE | re.DOTALL))

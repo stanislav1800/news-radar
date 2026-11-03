@@ -239,6 +239,7 @@ def pipeline_recluster(
 @pipeline_app.command("reprocess")
 def pipeline_reprocess(
     source_type: Annotated[str, typer.Option("--type", help="Тип источников: telegram или rss.")] = "telegram",
+    untitled: Annotated[bool, typer.Option("--untitled", help="Только посты без заголовка и отсеянные.")] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Не спрашивать подтверждение.")] = False,
 ) -> None:
     """Пропустить посты одного типа заново через весь конвейер: после смены правил очистки.
@@ -251,7 +252,7 @@ def pipeline_reprocess(
 
     async def run() -> None:
         async with async_session() as session, session.begin():
-            total = await StoryRepository(session).reprocess(source_type)
+            total = await StoryRepository(session).reprocess(source_type, untitled=untitled)
         console.print(f"Отправлено в обработку постов: {total}. Worker обработает их в фоне.")
 
     _run(run())

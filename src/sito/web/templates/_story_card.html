@@ -12,7 +12,7 @@
 {% macro story_card(s, note=none, reasons=[], suggest=none, hide_next=none) %}
 <article class="story-card {{ s.read_state }}" id="story-{{ s.id }}">
   <div class="card-head">
-    <a class="story-title" href="/stories/{{ s.id }}">{{ s.title }}</a>
+    <a class="story-title" href="/stories/{{ s.id }}">{{ s.title or (s.lead or "")[:120] or "Без заголовка" }}</a>
     {% if reasons or (hide_next and s.first_source_id) %}
     <details class="menu card-menu">
       <summary aria-label="Действия с сюжетом">⋯</summary>

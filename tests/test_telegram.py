@@ -482,3 +482,9 @@ async def test_deleted_post_leaves_and_notify_command(
 
     assert [p[1] for p in await posts(session_factory)] == ["2"]
     assert tg.calls == ["notify Сломалось"]
+
+
+def test_hashtag_line_is_not_a_headline() -> None:
+    raw = "#погрузка\n\nВ октябре погрузка на сети РЖД составила 95,6 млн тонн.\n\nПодробности"
+    assert split_headline(raw) == ("В октябре погрузка на сети РЖД составила 95,6 млн тонн.", "\nПодробности")
+    assert clean_html("#погрузка #РЖД\nТекст новости").text == "Текст новости"

@@ -104,7 +104,7 @@ class CleaningService:
         if headline is not None:
             cleaned = replace(cleaned, links=[*clean_html(headline, own_url=post.url_normalized).links, *cleaned.links])
             title = tidy_title(clean_line(headline))
-        elif not title:
+        if derived and not title:
             title = tidy_title(title_from_text(cleaned.text))  # первая фраза сплошного текста
         post.title = title
         post.text = cleaned.text or None
@@ -114,6 +114,7 @@ class CleaningService:
         # Короткий пост без текста — не мусор: для склейки хватит заголовка. Но пост без своего заголовка
         # (Telegram), где нет ни имён, ни мест, ни чисел, — болтовня канала, а не новость
         chatter = derived and is_chatter(f"{post.title}\n{post.text or ''}")
-        junk = cleaned.is_ad or chatter or not (post.title or post.text)
+        wordless = sum(ch.isalpha() for ch in f"{post.title}{post.text or ''}") < 3  # одни эмодзи и значки
+        junk = cleaned.is_ad or chatter or wordless or not (post.title or post.text)
         mark_post_done(post, PostStatus.SKIPPED if junk else PostStatus.CLEANED)
         return post.status

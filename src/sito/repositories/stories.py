@@ -433,7 +433,7 @@ class StoryRepository:
             if not any((row.outlet, link) in articles and link != row.url_normalized for link in row.links or ())
         ]
 
-    async def reprocess(self, source_type: str) -> int:
+    async def reprocess(self, source_type: str, *, untitled: bool = False) -> int:
         """Отправить посты источников этого типа заново через весь конвейер: очистка, вектор, склейка.
 
         Для смены правил очистки (заголовки Telegram). Нужен исходный текст, поэтому посты старше срока
@@ -444,12 +444,13 @@ class StoryRepository:
             WITH moved AS (
                 SELECT post.id, post.story_id FROM post JOIN source ON source.id = post.source_id
                 WHERE source.type = :type AND post.raw_text IS NOT NULL
+                  AND (NOT :untitled OR post.title = '' OR post.status = 'skipped')
             )
             UPDATE post SET status = 'new', story_id = NULL, attempt = 0, last_error = NULL,
                             title = CASE WHEN :type = 'telegram' THEN '' ELSE post.title END
             FROM moved WHERE post.id = moved.id
             RETURNING moved.story_id
-        """), {"type": source_type})
+        """), {"type": source_type, "untitled": untitled})
         rows = moved.all()
         story_ids = {row.story_id for row in rows if row.story_id is not None}
         await self.session.execute(text(

@@ -64,7 +64,7 @@ async def test_summary_button_saves_and_counts_usage(
 
     seen: list[dict[str, object]] = []
     # Первый ответ — сервис не знает параметра thinking: клиент повторит без него
-    app.state.llm = fake_llm([{"error": {"message": "unknown thinking"}},
+    app.state.llm = fake_llm([{"error": {"message": "unknown parameter: thinking"}},
                               answer("Кузбасс добыл рекорд угля\n\nШахтёры добыли рекорд. Пишут ТАСС и РБК.")], seen)
     page = await logged_in.get(f"/stories/{story_id}")
     assert "Кратко пересказать сюжет" in page.text

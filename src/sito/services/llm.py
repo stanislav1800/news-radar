@@ -87,8 +87,10 @@ class LlmClient:
         if self.no_reasoning and name not in self._reasoning_rejected:
             body["thinking"] = {"type": "disabled"}
         data = await self._post(body)
-        if "error" in data and "thinking" in body:
-            # Сервис или модель не знает этого параметра: повторить без него
+        if "error" in data and "thinking" in body and any(
+            word in str(data["error"]).lower() for word in ("thinking", "reasoning")
+        ):
+            # Сервис или модель не знает этого параметра: повторить без него (другие ошибки — не повод)
             self._reasoning_rejected.add(name)
             del body["thinking"]
             data = await self._post(body)
@@ -243,6 +245,8 @@ class StorySummaryService:
             output_tokens=answer.output_tokens, cost=answer.cost, user_id=user_id,
         ))
         title, summary = parse_summary(answer.text)
+        if answer.truncated and summary:
+            summary += " … (пересказ обрезан: модель упёрлась в лимит длины)"
         if not summary:
             await self.session.flush()
             raise LlmError("модель вернула пустой пересказ, попробуйте ещё раз")

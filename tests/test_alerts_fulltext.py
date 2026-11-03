@@ -56,3 +56,44 @@ async def test_full_text_of_rss_article(
         post = await session.scalar(select(Post))
     assert result.fetched == 1 and post is not None and post.full_text_at is not None
     assert post.full_text is not None and "рекордный объём угля" in post.full_text and "Меню" not in post.full_text
+
+
+def test_article_link_skips_socials_and_profiles() -> None:
+    from sito.services.fulltext import article_link
+
+    assert article_link(["https://t.me/rian_ru", "https://max.ru/ria", "https://vk.com/wall-1_2"]) is None
+    assert article_link(["https://ria.ru/", "https://ria.ru/20261103/peskov-2128856778.html"]) == (
+        "https://ria.ru/20261103/peskov-2128856778.html")
+    assert article_link(["https://tass.ru/politika/28281561"]) == "https://tass.ru/politika/28281561"
+
+
+async def test_full_text_of_short_telegram_post_by_link(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource,
+) -> None:
+    from sqlalchemy import insert
+
+    from sito.models import PostStatus, SourceType
+
+    channel = await make_source(name="РИА", type=SourceType.TELEGRAM)
+    async with session_factory() as session, session.begin():
+        for n, (text, links) in enumerate([
+            ("Песков рассказал о встрече.", ["https://max.ru/ria", "https://ria.ru/20261103/peskov-1.html"]),
+            ("Песков рассказал о встрече. " * 30, ["https://ria.ru/20261103/peskov-2.html"]),  # длинный — не нужно
+        ]):
+            await session.execute(insert(Post).values(
+                source_id=channel, external_id=f"t{n}", url=f"https://t.me/ria/{n}", url_normalized=f"t.me/ria/{n}",
+                title="Песков", text=text, links=links, content_hash=f"t{n}", status=PostStatus.CLEANED,
+            ))
+    asked: list[str] = []
+
+    def page(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(200, html=ARTICLE)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(page)) as client:
+        await FullTextService(session_factory, client).process_batch()
+
+    async with session_factory() as session:
+        posts = {p.external_id: p for p in await session.scalars(select(Post))}
+    assert asked == ["https://ria.ru/20261103/peskov-1.html"]
+    assert "рекордный объём угля" in (posts["t0"].full_text or "") and posts["t1"].full_text_at is None

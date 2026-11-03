@@ -252,7 +252,10 @@ async def main() -> None:
             tasks.create_task(retention_loop(stop))
             tasks.create_task(alerts_loop(stop))
             if settings.full_text_enabled:
-                full_text = FullTextService(async_session, client, concurrency=settings.full_text_concurrency)
+                full_text = FullTextService(
+                    async_session, client, concurrency=settings.full_text_concurrency,
+                    short_post_chars=settings.full_text_short_post_chars,
+                )
                 tasks.create_task(drain_loop("полный текст", full_text.process_batch, 30, stop))
 
     await engine.dispose()

@@ -101,6 +101,8 @@ class Settings(BaseSettings):
     # Полный текст статей RSS со страниц (для выжимок LLM); сколько страниц качать одновременно
     full_text_enabled: bool = True
     full_text_concurrency: int = 4
+    # Telegram: у постов короче этого (фраза и ссылка) скачивать статью по ссылке
+    full_text_short_post_chars: int = 500
 
     # Сколько знаков текста поста показывать в хронологии сюжета (до трёх абзацев); полностью — у источника
     story_excerpt_chars: int = 700
@@ -117,7 +119,7 @@ class Settings(BaseSettings):
     llm_no_reasoning: bool = True
     llm_daily_tokens: int = 3_000_000   # общий лимит токенов (вход + выход) за последние сутки
     llm_story_chars: int = 30_000       # сколько знаков материалов сюжета отправлять (~8–10 тыс. токенов)
-    llm_summary_max_tokens: int = 800   # длина ответа
+    llm_summary_max_tokens: int = 1500  # потолок ответа: длину пересказа модель выбирает по объёму материала
 
     # Хранение: тексты и векторы постов старше этого удаляются (заголовок, ссылка и сюжеты остаются)
     post_retention_days: int = 90

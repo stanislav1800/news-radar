@@ -16,6 +16,8 @@
       ({{ summary.model.split("/")[-1] }}, {{ summary.updated_at | ago(user.timezone, now) }}). Может ошибаться: проверяйте в источниках.</span>
     {% if llm and story.posts_count > summary.posts_count %}
     {{ button("Обновить: новых постов " ~ (story.posts_count - summary.posts_count)) }}
+    {% elif llm %}
+    {{ button("Пересказать заново") }}
     {% endif %}
   </div>
   {% elif llm %}

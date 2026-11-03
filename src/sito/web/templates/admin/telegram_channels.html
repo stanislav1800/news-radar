@@ -36,12 +36,9 @@
 <section class="card">
   <div class="channels-head">
     <h2>Подписки аккаунта</h2>
-    <p class="muted small">
-      {% for state, label in [("collecting", "собираются"), ("waiting", "ждут решения"), ("stopped", "не собираются"),
-                              ("pending", "ждут подписки"), ("error", "с ошибкой"), ("leaving", "отписываюсь"), ("left", "отписан")] %}
-      {% if counts.get(state) %}<span class="count-{{ state }}">{{ label }}: {{ counts[state] }}</span>{% if not loop.last %} · {% endif %}{% endif %}
-      {% endfor %}
-    </p>
+    {% set labels = [("collecting", "собираются"), ("waiting", "ждут решения"), ("stopped", "не собираются"),
+                     ("pending", "ждут подписки"), ("error", "с ошибкой"), ("leaving", "отписываюсь"), ("left", "отписан")] %}
+    <p class="muted small">{% for state, label in labels if counts.get(state) %}{{ label }}: {{ counts[state] }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
     <input type="search" data-filter="#channels" placeholder="Найти в списке" aria-label="Найти канал в списке">
   </div>
 
@@ -49,13 +46,14 @@
   <form id="bulk" method="post" action="/admin/connectors/{{ connector.id }}/channels/action">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
   </form>
-  <div class="bulk-bar">
-    <span class="muted small">Отмеченные:</span>
+  <p class="muted small" data-bulk-hint>Чтобы сделать что-то сразу с несколькими каналами, отметьте их галочками.</p>
+  <div class="bulk-bar" data-bulk-bar="#channels" hidden>
+    <strong data-bulk-count></strong>
     <button class="secondary" form="bulk" name="action" value="collect">Собирать</button>
     <button class="secondary" form="bulk" name="action" value="stop">Не собирать</button>
-    <button class="link" form="bulk" name="action" value="leave">Отписаться</button>
-    <button class="link danger" form="bulk" name="action" value="delete"
-            onclick="return confirm('Отписаться и удалить отмеченные каналы вместе с их постами?')">Отписаться и удалить посты</button>
+    <button class="secondary" form="bulk" name="action" value="leave">Отписаться</button>
+    <button class="secondary danger" form="bulk" name="action" value="delete"
+            onclick="return confirm('Отписаться и удалить отмеченные каналы вместе со всеми их постами? Отменить нельзя.')">Отписаться и удалить посты</button>
   </div>
   <div class="table-wrap">
     <table class="sources" id="channels">
@@ -94,28 +92,40 @@
           <td class="num">{{ s.posts_24h or "" }}</td>
           <td class="small">{% if s.last_post_at %}{{ s.last_post_at | ago(user.timezone, now) }}{% endif %}</td>
           <td class="actions">
-            <form method="post" action="/admin/connectors/{{ connector.id }}/channels/action">
-              <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-              <input type="hidden" name="source_id" value="{{ s.id }}">
-              {% if row.state in ("waiting", "stopped") %}
-              <button class="link" name="action" value="collect">Собирать</button>
-              {% elif row.state == "collecting" %}
-              <button class="link" name="action" value="stop">Не собирать</button>
-              {% elif row.state == "left" and s.url %}
-              <button class="link" name="action" value="rejoin">Подписаться снова</button>
-              {% elif row.state in ("pending", "error") %}
-              <button class="link" name="action" value="forget">Убрать</button>
-              {% endif %}
-              {% if row.state in ("waiting", "stopped", "collecting") %}
-              <button class="link" name="action" value="leave">Отписаться</button>
-              {% endif %}
-            </form>
-            {% if row.state in ("waiting", "stopped", "collecting") %}
-            <form method="post" action="/admin/connectors/{{ connector.id }}/channels/similar">
-              <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-              <input type="hidden" name="source_id" value="{{ s.id }}">
-              <button class="link" title="Каналы, которые Telegram рекомендует к этому">Похожие</button>
-            </form>
+            {% if row.state != "leaving" %}
+            <details class="menu card-menu">
+              <summary aria-label="Действия с каналом {{ s.name }}">⋯</summary>
+              <div class="menu-body right">
+                <form method="post" action="/admin/connectors/{{ connector.id }}/channels/action">
+                  <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+                  <input type="hidden" name="source_id" value="{{ s.id }}">
+                  {% if row.state in ("waiting", "stopped") %}
+                  <button class="link" name="action" value="collect">Собирать посты</button>
+                  {% elif row.state == "collecting" %}
+                  <button class="link" name="action" value="stop" title="Подписка остаётся, новые посты не собираются">Не собирать</button>
+                  {% elif row.state == "left" and s.url %}
+                  <button class="link" name="action" value="rejoin">Подписаться снова</button>
+                  {% elif row.state in ("pending", "error") %}
+                  <button class="link" name="action" value="forget">Не подписываться, убрать</button>
+                  {% endif %}
+                  {% if row.state in ("waiting", "stopped", "collecting") %}
+                  <button class="link" name="action" value="leave">Отписаться <span class="muted">(посты останутся)</span></button>
+                  {% endif %}
+                  {% if row.state in ("waiting", "stopped", "collecting", "left") %}
+                  <button class="link danger" name="action" value="delete"
+                          onclick='return confirm({{ ((("Отписаться от «" ~ s.name ~ "» и") if row.state != "left" else ("Удалить «" ~ s.name ~ "»")) ~ " удалить все его посты? Отменить нельзя.") | tojson }})'>
+                    {{ "Отписаться и удалить посты" if row.state != "left" else "Удалить посты" }}</button>
+                  {% endif %}
+                </form>
+                {% if row.state in ("waiting", "stopped", "collecting") %}
+                <form method="post" action="/admin/connectors/{{ connector.id }}/channels/similar">
+                  <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+                  <input type="hidden" name="source_id" value="{{ s.id }}">
+                  <button class="link" title="Каналы, которые Telegram рекомендует к этому">Похожие каналы</button>
+                </form>
+                {% endif %}
+              </div>
+            </details>
             {% endif %}
           </td>
         </tr>

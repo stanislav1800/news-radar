@@ -93,12 +93,28 @@
     });
   });
 
+  // Строка действий над отмеченными: видна, только когда что-то отмечено, и пишет сколько
+  function updateBulkBars() {
+    document.querySelectorAll("[data-bulk-bar]").forEach((bar) => {
+      const n = document.querySelectorAll(`${bar.dataset.bulkBar} tbody input[type=checkbox]:checked`).length;
+      bar.hidden = n === 0;
+      const count = bar.querySelector("[data-bulk-count]");
+      if (count) count.textContent = `Отмечено: ${n}`;
+      const hint = document.querySelector("[data-bulk-hint]");
+      if (hint) hint.hidden = n > 0;
+    });
+  }
+  document.addEventListener("change", (event) => {
+    if (event.target.matches("input[type=checkbox]")) updateBulkBars();
+  });
+
   // «Отметить все» — только видимые строки: можно найти в списке и отметить найденное
   document.addEventListener("change", (event) => {
     const all = event.target.closest("[data-check-all]");
     if (!all) return;
     document.querySelectorAll(`${all.dataset.checkAll} tbody tr:not([hidden]) input[type=checkbox]`)
       .forEach((box) => { box.checked = all.checked; });
+    updateBulkBars();
   });
 
   document.addEventListener("htmx:load", (event) => scheduleExpiry(event.target));

@@ -228,7 +228,7 @@ def _apply(action: str, sources: list[Source]) -> str:
             if source.external_id is not None and not source.info.get("left"):
                 source.info = {**source.info, "leaving": True}
         return ("Отписываюсь от каналов: {n}. Уже собранные посты остаются." if action == "leave"
-                else "Отписываюсь и удаляю каналы с их постами: {n}.")
+                else "Удаляю каналы вместе с их постами: {n}. Через пару секунд они пропадут из списка.")
     if action == "rejoin":
         for source in sources:
             if source.url and source.info.get("left"):

@@ -401,9 +401,12 @@ h2.day:first-child { margin-top: 0; }
 .channels-head h2 { margin: 0; }
 .channels-head p { margin: 0; flex: 1; }
 .channels-head input[type=search] { max-width: 16rem; }
-.bulk-bar { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; margin: .75rem 0; }
+.bulk-bar[hidden] { display: none; }
+.bulk-bar { position: sticky; top: calc(var(--topbar-h) + .5rem); z-index: 2; background: var(--surface); padding: .5rem; border: 1px solid var(--accent); border-radius: 8px; display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; margin: .75rem 0; }
 .sources td .about { max-width: 32rem; }
-.sources td.actions form { display: flex; gap: .75rem; }
+.sources td.actions { width: 2.5rem; }
+.sources td.actions .menu-body form { display: grid; gap: .35rem; justify-items: start; }
+.sources td.actions .menu-body { min-width: 16rem; display: grid; gap: .35rem; }
 .preview-list { display: grid; gap: .6rem; margin-top: 1rem; }
 .preview-item { padding: .6rem .75rem; border: 1px solid var(--border); border-radius: 8px; }
 .preview-item p { margin: .3rem 0 0; }
@@ -412,3 +415,4 @@ h2.day:first-child { margin-top: 0; }
 textarea { width: 100%; font: inherit; }
 .inline-search { display: flex; gap: .5rem; margin-top: .6rem; }
 .inline-search input { flex: 1; }
+button.secondary.danger { color: var(--error-text); border-color: var(--error-text); }

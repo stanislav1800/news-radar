@@ -425,3 +425,7 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 .chip.active span { color: inherit; opacity: .85; }
 .table-tools select { margin-left: .35rem; }
 .bulk-clear { margin-left: auto; }
+/* Меню «⋯» в строках не должно обрезаться рамкой таблицы */
+.table-wrap.with-menus { overflow: visible; }
+.table-tools select { width: auto; display: inline-block; }
+.table-tools label { display: flex; align-items: center; gap: .35rem; }

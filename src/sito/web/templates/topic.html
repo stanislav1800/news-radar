@@ -67,8 +67,9 @@
   {% else %}
   <p class="warn small">У темы нет описания. Добавьте в форме выше, что входит в тему и что нет — проверка сверяет с ним.</p>
   {% endif %}
-  <p class="muted small">LLM смотрит каждый новый сюжет темы и убирает те, что не подходят под описание: например,
-    где нужное слово упомянуто вскользь. Сюжеты, которые вы добавили сами, не проверяются. Пачками по 25 —
+  <p class="muted small">LLM смотрит спорные сюжеты темы и убирает те, что не подходят под описание: например,
+    где нужное слово упомянуто вскользь в одном посте из многих. Явные — слова в заголовке или в большинстве
+    постов — проходят без модели, сюжеты, которые вы добавили сами, не проверяются. Спорные — пачками по 25,
     около 0,05 ₽ за пачку; при включении проверяются сюжеты за последнюю неделю.</p>
   <form method="post" action="/topics/{{ topic.id }}/llm-check">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
@@ -78,8 +79,9 @@
       {{ "Выключить проверку" if topic.llm_check else "Включить проверку" }}</button>
     {% if topic.llm_check %}<span class="status-ok small">включена</span>{% endif %}
   </form>
-  {% if check_counts[0] %}
-  <p class="small">Проверено сюжетов: {{ check_counts[0] }}, убрано: {{ check_counts[1] }}.</p>
+  {% if check_counts[0] or check_counts[2] %}
+  <p class="small">Явно по теме, без модели: {{ check_counts[2] }}. Спорных проверила модель: {{ check_counts[0] }},
+    убрала {{ check_counts[1] }}.</p>
   {% endif %}
   {% if rejected %}
   <details class="rejected">

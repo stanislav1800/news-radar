@@ -65,6 +65,27 @@ _PREVIEW_STORIES_SQL = text(f"""
     LIMIT :limit
 """)
 
+# Кандидаты на проверку по описанию и насколько они явно по теме: в скольких постах слова запроса,
+# есть ли все слова в заголовке какого-нибудь поста
+_CHECK_CANDIDATES_SQL = text(f"""
+    SELECT story.id, story.title, story.lead, story_summary.summary, m.by_words, m.similarity,
+           story.posts_count,
+           CASE WHEN :words = '' THEN 0 ELSE
+               (SELECT count(*) FROM post WHERE post.story_id = story.id AND {_WORD_MATCH_SQL}) END AS word_posts,
+           CASE WHEN :title_all = '' THEN false ELSE EXISTS (
+               SELECT 1 FROM post WHERE post.story_id = story.id
+                 AND post.search_vector @@ to_tsquery('simple', :title_all)) END AS title_hit
+    FROM topic_match AS m
+    JOIN story ON story.id = m.story_id
+    LEFT JOIN story_summary ON story_summary.story_id = story.id
+    WHERE m.topic_id = :topic_id AND m.matched_at >= :since
+      AND story.id NOT IN (SELECT story_id FROM topic_check WHERE topic_id = :topic_id)
+      AND story.id NOT IN (SELECT story_id FROM topic_example
+                           WHERE topic_id = :topic_id AND liked AND story_id IS NOT NULL)
+    ORDER BY m.matched_at DESC
+    LIMIT :limit
+""")
+
 _PREVIEW_SQL = text(f"""
     SELECT count(DISTINCT post.story_id) FROM post JOIN story ON story.id = post.story_id
     WHERE story.last_post_at >= :since AND {_WORD_MATCH_SQL}
@@ -227,6 +248,26 @@ class Suggestion:
     # С чем сравнивали: examples — 👍-примеры, words — найденное по словам, query — текст запроса.
     # Похожесть на текст запроса другая по масштабу: короткая фраза против целого сюжета
     basis: str
+
+
+@dataclass(frozen=True, slots=True)
+class CheckCandidate:
+    story_id: int
+    title: str
+    lead: str | None
+    summary: str | None   # пересказ LLM, если есть
+    by_words: bool
+    similarity: float | None
+    posts_count: int
+    word_posts: int       # в скольких постах сюжета все слова запроса
+    title_hit: bool       # все слова запроса в заголовке какого-нибудь поста
+
+    def obvious(self, min_similarity: float) -> bool:
+        """Явно по теме — модель не нужна: слова в заголовке или в большинстве постов, либо сюжет
+        заметно похож на добавленный пример."""
+        if self.by_words and (self.title_hit or self.word_posts * 2 >= max(self.posts_count, 1)):
+            return True
+        return self.similarity is not None and self.similarity >= min_similarity + 0.04
 
 
 class TopicRepository:
@@ -399,6 +440,15 @@ class TopicRepository:
         else:
             return []
         return [Suggestion(row.id, row.similarity, basis) for row in result]
+
+    async def check_candidates(self, topic: Topic, since: datetime, limit: int) -> list[CheckCandidate]:
+        """Непроверенные совпадения темы (кроме добавленных вручную), свежие первыми."""
+        parsed = parse_query(topic.query) if topic.query else None
+        rows = await self.session.execute(_CHECK_CANDIDATES_SQL, {
+            **_word_params(topic.query), "title_all": (parsed.tsquery_all(title=True) or "") if parsed else "",
+            "topic_id": topic.id, "since": since, "limit": limit,
+        })
+        return [CheckCandidate(*row) for row in rows]
 
     async def preview_stories(self, query: str, since: datetime, limit: int = 8) -> list[tuple[int, str, int]]:
         """Самые заметные сюжеты, которые тема с таким запросом нашла бы: показать до создания."""

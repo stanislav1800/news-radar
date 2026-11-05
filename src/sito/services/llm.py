@@ -214,20 +214,28 @@ class LlmUsageStats:
     cost: float | None  # сумма цен, которые сообщил сервис (у routerai.ru — в рублях)
 
 
-async def usage_since(session: AsyncSession, since: datetime) -> LlmUsageStats:
-    row = (await session.execute(
+async def usage_since(session: AsyncSession, since: datetime, user_id: int | None = None) -> LlmUsageStats:
+    query = (
         select(func.count(), func.coalesce(func.sum(LlmUsage.input_tokens), 0),
                func.coalesce(func.sum(LlmUsage.output_tokens), 0), func.sum(LlmUsage.cost))
         .where(LlmUsage.created_at >= since)
-    )).one()
+    )
+    if user_id is not None:
+        query = query.where(LlmUsage.user_id == user_id)
+    row = (await session.execute(query)).one()
     return LlmUsageStats(int(row[0]), int(row[1]), int(row[2]), float(row[3]) if row[3] is not None else None)
 
 
-async def check_limit(session: AsyncSession, config: Settings) -> None:
-    """Общий лимит токенов за последние сутки: сколько бы ни нажимали, больше него LLM не потратит."""
-    used = await usage_since(session, datetime.now(UTC) - timedelta(days=1))
+async def check_limit(session: AsyncSession, config: Settings, user_id: int | None = None) -> None:
+    """Лимиты токенов за последние сутки: общий и на пользователя (чтобы один не съел бюджет всех)."""
+    since = datetime.now(UTC) - timedelta(days=1)
+    used = await usage_since(session, since)
     if used.input_tokens + used.output_tokens >= config.llm_daily_tokens:
         raise LlmError("дневной лимит LLM исчерпан, попробуйте позже")
+    if user_id is not None and config.llm_user_daily_tokens:
+        mine = await usage_since(session, since, user_id)
+        if mine.input_tokens + mine.output_tokens >= config.llm_user_daily_tokens:
+            raise LlmError("ваш дневной лимит LLM исчерпан, попробуйте завтра")
 
 
 class StorySummaryService:
@@ -249,7 +257,7 @@ class StorySummaryService:
         story = await self.session.get(Story, story_id)
         if story is None:
             raise LlmError("сюжет не найден")
-        await check_limit(self.session, self.config)
+        await check_limit(self.session, self.config, user_id)
         posts = await StoryRepository(self.session).material(story_id)
         prompt = story_prompt(posts, self.config.llm_story_chars, ZoneInfo(timezone))
         answer = await self.client.complete(
@@ -412,7 +420,7 @@ class TopicReportService:
         stories = await self._stories(topic, since or self._since(days))
         if not stories:
             raise LlmError(f"в теме нет сюжетов за {PERIODS[days]}")
-        await check_limit(self.session, self.config)
+        await check_limit(self.session, self.config, user_id)
         materials = await StoryRepository(self.session).materials(
             [s[0] for s in stories if not s[4]], body_chars=3000
         )
@@ -612,7 +620,7 @@ class TopicDraftService:
         return draft
 
     async def draft(self, description: str, user_id: int) -> TopicDraft:
-        await check_limit(self.session, self.config)
+        await check_limit(self.session, self.config, user_id)
         repo = TopicRepository(self.session)
         days = self.config.topic_backfill_days
         since = datetime.now(UTC) - timedelta(days=days)
@@ -697,31 +705,33 @@ class TopicCheckService:
                     done, dropped = await self._check_batch(session, topic_id)
                 checked += done
                 rejected += dropped
-                if done < self.BATCH:
+                if not done:
                     break
         return checked, rejected
 
     async def _check_batch(self, session: AsyncSession, topic_id: int) -> tuple[int, int]:
+        """Одна пачка: явные сюжеты отмечаются без модели, спорные (до BATCH) — модели.
+
+        Возвращает (сколько решено, сколько убрано); 0 решённых — больше нечего проверять.
+        """
         topic = await session.get(Topic, topic_id)
         if topic is None or not topic.description:
             return 0, 0
-        liked = select(TopicExample.story_id).where(TopicExample.topic_id == topic_id, TopicExample.liked,
-                                                    TopicExample.story_id.is_not(None))
-        checked = select(TopicCheck.story_id).where(TopicCheck.topic_id == topic_id)
-        rows = list(await session.execute(
-            select(Story.id, Story.title, Story.lead, StorySummary.summary)
-            .join(TopicMatch, TopicMatch.story_id == Story.id)
-            .outerjoin(StorySummary, StorySummary.story_id == Story.id)
-            .where(TopicMatch.topic_id == topic_id, TopicMatch.matched_at >= datetime.now(UTC) - self.window,
-                   Story.id.not_in(liked), Story.id.not_in(checked))
-            .order_by(TopicMatch.matched_at.desc()).limit(self.BATCH)
-        ))
-        if not rows:
-            return 0, 0
+        candidates = await TopicRepository(session).check_candidates(
+            topic, datetime.now(UTC) - self.window, self.BATCH * 4
+        )
+        min_similarity = topic.min_similarity or self.config.topic_example_min_similarity
+        obvious = [c for c in candidates if c.obvious(min_similarity)]
+        for c in obvious:
+            session.add(TopicCheck(topic_id=topic_id, story_id=c.story_id, fits=True, by_llm=False))
+        doubtful = [c for c in candidates if not c.obvious(min_similarity)][: self.BATCH]
+        if not doubtful:
+            return len(obvious), 0
         try:
-            await check_limit(session, self.config)
+            await check_limit(session, self.config, topic.user_id)
         except LlmError:
-            return 0, 0
+            return len(obvious), 0
+        rows = [(c.story_id, c.title, c.lead, c.summary) for c in doubtful]
         examples = await session.execute(
             select(TopicExample.liked, TopicExample.title).where(TopicExample.topic_id == topic_id)
             .order_by(TopicExample.id.desc()).limit(16)
@@ -745,7 +755,7 @@ class TopicCheckService:
             answer = await self.client.complete(system, prompt, max_tokens=100 * len(rows) + 300)
         except LlmError as exc:
             logger.warning("проверка темы %s: %s", topic_id, exc)
-            return 0, 0
+            return len(obvious), 0
         session.add(LlmUsage(
             feature="topic_check", model=answer.model, input_tokens=answer.input_tokens,
             output_tokens=answer.output_tokens, cost=answer.cost, user_id=topic.user_id,
@@ -754,7 +764,7 @@ class TopicCheckService:
             verdicts = parse_verdicts(answer.text)
         except LlmError as exc:
             logger.warning("проверка темы %s: %s", topic_id, exc)
-            return 0, 0
+            return len(obvious), 0
         dropped = []
         for n, row in enumerate(rows, 1):
             if n not in verdicts:
@@ -767,4 +777,4 @@ class TopicCheckService:
             await session.execute(
                 delete(TopicMatch).where(TopicMatch.topic_id == topic_id, TopicMatch.story_id.in_(dropped))
             )
-        return len(verdicts), len(dropped)
+        return len(obvious) + len(verdicts), len(dropped)

@@ -63,8 +63,11 @@ class Term:
     lemmas: tuple[str, ...]  # одно слово или фраза из нескольких
     negated: bool = False
 
-    def tsquery(self) -> str:
-        body = self.lemmas[0] if len(self.lemmas) == 1 else "(" + " <-> ".join(self.lemmas) + ")"
+    def tsquery(self, title: bool = False) -> str:
+        """title — искать в заголовке (вес A), исключения — где угодно."""
+        mark = ":A" if title and not self.negated else ""
+        lemmas = [f"{lemma}{mark}" for lemma in self.lemmas]
+        body = lemmas[0] if len(lemmas) == 1 else "(" + " <-> ".join(lemmas) + ")"
         return f"!{body}" if self.negated else body
 
 
@@ -105,11 +108,14 @@ class SearchQuery:
         words = self.single_word
         return " | ".join(f"{w}:A" for w in words) if words else None
 
-    def tsquery_all(self) -> str | None:
-        """Запрос Postgres «есть все слова» (для темы): уголь & кузбасс. None — искать нечего."""
+    def tsquery_all(self, title: bool = False) -> str | None:
+        """Запрос Postgres «есть все слова» (для темы): уголь & кузбасс. None — искать нечего.
+
+        title — все слова в заголовке поста (уголь:A & кузбасс:A)."""
         if not self.words:
             return None
-        parts = [g[0].tsquery() if len(g) == 1 else "(" + " | ".join(t.tsquery() for t in g) + ")" for g in self.groups]
+        parts = [g[0].tsquery(title) if len(g) == 1 else "(" + " | ".join(t.tsquery(title) for t in g) + ")"
+                 for g in self.groups]
         return " & ".join(parts)
 
 

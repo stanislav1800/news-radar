@@ -88,5 +88,6 @@ class TopicCheck(Base):
     topic_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("topic.id", ondelete="CASCADE"), primary_key=True)
     story_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("story.id", ondelete="CASCADE"), primary_key=True)
     fits: Mapped[bool]
+    by_llm: Mapped[bool] = mapped_column(server_default="true")  # false — явно по теме, модель не спрашивали
     reason: Mapped[str | None]
     checked_at: Mapped[datetime] = mapped_column(server_default=func.now())

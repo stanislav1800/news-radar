@@ -296,7 +296,8 @@ async def _render_topic(
             .order_by(TopicCheck.checked_at.desc()).limit(50)
         )],
         "check_counts": (await db.execute(
-            select(func.count(), func.count().filter(TopicCheck.fits.is_(False)))
+            select(func.count().filter(TopicCheck.by_llm), func.count().filter(TopicCheck.fits.is_(False)),
+                   func.count().filter(TopicCheck.by_llm.is_(False)))
             .where(TopicCheck.topic_id == topic.id)
         )).one(),
         "schedules": DIGEST_SCHEDULES, "weekdays": WEEKDAYS,

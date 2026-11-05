@@ -265,16 +265,22 @@ async def test_topic_check_removes_and_restore_returns(
     app: FastAPI, logged_in: httpx.AsyncClient, stories: Stories,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    from sito.models import Topic, TopicCheck, TopicMatch, User
+    from sito.models import Post, Topic, TopicCheck, TopicMatch, User
     from sito.services.llm import TopicCheckService
     from sito.services.topics import TopicRules, TopicService
 
-    good = await stories.add([("ТАСС", "Рекорд добычи угля", timedelta(hours=2))])
-    bad = await stories.add([("РБК", "Золото и уголь в гербе города", timedelta(hours=1))])
+    good = await stories.add([("ТАСС", "Рекорд добычи угля", timedelta(hours=2))])  # явно: слово в заголовке
+    # Спорный: слово мелькнуло в тексте одного поста из трёх
+    bad = await stories.add([("РБК", "Новый герб города", timedelta(hours=1)), ("ТАСС", "Герб утвердили", timedelta(hours=1)),
+                             ("РИА", "Городу дали герб", timedelta(hours=1))])
+    async with session_factory() as session, session.begin():
+        first = await session.scalar(select(Post).where(Post.story_id == bad).order_by(Post.id).limit(1))
+        assert first is not None
+        first.text_lemmas = f"{first.text_lemmas} на гербе добыча уголь"
     async with session_factory() as session, session.begin():
         user = await session.scalar(select(User))
         assert user is not None
-        topic = Topic(user_id=user.id, name="Уголь", query="уголь", rss_token="c", llm_check=True,
+        topic = Topic(user_id=user.id, name="Уголь", query="добыча угля", rss_token="c", llm_check=True,
                       description="Добыча и экспорт угля")
         session.add(topic)
         await session.flush()
@@ -287,10 +293,12 @@ async def test_topic_check_removes_and_restore_returns(
 
     assert await matched() == {good, bad}
     seen: list[dict[str, object]] = []
-    verdicts = [{"n": 1, "fits": False, "why": "про герб"}, {"n": 2, "fits": True, "why": "добыча"}]
+    verdicts = [{"n": 1, "fits": False, "why": "про герб"}]
     client = fake_llm([answer(json.dumps(verdicts, ensure_ascii=False))], seen)
     assert await TopicCheckService(session_factory, client, app.state.settings).run_once() == (2, 1)
-    assert "Добыча и экспорт угля" in str(seen[0]["messages"])
+    # Модели — только спорный сюжет; явный отмечен без неё
+    messages = str(seen[0]["messages"])
+    assert "Добыча и экспорт угля" in messages and "герб" in messages and "Рекорд" not in messages
     assert await matched() == {good}
 
     # Пересчёт темы не возвращает отклонённое
@@ -302,7 +310,7 @@ async def test_topic_check_removes_and_restore_returns(
 
     app.state.llm = client
     page = await logged_in.get(f"/topics/{topic_id}")
-    assert "Золото и уголь в гербе города" in page.text and "про герб" in page.text
+    assert f'href="/stories/{bad}"' in page.text and "про герб" in page.text
     token = await csrf_from(logged_in, f"/topics/{topic_id}")
     await logged_in.post(f"/topics/{topic_id}/checks/{bad}/restore", data={"csrf_token": token})
     assert await matched() == {good, bad}
@@ -316,3 +324,19 @@ def test_parse_verdicts_keeps_answers_before_cut() -> None:
 
     text = '```json\n[\n {"n": 1, "fits": true, "why": "да"},\n {"n": 2, "fits": false, "why": "нет"},\n {"n": 3, "fi'
     assert parse_verdicts(text) == {1: (True, "да"), 2: (False, "нет")}
+
+
+async def test_user_daily_limit(session_factory: async_sessionmaker[AsyncSession], user: str) -> None:
+    from sito.config import settings
+    from sito.models import User
+    from sito.services.llm import LlmError, check_limit
+
+    config = settings.model_copy(update={"llm_daily_tokens": 10**9, "llm_user_daily_tokens": 1000})
+    async with session_factory() as session, session.begin():
+        me = await session.scalar(select(User))
+        assert me is not None
+        session.add(LlmUsage(feature="story_summary", model="m", input_tokens=900, output_tokens=200, user_id=me.id))
+        await session.flush()
+        await check_limit(session, config)  # общий лимит не исчерпан
+        with pytest.raises(LlmError, match="ваш дневной лимит"):
+            await check_limit(session, config, me.id)

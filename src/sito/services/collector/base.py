@@ -12,7 +12,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from sito.models import Source, SourceType
@@ -178,6 +178,12 @@ class ConnectorListener(ABC):
     Возврат или исключение — сбой: worker перезапустит подключение с нарастающей паузой,
     а NeedsLogin — не перезапустит до повторного входа.
     """
+
+    # Сторож worker'а: подключение, у которого не меньше watch_sources включённых источников и ни одного
+    # нового поста дольше silence_limit, считается зависшим и перезапускается (что бы внутри ни повисло).
+    # None — не следить (источники пишут редко или подключение само не собирает)
+    silence_limit: timedelta | None = None
+    watch_sources: int = 0
 
     @abstractmethod
     async def run(self, connector: ConnectorConfig, sink: PostSink) -> None: ...

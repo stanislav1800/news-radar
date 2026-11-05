@@ -19,6 +19,7 @@ from sito.services.collector.base import (
 from sito.services.connectors import ConnectorSupervisor
 from sito.services.ingest import IngestService
 from sito.utils.crypto import SecretBox, SecretsError
+from tests.conftest import MakeSource
 
 BOX = SecretBox("test-secret-key-0123")
 
@@ -279,3 +280,25 @@ async def test_secrets_under_other_key_are_not_started(
     assert listener.started == []
     saved = await get_connector(session_factory, connector.id)
     assert saved.status == ConnectorStatus.ERROR and "SITO_SECRET_KEY" in (saved.last_error or "")
+
+
+async def test_silent_connector_is_restarted(
+    session_factory: async_sessionmaker[AsyncSession], supervisor: ConnectorSupervisor, listener: FakeListener,
+    clock: Clock, make_source: MakeSource,
+) -> None:
+    from datetime import timedelta
+
+    listener.silence_limit, listener.watch_sources = timedelta(minutes=15), 1
+    connector_id = await add_connector(session_factory)
+    await make_source(name="Канал", type=SourceType.TELEGRAM, connector_id=connector_id)
+    await supervisor.sync()
+    await settle(listener)
+
+    clock.now += 10 * 60  # ещё рано: работает меньше 15 минут
+    await supervisor.sync()
+    assert len(listener.started) == 1
+
+    clock.now += 6 * 60  # 16 минут без единого поста: зависло — перезапустить
+    await supervisor.sync()
+    await settle(listener)
+    assert len(listener.started) == 2 and listener.cancelled == 1  # поднялось снова — статус опять «работает»

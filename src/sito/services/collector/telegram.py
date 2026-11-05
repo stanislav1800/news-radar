@@ -279,12 +279,17 @@ class TelegramRules:
     # Соединение «повисло»: столько тишины при watch_channels+ собираемых каналах не бывает — переподключиться
     silence_limit: timedelta = timedelta(minutes=15)
     watch_channels: int = 20
+    # Один запрос к Telegram может повиснуть без ответа: догрузка канала и шаг обслуживания не дольше этого
+    # (больше паузы FloodWait, которую Telethon ждёт молча)
+    step_timeout: timedelta = timedelta(minutes=15)
 
 
 class TelegramListener(ConnectorListener):
     def __init__(self, connect: Connect, rules: TelegramRules | None = None) -> None:
         self.connect = connect
         self.rules = rules or TelegramRules()
+        self.silence_limit = self.rules.silence_limit
+        self.watch_sources = self.rules.watch_channels
 
     async def run(self, connector: ConnectorConfig, sink: PostSink) -> None:
         async with self.connect(connector) as api:
@@ -323,22 +328,34 @@ class _Session:
         # с догрузкой: у сотен каналов она занимает минуты, и ждать её незачем
         background = [asyncio.create_task(self._commands()), asyncio.create_task(self._maintenance())]
         self.last_event = asyncio.get_running_loop().time()
+        # Тишину ждём сразу, а не после догрузки: если догрузка повиснет, переподключение всё равно будет.
+        # Обрыв во время догрузки и так даст ошибку запроса
+        stale = asyncio.create_task(self.stale.wait())
+        catch_up = asyncio.create_task(self._catch_up_all())
+        tasks = [stale, catch_up]
         try:
-            for channel in await self.api.channels():
-                await self._catch_up(channel)
-            logger.info("connector=%s: догрузка закончена, слушаю", self.connector.id)
-            closed = asyncio.create_task(self.api.disconnected())
-            stale = asyncio.create_task(self.stale.wait())
-            await asyncio.wait([closed, stale], return_when=asyncio.FIRST_COMPLETED)
-            closed.cancel()
-            stale.cancel()
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            if catch_up in done:
+                catch_up.result()
+                logger.info("connector=%s: догрузка закончена, слушаю", self.connector.id)
+                closed = asyncio.create_task(self.api.disconnected())
+                tasks.append(closed)
+                await asyncio.wait([closed, stale], return_when=asyncio.FIRST_COMPLETED)
             if self.stale.is_set():
                 # Соединение не оборвалось, но сообщения перестали приходить: переподключение всё починит
                 raise ConnectionError(f"Telegram молчит дольше {self.rules.silence_limit}: переподключаюсь")
         finally:
-            for task in background:
+            for task in [*tasks, *background]:
                 task.cancel()
-            await asyncio.gather(*background, return_exceptions=True)
+            await asyncio.gather(*tasks, *background, return_exceptions=True)
+
+    async def _catch_up_all(self) -> None:
+        for channel in await self.api.channels():
+            try:
+                await asyncio.wait_for(self._catch_up(channel), self.rules.step_timeout.total_seconds())
+            except TimeoutError:
+                logger.warning("connector=%s: догрузка «%s» не ответила за %s, дальше",
+                               self.connector.id, channel.title, self.rules.step_timeout)
 
     async def _refresh_sources(self) -> None:
         self.sources = {s.external_id: s for s in await self.sink.sources(self.connector.id)}
@@ -499,7 +516,10 @@ class _Session:
                 if loop.time() < paused_until.get(name, 0):
                     continue
                 try:
-                    await step()
+                    await asyncio.wait_for(step(), self.rules.step_timeout.total_seconds())
+                except TimeoutError:
+                    logger.warning("connector=%s: шаг %s не ответил за %s", self.connector.id, name,
+                                   self.rules.step_timeout)
                 except Exception as exc:
                     wait = getattr(exc, "seconds", None)  # FloodWait: Telegram просит не повторять столько секунд
                     if isinstance(wait, int):

@@ -7,6 +7,9 @@ from sito.log import LogFormat, LogLevel
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
     database_url: str
+    # Предел одного запроса к базе и транзакции, открытой без дела (секунды): зависание — ошибка, а не вечность
+    db_statement_timeout_seconds: int = 300
+    db_idle_transaction_timeout_seconds: int = 600
 
     # Логи
     log_level: LogLevel = "INFO"

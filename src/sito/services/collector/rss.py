@@ -8,6 +8,10 @@ from httpx import AsyncClient
 
 from sito.models import Source
 from sito.services.collector.base import BaseCollector, FetchResult, RawPost
+from sito.utils.http import get_limited
+
+MAX_FEED_BYTES = 10_000_000  # больше лент не бывает; больше — что-то не то
+FEED_TIMEOUT = 45           # на всю загрузку ленты (общий предел сбора источника — 60 с)
 
 
 class RssCollector(BaseCollector):
@@ -26,13 +30,17 @@ class RssCollector(BaseCollector):
         if last_modified := state.get("last_modified"):
             headers["If-Modified-Since"] = last_modified
 
-        resp = await self.client.get(source.url, headers=headers)
+        resp, content = await get_limited(self.client, source.url, headers=headers, max_bytes=MAX_FEED_BYTES,
+                                          timeout=FEED_TIMEOUT)
         if resp.status_code == HTTPStatus.NOT_MODIFIED:
             return FetchResult(not_modified=True)
         resp.raise_for_status()
 
         # Разбор большой ленты занимает процессор, уносим его из event loop
-        feed = await asyncio.to_thread(feedparser.parse, resp.content)
+        feed = await asyncio.to_thread(feedparser.parse, content or b"")
+        if not feed.entries and (feed.bozo or not feed.get("version")):
+            # 200, но не лента: заглушка антибота, страница ошибки. Это сбой, а не «новых записей нет»
+            raise ValueError(f"ответ — не лента RSS/Atom ({resp.headers.get('content-type', 'тип не указан')})")
         posts = [post for entry in feed.entries if (post := self._to_post(source.id, entry))]
 
         new_state = {"etag": resp.headers.get("ETag"), "last_modified": resp.headers.get("Last-Modified")}

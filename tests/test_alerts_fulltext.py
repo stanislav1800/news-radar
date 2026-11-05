@@ -97,3 +97,32 @@ async def test_full_text_of_short_telegram_post_by_link(
         posts = {p.external_id: p for p in await session.scalars(select(Post))}
     assert asked == ["https://ria.ru/20261103/peskov-1.html"]
     assert "рекордный объём угля" in (posts["t0"].full_text or "") and posts["t1"].full_text_at is None
+
+
+async def test_full_text_skips_files_and_huge_pages(
+    session_factory: async_sessionmaker[AsyncSession], stories: Stories,
+) -> None:
+    await stories.add([("ТАСС", "Видео", timedelta(hours=1))], url="https://news.example/video.mp4")
+    await stories.add([("РИА", "Огромная", timedelta(hours=1))], url="https://news.example/huge")
+
+    def page(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(".mp4"):
+            return httpx.Response(200, headers={"content-type": "video/mp4"}, content=b"x" * 10)
+        return httpx.Response(200, headers={"content-type": "text/html"}, content=b"<p>" + b"a" * 4_000_000)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(page)) as client:
+        result = await FullTextService(session_factory, client).process_batch()
+
+    assert result.fetched == 0 and result.failed == 2  # ни видео, ни 4 МБ не читаются в память
+
+
+async def test_rss_html_stub_is_an_error() -> None:
+    from sito.models import Source
+    from sito.services.collector.rss import RssCollector
+
+    def stub(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, html="<html><body>Checking your browser…</body></html>")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(stub)) as client:
+        with pytest.raises(ValueError, match="не лента"):
+            await RssCollector(client).fetch(Source(id=1, url="https://feed.example/rss", state={}))

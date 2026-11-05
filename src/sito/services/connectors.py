@@ -198,6 +198,7 @@ class ConnectorSupervisor:
         self._running: dict[int, _Running] = {}
         self._halted: dict[int, _Halted] = {}
         self._types: dict[int, SourceType] = {}
+        self._stopping: dict[int, asyncio.Task[None]] = {}  # отменённые, но ещё не завершившиеся
 
     @property
     def running(self) -> set[int]:
@@ -222,6 +223,11 @@ class ConnectorSupervisor:
             await self._sync_one(connector, fingerprint(connector))
 
     async def _sync_one(self, connector: Connector, current: str) -> None:
+        stopping = self._stopping.get(connector.id)
+        if stopping is not None:
+            if not stopping.done():
+                return
+            del self._stopping[connector.id]
         running = self._running.get(connector.id)
         if running is not None:
             if not running.task.done():
@@ -235,10 +241,13 @@ class ConnectorSupervisor:
                     await self._stop(connector.id)
                     await self._set_status(connector.id, ConnectorStatus.ERROR,
                                            "Посты перестали приходить — подключение перезапущено")
-                    await self._start(connector, current, running.failures + 1)
+                    if connector.id not in self._stopping:
+                        await self._start(connector, current, running.failures + 1)
                     return
                 logger.info("connector=%s: настройки изменились, переподключение", connector.id)
                 await self._stop(connector.id)
+                if connector.id in self._stopping:
+                    return
             else:
                 await self._finished(connector.id, running)
 
@@ -315,7 +324,9 @@ class ConnectorSupervisor:
         # Ждать остановки не дольше 30 секунд: зависшее подключение могло не отпустить сразу
         done, _ = await asyncio.wait({running.task}, timeout=30)
         if not done:
-            logger.warning("connector=%s: не остановилось за 30 с, запускаю новое", connector_id)
+            # Второй клиент с той же сессией Telegram может её отозвать: новое — только когда старое закончится
+            logger.warning("connector=%s: не остановилось за 30 с, новое запущу после него", connector_id)
+            self._stopping[connector_id] = running.task
         elif not running.task.cancelled() and (exc := running.task.exception()) is not None:
             logger.error("connector=%s: ошибка при остановке", connector_id, exc_info=exc)
 

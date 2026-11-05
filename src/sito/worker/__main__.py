@@ -92,6 +92,9 @@ async def poll_loop(service: IngestService, stop: asyncio.Event) -> None:
         await sleep_until_stop(stop, settings.worker_tick_seconds)
 
 
+BATCH_TIMEOUT = 900  # пачка конвейера обычно идёт секунды
+
+
 class BatchResult(Protocol):
     @property
     def total(self) -> int: ...
@@ -103,7 +106,11 @@ async def drain_loop(
     """Обрабатывать пачки подряд, пока есть работа, потом ждать tick секунд."""
     while not stop.is_set():
         try:
-            result = await process_batch()
+            # Зависшая пачка не должна остановить шаг навсегда: отменить и начать заново
+            async with asyncio.timeout(BATCH_TIMEOUT):
+                result = await process_batch()
+        except TimeoutError:
+            logger.error("шаг «%s»: пачка не закончилась за %d мин, повторяю", name, BATCH_TIMEOUT // 60)
         except Exception:
             logger.exception("ошибка шага «%s»", name)
         else:

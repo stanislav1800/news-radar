@@ -488,3 +488,48 @@ def test_hashtag_line_is_not_a_headline() -> None:
     raw = "#погрузка\n\nВ октябре погрузка на сети РЖД составила 95,6 млн тонн.\n\nПодробности"
     assert split_headline(raw) == ("В октябре погрузка на сети РЖД составила 95,6 млн тонн.", "\nПодробности")
     assert clean_html("#погрузка #РЖД\nТекст новости").text == "Текст новости"
+
+
+async def test_live_message_during_catch_up_does_not_skip_missed_posts(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    """Пока догружается первый канал, во второй пришёл живой пост: пропущенное во втором всё равно догружается."""
+    sink, config = setup
+    tg = FakeTelegram(subscribed=[COAL], history={COAL.id: [message(1)]})
+    await _Session(config, sink, tg, TelegramRules()).run()  # курсор угольного канала — 1
+
+    # Простой: в угольном канале вышли 2 и 3. После переподключения первым догружается тихий канал,
+    # и в это время в угольный приходит живой пост 4
+    tg.history[COAL.id] += [message(2), message(3)]
+
+    class Racing(FakeTelegram):
+        async def messages(self, channel: Channel, *, after_id: int | None, since: datetime) -> AsyncIterator[Message]:
+            if channel.id == QUIET.id and self.handler is not None:
+                await self.handler(COAL, message(4))
+            async for m in super().messages(channel, after_id=after_id, since=since):
+                yield m
+
+    racing = Racing(subscribed=[QUIET, COAL], history={**tg.history, QUIET.id: [message(10)]})
+    await _Session(config, sink, racing, TelegramRules()).run()
+
+    assert (COAL.id, 1) in racing.asked  # догрузка от курсора на момент подключения, а не от живого поста
+    coal = [p[1] for p in await posts(session_factory) if p[0] == "Уголь Кузбасса"]
+    assert coal == ["1", "2", "3", "4"]
+
+
+async def test_broken_channel_does_not_stop_catch_up(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    sink, config = setup
+
+    class Broken(FakeTelegram):
+        async def messages(self, channel: Channel, *, after_id: int | None, since: datetime) -> AsyncIterator[Message]:
+            if channel.id == QUIET.id:
+                raise ValueError("канал заблокирован")
+            async for m in super().messages(channel, after_id=after_id, since=since):
+                yield m
+
+    tg = Broken(subscribed=[QUIET, COAL], history={COAL.id: [message(1)]})
+    await _Session(config, sink, tg, TelegramRules()).run()
+
+    assert [p[1] for p in await posts(session_factory)] == ["1"]

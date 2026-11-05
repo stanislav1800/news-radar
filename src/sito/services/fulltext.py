@@ -21,10 +21,13 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import Post, PostStatus, Source, SourceType
+from sito.utils.http import get_limited
 from sito.utils.urls import normalize_url
 
 logger = logging.getLogger(__name__)
 
+MAX_PAGE_BYTES = 3_000_000  # статья больше не бывает; ссылка на файл — не статья
+PAGE_TIMEOUT = 30           # на всю загрузку страницы
 MIN_CHARS = 300  # меньше — это не статья, а заглушка, «включите JavaScript» или тот же анонс
 
 
@@ -63,7 +66,7 @@ class FullTextResult:
         return self.fetched + self.failed
 
 
-def extract_article(html: str) -> str | None:
+def extract_article(html: str | bytes) -> str | None:
     text = trafilatura.extract(html, favor_precision=True, include_comments=False, include_tables=False)
     return text if text and len(text) >= MIN_CHARS else None
 
@@ -80,6 +83,7 @@ class FullTextService:
         self.semaphore = asyncio.Semaphore(concurrency)
         self.max_age = max_age
         self.short_post_chars = short_post_chars
+        self.hosts: dict[str, asyncio.Semaphore] = {}
 
     async def process_batch(self) -> FullTextResult:
         async with self.session_factory() as session:
@@ -123,17 +127,24 @@ class FullTextService:
         return FullTextResult(fetched, len(texts) - fetched)
 
     async def _fetch(self, url: str) -> str | None:
-        async with self.semaphore:
+        host = urlsplit(url).hostname or ""
+        # Не больше двух запросов к одному сайту одновременно: десять статей ТАСС подряд — не повод его долбить
+        per_host = self.hosts.setdefault(host, asyncio.Semaphore(2))
+        async with self.semaphore, per_host:
             try:
-                response = await self.client.get(url)
+                response, content = await get_limited(
+                    self.client, url, max_bytes=MAX_PAGE_BYTES, timeout=PAGE_TIMEOUT,
+                    accept=lambda headers: "html" in headers.get("content-type", "html"),
+                )
                 response.raise_for_status()
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, TimeoutError) as exc:
                 logger.debug("полный текст: %s не скачался: %s", url, exc)
                 return None
-        if "html" not in response.headers.get("content-type", "html"):
-            return None
+        if not content:
+            return None  # не страница (видео, PDF, архив) — тело и не читали
         try:
-            return await asyncio.to_thread(extract_article, response.text)
+            # Байты, а не текст: кодировку страницы (cp1251 у части сайтов) trafilatura определит сама
+            return await asyncio.to_thread(extract_article, content)
         except Exception:
             logger.warning("полный текст: не разобрать %s", url, exc_info=True)
             return None

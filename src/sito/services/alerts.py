@@ -6,7 +6,7 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,9 @@ from sito.repositories.pipeline import PipelineRepository
 from sito.repositories.sources import SourceRepository
 
 logger = logging.getLogger(__name__)
+
+
+PIPELINE_STALL = timedelta(minutes=30)  # обычно пост проходит конвейер за секунды
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,8 +39,13 @@ async def find_problems(session: AsyncSession, now: datetime) -> list[Problem]:
         elif s.type == SourceType.RSS and (since := s.silent_since(now)):
             # Telegram-каналы не в счёт: тихих каналов много, это не поломка
             problems.append(Problem(f"silent:{s.id}", f"RSS «{s.name}» молчит с {since:%d.%m %H:%M} UTC"))
-    if failed := (await PipelineRepository(session).summary()).by_status.get("failed", 0):
+    summary = await PipelineRepository(session).summary()
+    if failed := summary.by_status.get("failed", 0):
         problems.append(Problem("failed-posts", f"Постов с ошибкой обработки: {failed}"))
+    oldest = summary.oldest_pending_at
+    if oldest is not None and now - oldest > PIPELINE_STALL:
+        # Посты собираются, но не доходят до ленты: завис шаг конвейера или не загрузилась модель
+        problems.append(Problem("pipeline-stalled", f"Конвейер стоит: необработанный пост ждёт с {oldest:%d.%m %H:%M} UTC"))
     return problems
 
 

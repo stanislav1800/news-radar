@@ -306,6 +306,7 @@ class _Session:
         self.rules = rules
         self.sources: dict[str, KnownSource] = {}
         self.last_ids: dict[int, int] = {}  # канал → последний сохранённый id: курсор только растёт
+        self.catch_up_from: dict[int, int] = {}  # курсоры на момент подключения: от них догрузка
         self.read_ids: dict[int, int] = {}  # канал → до какого id отмечено прочитанным
         self.locks: dict[int, asyncio.Lock] = {}
         self.channels: dict[int, Channel] = {}
@@ -320,8 +321,11 @@ class _Session:
     async def run(self) -> None:
         await self.sink.connected(self.connector.id)
         await self._refresh_sources()
-        # Новые сообщения слушаем ещё до догрузки: то, что придёт во время неё, не потеряется,
-        # а пересечения не страшны — пост с тем же id просто обновится
+        # Догрузка идёт от курсоров на момент подключения. Живые сообщения двигают курсор вперёд, пока
+        # очередь догрузки не дошла до канала, — догрузка от текущего курсора пропустила бы всё за простой
+        self.catch_up_from = dict(self.last_ids)
+        # Новые сообщения слушаем ещё до догрузки: то, что придёт во время неё, не потеряется;
+        # пересечения не страшны — пост с тем же id просто обновится (догрузка идёт от catch_up_from)
         self.api.on_message(self._on_message)
         self.api.on_deleted(self._on_deleted)
         # Поручения из веба и обслуживание (подписчики, тишина, подписки по ссылкам) идут параллельно
@@ -356,6 +360,10 @@ class _Session:
             except TimeoutError:
                 logger.warning("connector=%s: догрузка «%s» не ответила за %s, дальше",
                                self.connector.id, channel.title, self.rules.step_timeout)
+            except Exception:
+                # Канал закрыт, заблокирован, удалён — это его беда: остальные каналы догружаем
+                logger.warning("connector=%s: догрузка «%s» не удалась, дальше", self.connector.id, channel.title,
+                               exc_info=True)
 
     async def _refresh_sources(self) -> None:
         self.sources = {s.external_id: s for s in await self.sink.sources(self.connector.id)}
@@ -384,7 +392,7 @@ class _Session:
             return
         since = datetime.now(UTC) - self.rules.catch_up
         batch: list[Message] = []
-        async for message in self.api.messages(channel, after_id=self.last_ids.get(channel.id), since=since):
+        async for message in self.api.messages(channel, after_id=self.catch_up_from.get(channel.id), since=since):
             batch.append(message)
             if len(batch) >= self.rules.batch:
                 await self._save(channel, source, batch)

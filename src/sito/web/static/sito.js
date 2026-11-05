@@ -177,3 +177,15 @@
     scheduleExpiry(document);
   });
 })();
+
+// Часовой пояс в настройках не совпадает с браузерным — подсказать (дайджест придёт «не в то время»)
+document.querySelectorAll(".tz-mismatch").forEach((el) => {
+  const browser = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const offset = (tz) => new Date().toLocaleString("en-US", { timeZone: tz, hour: "2-digit", hour12: false });
+  try {
+    if (browser && offset(browser) !== offset(el.dataset.userTz)) {
+      el.querySelector("span").textContent = browser;
+      el.hidden = false;
+    }
+  } catch (e) { /* неизвестный пояс — молчим */ }
+});

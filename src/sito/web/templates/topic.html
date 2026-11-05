@@ -106,7 +106,11 @@
               placeholder="Например: только решения властей и цифры, без происшествий">{{ topic.digest_prompt or "" }}</textarea>
     <p class="muted small">
       День недели — только для «раз в неделю». Дайджест охватывает всё новое с прошлого дайджеста;
-      в пустые дни не делается и денег не тратит. Время — по вашему часовому поясу из настроек.
+      в пустые дни не делается и денег не тратит.<br>
+      Время — по часовому поясу <strong>{{ user.timezone }}</strong> (сейчас там {{ now | local_time(user.timezone, now) }}),
+      <a href="/settings">изменить в настройках</a>.
+      <span class="tz-mismatch field-error" data-user-tz="{{ user.timezone }}" hidden>
+        У вашего браузера другой часовой пояс: <span></span>.</span>
       {% if digest_next %}<br>Следующий: {{ digest_next | local_time(user.timezone, now) }}.{% endif %}
     </p>
     <button type="submit">Сохранить</button>

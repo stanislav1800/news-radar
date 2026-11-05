@@ -508,15 +508,22 @@ class DigestService:
                 if topic.digest_last_at is not None and topic.digest_last_at >= slot:
                     continue
                 weekly = topic.digest_schedule == "weekly"
-                # С прошлого дайджеста, но не дальше недели (или суток — если прошлого не было)
-                default = timedelta(days=7 if weekly else 1)
-                since = max(topic.digest_last_at or slot - default, slot - timedelta(days=7))
+                # С прошлого дайджеста, но не дальше недели; первый — за сутки (за неделю у недельного)
+                last = await session.scalar(
+                    select(func.max(TopicReport.created_at))
+                    .where(TopicReport.topic_id == topic.id, TopicReport.kind == "digest")
+                )
+                since = max(last or slot - timedelta(days=7 if weekly else 1), slot - timedelta(days=7))
                 topic.digest_last_at = now
-                if await TopicReportService(session, self.client, self.config).count_since(topic.id, since) \
-                        < max(1, topic.digest_min_stories):
-                    continue  # нового мало — дайджест не нужен, денег не тратим
+                service = TopicReportService(session, self.client, self.config)
+                fresh = await service.count_since(topic.id, since)
+                if fresh < max(1, topic.digest_min_stories):
+                    # Нового мало — дайджест не нужен, денег не тратим
+                    logger.info("дайджест темы %s пропущен: новых сюжетов %d, нужно от %d",
+                                topic.id, fresh, topic.digest_min_stories)
+                    continue
                 try:
-                    await TopicReportService(session, self.client, self.config).make(
+                    await service.make(
                         topic, days=7 if weekly else 1, user_id=topic.user_id, timezone=timezone,
                         digest=True, since=since,
                     )

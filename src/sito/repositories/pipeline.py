@@ -23,6 +23,38 @@ class PipelineSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class Lag:
+    """Задержка постов одного типа источников за последние сутки, в секундах."""
+
+    source_type: str
+    posts: int
+    collect_median: float | None   # от публикации до сбора: опрос, источник, Telegram
+    collect_p90: float | None
+    process_median: float | None   # от сбора до ленты: очистка, вектор, склейка у нас
+    process_p90: float | None
+    process_max: float | None
+
+
+# Публикация → сбор → в сюжете. Время публикации у некоторых лент бывает «будущим» или неточным —
+# отрицательные задержки считаем нулём
+_LAG_SQL = text("""
+    SELECT source.type AS source_type, count(*) AS posts,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY greatest(0, extract(epoch FROM post.fetched_at - post.published_at)))
+               AS collect_median,
+           percentile_cont(0.9) WITHIN GROUP (ORDER BY greatest(0, extract(epoch FROM post.fetched_at - post.published_at)))
+               AS collect_p90,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM post.clustered_at - post.fetched_at))
+               AS process_median,
+           percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM post.clustered_at - post.fetched_at))
+               AS process_p90,
+           max(extract(epoch FROM post.clustered_at - post.fetched_at)) AS process_max
+    FROM post JOIN source ON source.id = post.source_id
+    WHERE post.clustered_at > now() - interval '24 hours' AND post.published_at IS NOT NULL
+    GROUP BY source.type ORDER BY source.type
+""")
+
+
+@dataclass(frozen=True, slots=True)
 class FailedPost:
     id: int
     title: str
@@ -47,6 +79,10 @@ class PipelineRepository:
         }
         oldest = await self.session.scalar(select(func.min(Post.fetched_at)).where(Post.status.in_(IN_PROGRESS)))
         return PipelineSummary(posts_24h, stories_24h, by_status, oldest)
+
+    async def lag(self) -> list[Lag]:
+        """Сколько идёт пост от публикации до ленты: у источника и у нас (если растёт — конвейер не успевает)."""
+        return [Lag(**row._mapping) for row in await self.session.execute(_LAG_SQL)]
 
     async def failed_posts(self, limit: int) -> list[FailedPost]:
         query = (

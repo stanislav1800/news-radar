@@ -36,6 +36,32 @@
   отсеяно {{ summary.by_status.get("skipped", 0) }}.
   Если очередь растёт, а самый старый пост всё старше, — конвейер не успевает за сбором.</p>
 
+<h2>Задержка за сутки</h2>
+{% macro dur(seconds) -%}
+  {%- if seconds is none %}—{% elif seconds < 90 %}{{ seconds | round | int }} с{% elif seconds < 5400 %}{{ (seconds / 60) | round | int }} мин
+  {%- else %}{{ "%.1f" | format(seconds / 3600) }} ч{% endif -%}
+{%- endmacro %}
+{% if lag %}
+<div class="table-wrap">
+  <table class="sources">
+    <thead><tr><th>Источники</th><th class="num">Постов</th><th class="num">Публикация → сбор<br><span class="muted small">медиана / 90%</span></th>
+      <th class="num">Сбор → лента<br><span class="muted small">медиана / 90% / худший</span></th></tr></thead>
+    <tbody>
+      {% for l in lag %}
+      <tr><td>{{ "Telegram" if l.source_type == "telegram" else l.source_type | upper }}</td><td class="num">{{ l.posts }}</td>
+        <td class="num">{{ dur(l.collect_median) }} / {{ dur(l.collect_p90) }}</td>
+        <td class="num">{{ dur(l.process_median) }} / {{ dur(l.process_p90) }} / {{ dur(l.process_max) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="muted small">«Публикация → сбор» — у источника и опроса (RSS опрашивается раз в несколько минут, часть лент ставит
+  статье время написания, а не выхода). «Сбор → лента» — наш конвейер: очистка, вектор, склейка. Если он растёт
+  до десятков минут, медленные шаги мешают быстрым — пора выносить их в очередь (этап 9 ТЗ).</p>
+{% else %}
+<p class="muted">Нет данных: замер начат с обновления 5.11, посты появятся после первой склейки.</p>
+{% endif %}
+
 <h2>LLM</h2>
 {% if llm %}
 <p>Модель <code>{{ llm.model }}</code>, работает только по кнопкам пользователей.</p>

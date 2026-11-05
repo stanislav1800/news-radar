@@ -81,6 +81,7 @@ class Post(IdMixin, TimestampMixin, Base):
 
     published_at: Mapped[datetime | None] = mapped_column(index=True)
     fetched_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    clustered_at: Mapped[datetime | None] = mapped_column(index=True)  # когда пост попал в сюжет (виден в ленте): для замера задержки
 
     story_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("story.id", ondelete="SET NULL"), index=True

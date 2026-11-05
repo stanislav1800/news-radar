@@ -44,6 +44,7 @@ async def summary_page(request: Request, db: DbSession, user: AdminUser) -> HTML
     return templates.TemplateResponse(request, "admin/summary.html", {
         "user": user,
         "summary": await pipeline.summary(),
+        "lag": await pipeline.lag(),
         "failed": await pipeline.failed_posts(FAILED_SHOWN),
         "broken": [s for s in sources if s.failing],
         "broken_connectors": await _broken_connectors(db),

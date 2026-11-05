@@ -333,3 +333,20 @@ async def test_links_within_one_outlet_and_old_links_do_not_join(
 
     assert (result.new_stories, result.by_link) == (2, 0)
     assert len({await posts.story_of(see_also), await posts.story_of(late)}) == 2
+
+
+async def test_lag_from_publication_to_feed(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    from sito.repositories.pipeline import PipelineRepository
+
+    posts = Posts(session_factory)
+    source = await make_source()
+    await posts.add(source, vec(), datetime.now(UTC) - timedelta(minutes=10))
+    await ClusteringService(session_factory).process_batch()
+
+    async with session_factory() as session:
+        [lag] = await PipelineRepository(session).lag()
+    assert lag.source_type == "rss" and lag.posts == 1
+    assert lag.collect_median is not None and 0 <= lag.collect_median < 3600
+    assert lag.process_median is not None and lag.process_median >= 0

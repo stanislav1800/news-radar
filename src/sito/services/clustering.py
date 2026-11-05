@@ -12,7 +12,7 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import timedelta
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.config import Settings
@@ -147,6 +147,8 @@ class ClusteringService:
 
         await stories.session.flush()
         await stories.refresh(post.story_id)
+        if how != "edited":
+            post.clustered_at = func.clock_timestamp()
         mark_post_done(post, PostStatus.CLUSTERED)
         return how
 

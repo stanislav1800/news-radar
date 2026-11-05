@@ -190,13 +190,15 @@ async def test_digest_by_schedule_page_badge_and_rss(
         topic_id = topic.id
 
     token = await csrf_from(logged_in, f"/topics/{topic_id}")
+    # Время дайджеста — через 5 минут (по поясу пользователя): тест не зависит от времени суток
+    at = (datetime.now(UTC) + timedelta(minutes=5)).astimezone(ZoneInfo("Europe/Moscow")).strftime("%H:%M")
     await logged_in.post(f"/topics/{topic_id}/digest", data={
-        "csrf_token": token, "schedule": "daily", "at": "08:00", "kind": "short", "min_stories": "2",
+        "csrf_token": token, "schedule": "daily", "at": at, "kind": "short", "min_stories": "2",
         "prompt": "Только цифры"})
     seen: list[dict[str, object]] = []
     client = fake_llm([answer("- Рекорд угля [1].")], seen)
     service = DigestService(session_factory, client, app.state.settings)
-    tomorrow = datetime.now(UTC) + timedelta(days=1, hours=1)
+    tomorrow = datetime.now(UTC) + timedelta(minutes=10)  # время дайджеста подошло
 
     # Сразу после сохранения — не срабатывает; завтра — мало новых сюжетов (1 < 2): пропуск без запроса
     assert await service.run_due() == 0

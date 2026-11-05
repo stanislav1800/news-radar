@@ -528,7 +528,7 @@ class DigestService:
                     .where(TopicReport.topic_id == topic.id, TopicReport.kind == "digest")
                 )
                 since = max(last or slot - timedelta(days=7 if weekly else 1), slot - timedelta(days=7))
-                topic.digest_last_at = now
+                previous, topic.digest_last_at = topic.digest_last_at, now
                 service = TopicReportService(session, self.client, self.config)
                 fresh = await service.count_since(topic.id, since)
                 if fresh < max(1, topic.digest_min_stories):
@@ -543,7 +543,9 @@ class DigestService:
                     )
                     made += 1
                 except LlmError as exc:
-                    logger.warning("дайджест темы %s не сделан: %s", topic.id, exc)
+                    # LLM недоступна или лимит: повторить через минуту, а не терять дайджест до следующего раза
+                    topic.digest_last_at = previous
+                    logger.warning("дайджест темы %s не сделан, повторю: %s", topic.id, exc)
         return made
 
 

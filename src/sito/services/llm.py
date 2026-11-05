@@ -14,13 +14,14 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.config import Settings
 from sito.models import (
     LlmUsage,
     Story,
+    StoryMergeCheck,
     StorySummary,
     Topic,
     TopicCheck,
@@ -31,6 +32,7 @@ from sito.models import (
 )
 from sito.repositories.stories import MaterialPost, StoryRepository
 from sito.repositories.topics import TopicRepository
+from sito.services.clustering import CLUSTERING_LOCK_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -657,7 +659,7 @@ CHECK_SYSTEM = """Ты проверяешь, подходят ли новост�
 "why": "до 10 слов — почему"}}."""
 
 
-def parse_verdicts(text: str) -> dict[int, tuple[bool, str]]:
+def parse_verdicts(text: str, key: str = "fits") -> dict[int, tuple[bool, str]]:
     """Номер новости → (подходит, почему). Разбирает каждый объект отдельно: если ответ оборвался,
     уже готовые решения не теряются (остальные сюжеты проверятся в следующий раз)."""
     verdicts: dict[int, tuple[bool, str]] = {}
@@ -666,8 +668,8 @@ def parse_verdicts(text: str) -> dict[int, tuple[bool, str]]:
             item = json.loads(chunk)
         except json.JSONDecodeError:
             continue
-        if isinstance(item, dict) and isinstance(item.get("n"), int) and isinstance(item.get("fits"), bool):
-            verdicts[item["n"]] = (item["fits"], str(item.get("why") or "")[:200])
+        if isinstance(item, dict) and isinstance(item.get("n"), int) and isinstance(item.get(key), bool):
+            verdicts[item["n"]] = (item[key], str(item.get("why") or "")[:200])
     if not verdicts:
         raise LlmError("модель ответила не в том виде")
     return verdicts
@@ -778,3 +780,99 @@ class TopicCheckService:
                 delete(TopicMatch).where(TopicMatch.topic_id == topic_id, TopicMatch.story_id.in_(dropped))
             )
         return len(obvious) + len(verdicts), len(dropped)
+
+
+MERGE_SYSTEM = """Ты редактор новостного агрегатора. Тебе дают пары сюжетов: у каждого время начала (UTC), \
+число изданий, заголовок и начало текста. Для каждой пары реши, одно ли это событие.
+Одно событие — то же происшествие, заявление, решение или публикация, даже если второе сообщение вышло позже, \
+другими словами или с новыми подробностями.
+Разные события — похожий случай повторился (новые ограничения в аэропорту, новая атака, ещё одно ДТП), \
+другой день, место или период (данные за другой месяц), разные матчи, разные люди, реакция на событие \
+в виде отдельной новости. Если сомневаешься — разные.
+Ответь только JSON-массивом без пояснений: [{"n": номер пары, "same": true или false}]."""
+
+
+class StoryMergeService:
+    """Объединение недосклеенных сюжетов (worker): новый сюжет, у которого рядом очень похожий более ранний,
+    модель сравнивает с ним; одно событие — сюжеты объединяются, иначе остаются «похожими»."""
+
+    BATCH = 20
+
+    def __init__(
+        self, session_factory: async_sessionmaker[AsyncSession], client: LlmClient, config: Settings,
+    ) -> None:
+        self.session_factory = session_factory
+        self.client = client
+        self.config = config
+
+    async def run_once(self) -> tuple[int, int]:
+        """Один круг. Возвращает (сколько пар спросили у модели, сколько объединили)."""
+        now = datetime.now(UTC)
+        async with self.session_factory() as session, session.begin():
+            candidates = await StoryRepository(session).merge_candidates(
+                now - timedelta(hours=6), timedelta(hours=self.config.cluster_merge_window_hours), 200,
+            )
+            threshold = self.config.cluster_merge_min_similarity
+            # Похожего рядом нет — отметить проверенным, модель не нужна
+            for story_id, other_id, similarity in candidates:
+                if other_id is None or similarity is None or similarity < threshold:
+                    session.add(StoryMergeCheck(story_id=story_id, other_id=other_id, similarity=similarity))
+        pairs = [(s, o, sim) for s, o, sim in candidates if o is not None and sim is not None and sim >= threshold]
+        asked = merged = 0
+        for start in range(0, len(pairs), self.BATCH):
+            done, joined = await self._batch(pairs[start:start + self.BATCH])
+            asked, merged = asked + done, merged + joined
+            if not done:
+                break
+        return asked, merged
+
+    async def _batch(self, pairs: list[tuple[int, int, float]]) -> tuple[int, int]:
+        async with self.session_factory() as session, session.begin():
+            try:
+                await check_limit(session, self.config)
+            except LlmError:
+                return 0, 0
+            ids = {i for s, o, _ in pairs for i in (s, o)}
+            stories = {story.id: story for story in await session.scalars(select(Story).where(Story.id.in_(ids)))}
+            pairs = [p for p in pairs if p[0] in stories and p[1] in stories]
+            if not pairs:
+                return 0, 0
+
+            def describe(story: Story) -> str:
+                return (f"{story.started_at:%d.%m %H:%M}, изданий {story.sources_count}: {story.title}\n"
+                        f"{_cut(story.lead or '', 300)}").rstrip()
+
+            prompt = "\n\n".join(
+                f"Пара {n}\nА: {describe(stories[other])}\nБ: {describe(stories[story])}"
+                for n, (story, other, _) in enumerate(pairs, 1)
+            )
+            try:
+                answer = await self.client.complete(MERGE_SYSTEM, prompt, max_tokens=25 * len(pairs) + 200)
+            except LlmError as exc:
+                logger.warning("объединение сюжетов: %s", exc)
+                return 0, 0
+            session.add(LlmUsage(feature="story_merge", model=answer.model, input_tokens=answer.input_tokens,
+                                 output_tokens=answer.output_tokens, cost=answer.cost))
+            try:
+                verdicts = parse_verdicts(answer.text, key="same")
+            except LlmError as exc:
+                logger.warning("объединение сюжетов: %s", exc)
+                return 0, 0
+            await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": CLUSTERING_LOCK_KEY})
+            repo = StoryRepository(session)
+            merged = 0
+            gone: set[int] = set()
+            for n, (story, other, similarity) in enumerate(pairs, 1):
+                if n not in verdicts:
+                    continue  # модель пропустила — спросим в следующий раз
+                same, why = verdicts[n]
+                if story in gone or other in gone:
+                    continue  # один из сюжетов уже влит в другой в этой пачке — проверим заново в следующий раз
+                if same:
+                    await repo.merge(story, other)
+                    gone.add(story)
+                    merged += 1
+                else:
+                    session.add(StoryMergeCheck(story_id=story, other_id=other, similarity=similarity,
+                                                same=same, reason=why or None))
+            return len(verdicts), merged

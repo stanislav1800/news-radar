@@ -149,6 +149,30 @@ _LINK_CANDIDATES_SQL = text(f"""
     ORDER BY post.embedding <=> :embedding
 """).bindparams(bindparam("embedding", type_=Vector(EMBEDDING_DIM)))
 
+# Новые сюжеты и самый похожий пост из более раннего сюжета рядом по времени: кандидаты на объединение (LLM)
+_MERGE_CANDIDATES_SQL = text(f"""
+    WITH fresh AS (
+        SELECT story.id, story.started_at, post.embedding
+        FROM story JOIN post ON post.id = story.first_post_id
+        WHERE story.created_at >= CAST(:since AS timestamptz) AND story.created_at < now() - interval '2 minutes'
+          AND post.embedding IS NOT NULL
+          AND story.id NOT IN (SELECT story_id FROM story_merge_check)
+        ORDER BY story.id
+        LIMIT :limit
+    )
+    SELECT fresh.id AS story_id, near.story_id AS other_id, near.similarity
+    FROM fresh
+    LEFT JOIN LATERAL (
+        SELECT post.story_id, 1 - (post.embedding <=> fresh.embedding) AS similarity
+        FROM post JOIN story AS other ON other.id = post.story_id
+        WHERE post.story_id <> fresh.id AND post.embedding IS NOT NULL
+          AND other.started_at <= fresh.started_at
+          AND {EVENT_AT_SQL} BETWEEN fresh.started_at - CAST(:window AS interval) AND fresh.started_at + interval '1 hour'
+        ORDER BY post.embedding <=> fresh.embedding
+        LIMIT 1
+    ) AS near ON true
+""")
+
 # Издание поста: у источника оно может быть определено (ТАСС из RSS и из Telegram — tass.ru), иначе сам источник
 OUTLET_KEY_SQL = "coalesce(source.outlet, 'source:' || source.id)"
 
@@ -498,6 +522,39 @@ class StoryRepository:
                 MaterialPost(row.name, row.outlet, row.title, row.event_at, row.body)
             )
         return result
+
+    async def merge_candidates(
+        self, since: datetime, window: timedelta, limit: int,
+    ) -> list[tuple[int, int | None, float | None]]:
+        """Непроверенные новые сюжеты: (сюжет, самый похожий более ранний сюжет рядом, похожесть)."""
+        rows = await self.session.execute(_MERGE_CANDIDATES_SQL, {"since": since, "window": window, "limit": limit})
+        return [(row.story_id, row.other_id, row.similarity) for row in rows]
+
+    async def merge(self, source_id: int, target_id: int) -> None:
+        """Влить сюжет source_id в target_id: посты, прочитанное, темы, примеры, ссылки в сводках; source удаляется.
+
+        Вызывать под блокировкой склейки: иначе новый пост может прийти в удаляемый сюжет.
+        """
+        params = {"src": source_id, "dst": target_id}
+        for statement in (
+            "UPDATE post SET story_id = :dst WHERE story_id = :src",
+            # Прочитанное: кто читал любой из двух — читал объединённый (с более поздним временем)
+            """INSERT INTO story_read (user_id, story_id, read_at)
+               SELECT user_id, :dst, read_at FROM story_read WHERE story_id = :src
+               ON CONFLICT (user_id, story_id) DO UPDATE SET read_at = greatest(story_read.read_at, excluded.read_at)""",
+            # Темы: совпадение переносится; 👍/👎-примеры ссылаются на объединённый сюжет
+            """INSERT INTO topic_match (topic_id, story_id, by_words, example_id, similarity, matched_at)
+               SELECT topic_id, :dst, by_words, example_id, similarity, matched_at FROM topic_match WHERE story_id = :src
+               ON CONFLICT (topic_id, story_id) DO NOTHING""",
+            """DELETE FROM topic_example AS e WHERE e.story_id = :src
+               AND EXISTS (SELECT 1 FROM topic_example AS d WHERE d.topic_id = e.topic_id AND d.story_id = :dst)""",
+            "UPDATE topic_example SET story_id = :dst WHERE story_id = :src",
+            """UPDATE topic_report SET story_ids = array_replace(story_ids, CAST(:src AS bigint), CAST(:dst AS bigint))
+               WHERE CAST(:src AS bigint) = ANY(story_ids)""",
+            "DELETE FROM story WHERE id = :src",
+        ):
+            await self.session.execute(text(statement), params)
+        await self.refresh(target_id)
 
     async def reprocess(self, source_type: str, *, untitled: bool = False) -> int:
         """Отправить посты источников этого типа заново через весь конвейер: очистка, вектор, склейка.

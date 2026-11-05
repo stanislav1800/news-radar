@@ -51,3 +51,19 @@ class TopicReport(IdMixin, Base):
     cost: Mapped[float | None]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     read_at: Mapped[datetime | None]  # дайджест открыли: для значка «Дайджесты» в шапке
+
+
+class StoryMergeCheck(Base):
+    """Проверка нового сюжета: не то же ли событие, что у очень похожего сюжета рядом (LLM).
+
+    Одна строка на новый сюжет: проверен — больше не проверяется. Если LLM ответила «одно событие»,
+    сюжет вливается в other_id и удаляется (вместе с этой строкой)."""
+
+    __tablename__ = "story_merge_check"
+
+    story_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("story.id", ondelete="CASCADE"), primary_key=True)
+    other_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("story.id", ondelete="SET NULL"))
+    similarity: Mapped[float | None]
+    same: Mapped[bool | None]       # None — похожего рядом нет, модель не спрашивали
+    reason: Mapped[str | None]
+    checked_at: Mapped[datetime] = mapped_column(server_default=func.now())

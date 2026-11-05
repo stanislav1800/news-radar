@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import LlmUsage, StorySummary
@@ -340,3 +340,83 @@ async def test_user_daily_limit(session_factory: async_sessionmaker[AsyncSession
         await check_limit(session, config)  # общий лимит не исчерпан
         with pytest.raises(LlmError, match="ваш дневной лимит"):
             await check_limit(session, config, me.id)
+
+
+async def test_story_merge_by_llm(
+    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource,
+) -> None:
+    from sqlalchemy import update
+
+    from sito.models import Post, Story, StoryMergeCheck
+    from sito.services.clustering import ClusteringService
+    from sito.services.llm import StoryMergeService
+    from tests.test_clustering import T0, Posts, vec
+
+    a, b, c = await make_source(), await make_source(), await make_source()
+    posts = Posts(session_factory)
+    # Одно событие, второе издание написало через 20 часов: склейка (до 6 часов) их не соединила
+    first = await posts.add(a, vec(), T0, title="В Белове спасли 10 человек из горящего дома")
+    late = await posts.add(b, vec(0.97), T0 + timedelta(hours=20), title="В Белове МЧС спасли 10 человек")
+    # Повторившийся похожий случай: модель скажет «разные»
+    await posts.add(a, vec(0.95, axis=6), T0 + timedelta(hours=100), title="Во Внукове ввели ограничения")
+    again = await posts.add(c, vec(0.96, axis=7), T0 + timedelta(hours=108), title="Во Внукове снова ограничения")
+    await ClusteringService(session_factory).process_batch()
+    async with session_factory() as session, session.begin():
+        assert await session.scalar(select(func.count()).select_from(Story)) == 4
+        # Сюжеты созданы «давно»: свежие (меньше 2 минут) не проверяются, склейка могла ещё не закончить
+        await session.execute(update(Story).values(created_at=func.now() - timedelta(minutes=10)))
+
+    seen: list[dict[str, object]] = []
+    verdicts = [{"n": 1, "same": True, "why": "одно спасение"}, {"n": 2, "same": False, "why": "новый случай"}]
+    client = fake_llm([answer(json.dumps(verdicts, ensure_ascii=False))], seen)
+    assert await StoryMergeService(session_factory, client, app.state.settings).run_once() == (2, 1)
+    assert "Во Внукове снова ограничения" in str(seen[0]["messages"])
+
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Story)) == 3
+        story_ids = {p.id: p.story_id for p in await session.scalars(select(Post))}
+        merged = await session.get(Story, story_ids[first])
+        check = await session.get(StoryMergeCheck, story_ids[again])
+    assert story_ids[first] == story_ids[late] and merged is not None and merged.posts_count == 2
+    assert check is not None and check.same is False and check.reason == "новый случай"
+
+    # Проверенное повторно модели не уходит
+    assert await StoryMergeService(session_factory, client, app.state.settings).run_once() == (0, 0)
+
+
+async def test_merge_keeps_reads_topics_and_report_links(
+    stories: Stories, session_factory: async_sessionmaker[AsyncSession], user: str,
+) -> None:
+    from sito.models import (
+        StoryRead,
+        Topic,
+        TopicExample,
+        TopicMatch,
+        TopicReport,
+        User,
+    )
+    from sito.repositories.stories import StoryRepository
+
+    keep = await stories.add([("ТАСС", "Спасли 10 человек", timedelta(hours=20))])
+    gone = await stories.add([("РБК", "МЧС спасли 10 человек", timedelta(hours=1))])
+    async with session_factory() as session, session.begin():
+        me = await session.scalar(select(User))
+        assert me is not None
+        topic = Topic(user_id=me.id, name="МЧС", rss_token="m")
+        session.add(topic)
+        await session.flush()
+        session.add_all([
+            StoryRead(user_id=me.id, story_id=gone),
+            TopicMatch(topic_id=topic.id, story_id=gone, by_words=True),
+            TopicExample(topic_id=topic.id, story_id=gone, liked=True, title="МЧС", embedding=[0.0] * 767 + [1.0]),
+            TopicReport(topic_id=topic.id, kind="summary", days=1, text="[1]", story_ids=[gone], model="m",
+                        input_tokens=1, output_tokens=1),
+        ])
+        await session.flush()
+        await StoryRepository(session).merge(gone, keep)
+
+    async with session_factory() as session:
+        assert await session.get(StoryRead, (me.id, keep)) is not None
+        assert await session.get(TopicMatch, (topic.id, keep)) is not None
+        assert (await session.scalar(select(TopicExample))).story_id == keep  # type: ignore[union-attr]
+        assert (await session.scalar(select(TopicReport))).story_ids == [keep]  # type: ignore[union-attr]

@@ -28,7 +28,12 @@ from sito.services.connectors import ConnectorSupervisor
 from sito.services.embedding import EmbeddingService, SentenceTransformerEmbedder
 from sito.services.fulltext import FullTextService
 from sito.services.ingest import IngestService
-from sito.services.llm import DigestService, LlmClient, TopicCheckService
+from sito.services.llm import (
+    DigestService,
+    LlmClient,
+    StoryMergeService,
+    TopicCheckService,
+)
 from sito.services.topics import TopicMatchingService, TopicRules
 from sito.utils.crypto import SecretBox
 
@@ -203,6 +208,25 @@ async def topic_check_loop(stop: asyncio.Event) -> None:
         await sleep_until_stop(stop, CHECK_SECONDS)
 
 
+MERGE_SECONDS = 180
+
+
+async def merge_loop(stop: asyncio.Event) -> None:
+    """Раз в 3 минуты: LLM решает, не одно ли событие у нового сюжета и очень похожего сюжета рядом."""
+    client = LlmClient.from_settings(settings)
+    if client is None or not settings.cluster_merge_enabled:
+        return
+    service = StoryMergeService(async_session, client, settings)
+    while not stop.is_set():
+        try:
+            asked, merged = await service.run_once()
+            if asked:
+                logger.info("объединение сюжетов: спросили про %d пар, объединили %d", asked, merged)
+        except Exception:
+            logger.exception("ошибка объединения сюжетов")
+        await sleep_until_stop(stop, MERGE_SECONDS)
+
+
 async def digest_loop(stop: asyncio.Event) -> None:
     """Раз в минуту: дайджесты тем, у которых подошло время по расписанию (если LLM настроена)."""
     client = LlmClient.from_settings(settings)
@@ -290,6 +314,7 @@ async def main() -> None:
             tasks.create_task(alerts_loop(stop))
             tasks.create_task(digest_loop(stop))
             tasks.create_task(topic_check_loop(stop))
+            tasks.create_task(merge_loop(stop))
             if settings.full_text_enabled:
                 full_text = FullTextService(
                     async_session, client, concurrency=settings.full_text_concurrency,

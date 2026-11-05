@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     cluster_merge_enabled: bool = True
     cluster_merge_min_similarity: float = 0.90
     cluster_merge_window_hours: float = 24
+    cluster_merge_batches_per_hour: int = 12  # потолок: 12 пачек по 20 пар (~1 ₽/ч) даже после завала
     cluster_batch_size: int = 100
     cluster_tick_seconds: float = 5
 
@@ -128,6 +129,10 @@ class Settings(BaseSettings):
     llm_no_reasoning: bool = True
     llm_daily_tokens: int = 3_000_000   # общий лимит токенов (вход + выход) за последние сутки
     llm_user_daily_tokens: int = 1_000_000  # и на одного пользователя (0 — без своего лимита)
+    # Лимиты в рублях за сутки по цене, которую сообщает сервис (0 — не ограничивать): точнее токенов,
+    # ответ модели в разы дороже вопроса
+    llm_daily_rub: float = 150
+    llm_user_daily_rub: float = 50
     llm_story_chars: int = 30_000       # сколько знаков материалов сюжета отправлять (~8–10 тыс. токенов)
     llm_topic_chars: int = 45_000       # сводка по теме: сколько знаков материалов (~12–15 тыс. токенов)
     llm_topic_stories: int = 60         # и не больше стольких самых заметных сюжетов за период

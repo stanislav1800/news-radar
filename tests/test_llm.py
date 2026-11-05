@@ -347,21 +347,31 @@ async def test_user_daily_limit(session_factory: async_sessionmaker[AsyncSession
 async def test_story_merge_by_llm(
     app: FastAPI, session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource,
 ) -> None:
+    from datetime import UTC, datetime
+
     from sqlalchemy import update
 
-    from sito.models import Post, Story, StoryMergeCheck
+    from sito.models import Post, Story, StoryMergeCheck, StoryMergeLog
     from sito.services.clustering import ClusteringService
     from sito.services.llm import StoryMergeService
-    from tests.test_clustering import T0, Posts, vec
+    from tests.test_clustering import Posts, vec
 
     a, b, c = await make_source(), await make_source(), await make_source()
     posts = Posts(session_factory)
+    now = datetime.now(UTC)
+
+    def other(similarity: float) -> list[float]:
+        """Вектор другой темы (оси 10–11): к постам про Белово не похож."""
+        v = [0.0] * len(vec())
+        v[10], v[11] = similarity, (1 - similarity**2) ** 0.5
+        return v
+
     # Одно событие, второе издание написало через 20 часов: склейка (до 6 часов) их не соединила
-    first = await posts.add(a, vec(), T0, title="В Белове спасли 10 человек из горящего дома")
-    late = await posts.add(b, vec(0.97), T0 + timedelta(hours=20), title="В Белове МЧС спасли 10 человек")
+    first = await posts.add(a, vec(), now - timedelta(hours=22), title="В Белове спасли 10 человек из горящего дома")
+    late = await posts.add(b, vec(0.97), now - timedelta(hours=2), title="В Белове МЧС спасли 10 человек")
     # Повторившийся похожий случай: модель скажет «разные»
-    await posts.add(a, vec(0.95, axis=6), T0 + timedelta(hours=100), title="Во Внукове ввели ограничения")
-    again = await posts.add(c, vec(0.96, axis=7), T0 + timedelta(hours=108), title="Во Внукове снова ограничения")
+    await posts.add(a, other(1.0), now - timedelta(hours=11), title="Во Внукове ввели ограничения")
+    again = await posts.add(c, other(0.96), now - timedelta(hours=3), title="Во Внукове снова ограничения")
     await ClusteringService(session_factory).process_batch()
     async with session_factory() as session, session.begin():
         assert await session.scalar(select(func.count()).select_from(Story)) == 4
@@ -369,7 +379,8 @@ async def test_story_merge_by_llm(
         await session.execute(update(Story).values(created_at=func.now() - timedelta(minutes=10)))
 
     seen: list[dict[str, object]] = []
-    verdicts = [{"n": 1, "same": True, "why": "одно спасение"}, {"n": 2, "same": False, "why": "новый случай"}]
+    # Пары — по порядку новых сюжетов: «Внуково снова» (раньше по времени), потом «Белово»
+    verdicts = [{"n": 1, "same": False, "why": "новый случай"}, {"n": 2, "same": True}]
     client = fake_llm([answer(json.dumps(verdicts, ensure_ascii=False))], seen)
     assert await StoryMergeService(session_factory, client, app.state.settings).run_once() == (2, 1)
     assert "Во Внукове снова ограничения" in str(seen[0]["messages"])
@@ -381,6 +392,10 @@ async def test_story_merge_by_llm(
         check = await session.get(StoryMergeCheck, story_ids[again])
     assert story_ids[first] == story_ids[late] and merged is not None and merged.posts_count == 2
     assert check is not None and check.same is False and check.reason == "новый случай"
+
+    async with session_factory() as session:
+        [log] = list(await session.scalars(select(StoryMergeLog)))
+    assert log.target_id == story_ids[first] and log.source_title == "В Белове МЧС спасли 10 человек"
 
     # Проверенное повторно модели не уходит
     assert await StoryMergeService(session_factory, client, app.state.settings).run_once() == (0, 0)
@@ -422,3 +437,37 @@ async def test_merge_keeps_reads_topics_and_report_links(
         assert await session.get(TopicMatch, (topic.id, keep)) is not None
         assert (await session.scalar(select(TopicExample))).story_id == keep  # type: ignore[union-attr]
         assert (await session.scalar(select(TopicReport))).story_ids == [keep]  # type: ignore[union-attr]
+
+
+async def test_client_retries_overload_then_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sito.services import llm
+
+    monkeypatch.setattr(llm, "RETRY_DELAYS", (0.0, 0.0))
+    replies = [httpx.Response(429, json={"error": {"message": "overloaded"}}),
+               httpx.Response(503, text="busy"), httpx.Response(200, json=answer("Готово"))]
+    client = LlmClient("https://llm.example/v1", "key", "m",
+                       transport=httpx.MockTransport(lambda request: replies.pop(0)))
+    assert (await client.complete("s", "p", max_tokens=10)).text == "Готово" and replies == []
+
+
+async def test_same_answer_is_not_prepared_twice() -> None:
+    from sito.services.llm import LlmError, exclusive
+
+    async with exclusive("story", 1):
+        with pytest.raises(LlmError, match="уже готовлю"):
+            async with exclusive("story", 1):
+                pass
+    async with exclusive("story", 1):  # закончилось — можно снова
+        pass
+
+
+async def test_daily_limit_in_rubles(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    from sito.config import settings
+    from sito.services.llm import LlmError, check_limit
+
+    config = settings.model_copy(update={"llm_daily_tokens": 10**9, "llm_daily_rub": 5.0})
+    async with session_factory() as session, session.begin():
+        session.add(LlmUsage(feature="story_merge", model="m", input_tokens=10, output_tokens=10, cost=5.5))
+        await session.flush()
+        with pytest.raises(LlmError, match="дневной лимит"):
+            await check_limit(session, config)

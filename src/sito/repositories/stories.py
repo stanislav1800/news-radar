@@ -156,7 +156,9 @@ _MERGE_CANDIDATES_SQL = text(f"""
         FROM story JOIN post ON post.id = story.first_post_id
         WHERE story.created_at >= CAST(:since AS timestamptz) AND story.created_at < now() - interval '2 minutes'
           AND post.embedding IS NOT NULL
-          AND story.id NOT IN (SELECT story_id FROM story_merge_check)
+          -- Сюжет из догрузки старых постов (после простоя) — не новость: объединять его за деньги незачем
+          AND story.started_at >= story.created_at - interval '6 hours'
+          AND NOT EXISTS (SELECT 1 FROM story_merge_check AS c WHERE c.story_id = story.id)
         ORDER BY story.id
         LIMIT :limit
     )
@@ -543,8 +545,11 @@ class StoryRepository:
                SELECT user_id, :dst, read_at FROM story_read WHERE story_id = :src
                ON CONFLICT (user_id, story_id) DO UPDATE SET read_at = greatest(story_read.read_at, excluded.read_at)""",
             # Темы: совпадение переносится; 👍/👎-примеры ссылаются на объединённый сюжет
+            # (кроме тем, где проверка по описанию объединённый сюжет уже отклонила)
             """INSERT INTO topic_match (topic_id, story_id, by_words, example_id, similarity, matched_at)
-               SELECT topic_id, :dst, by_words, example_id, similarity, matched_at FROM topic_match WHERE story_id = :src
+               SELECT m.topic_id, :dst, m.by_words, m.example_id, m.similarity, m.matched_at FROM topic_match AS m
+               WHERE m.story_id = :src AND NOT EXISTS (
+                   SELECT 1 FROM topic_check AS c WHERE c.topic_id = m.topic_id AND c.story_id = :dst AND NOT c.fits)
                ON CONFLICT (topic_id, story_id) DO NOTHING""",
             """DELETE FROM topic_example AS e WHERE e.story_id = :src
                AND EXISTS (SELECT 1 FROM topic_example AS d WHERE d.topic_id = e.topic_id AND d.story_id = :dst)""",

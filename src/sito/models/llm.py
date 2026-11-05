@@ -67,3 +67,17 @@ class StoryMergeCheck(Base):
     same: Mapped[bool | None]       # None — похожего рядом нет, модель не спрашивали
     reason: Mapped[str | None]
     checked_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class StoryMergeLog(IdMixin, Base):
+    """Журнал объединений: что во что влито. Без внешних ключей — сюжет-источник уже удалён,
+    а запись нужна, чтобы найти и оценить ошибочные объединения."""
+
+    __tablename__ = "story_merge_log"
+
+    source_id: Mapped[int] = mapped_column(BigInteger)   # влитый (удалённый) сюжет
+    target_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    similarity: Mapped[float]
+    source_title: Mapped[str]
+    target_title: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)

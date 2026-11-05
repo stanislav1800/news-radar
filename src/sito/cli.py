@@ -277,14 +277,16 @@ def llm_summarize(
 
     async def run() -> None:
         for name in model or [client.model]:
-            async with async_session() as session, session.begin():
+            async with async_session() as session:
                 try:
                     result, answer = await StorySummaryService(session, client, settings).summarize(
                         story_id, user_id=None, timezone=timezone, model=name, save=save,
                     )
                 except LlmError as exc:
+                    await session.commit()  # расход записан и при ошибке
                     console.print(f"[red]{name}: {exc}[/red]")
                     continue
+                await session.commit()
             cost = f", цена {answer.cost}" if answer.cost is not None else ""
             console.rule(f"{answer.model}: {answer.input_tokens} → {answer.output_tokens} токенов, "
                          f"{answer.seconds:.1f} с{cost}")

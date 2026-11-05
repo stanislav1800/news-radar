@@ -151,3 +151,70 @@ async def test_topic_summary_question_history_and_prompt(
     async with session_factory() as session:
         assert len(list(await session.scalars(select(TopicReport)))) == 2
         assert len(list(await session.scalars(select(LlmUsage)))) == 2
+
+
+def test_digest_slots() -> None:
+    from datetime import UTC, datetime
+
+    from sito.models import Topic
+    from sito.services.llm import digest_slot, next_digest
+
+    msk = ZoneInfo("Europe/Moscow")
+    wednesday_10 = datetime(2026, 11, 4, 7, 0, tzinfo=UTC)  # 10:00 МСК, среда
+    assert digest_slot("daily", "08:00", 0, wednesday_10, msk) == datetime(2026, 11, 4, 5, 0, tzinfo=UTC)
+    assert digest_slot("daily", "12:00", 0, wednesday_10, msk) == datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
+    assert digest_slot("weekly", "08:00", 0, wednesday_10, msk) == datetime(2026, 11, 2, 5, 0, tzinfo=UTC)
+    saturday = datetime(2026, 11, 7, 7, 0, tzinfo=UTC)
+    assert digest_slot("weekdays", "08:00", 0, saturday, msk) == datetime(2026, 11, 6, 5, 0, tzinfo=UTC)
+    topic = Topic(digest_schedule="weekdays", digest_time="08:00", digest_weekday=0)
+    assert next_digest(topic, saturday, msk) == datetime(2026, 11, 9, 5, 0, tzinfo=UTC)
+
+
+async def test_digest_by_schedule_page_badge_and_rss(
+    app: FastAPI, logged_in: httpx.AsyncClient, stories: Stories,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from datetime import UTC, datetime
+
+    from sito.models import Topic, TopicMatch, TopicReport, User
+    from sito.services.llm import DigestService
+
+    story_id = await stories.add([("ТАСС", "Рекорд добычи угля", timedelta(hours=2))])
+    async with session_factory() as session, session.begin():
+        user = await session.scalar(select(User))
+        assert user is not None
+        topic = Topic(user_id=user.id, name="Уголь", query="уголь", rss_token="tok")
+        session.add(topic)
+        await session.flush()
+        session.add(TopicMatch(topic_id=topic.id, story_id=story_id, by_words=True))
+        topic_id = topic.id
+
+    token = await csrf_from(logged_in, f"/topics/{topic_id}")
+    await logged_in.post(f"/topics/{topic_id}/digest", data={
+        "csrf_token": token, "schedule": "daily", "at": "08:00", "kind": "short", "min_stories": "2",
+        "prompt": "Только цифры"})
+    seen: list[dict[str, object]] = []
+    client = fake_llm([answer("- Рекорд угля [1].")], seen)
+    service = DigestService(session_factory, client, app.state.settings)
+    tomorrow = datetime.now(UTC) + timedelta(days=1, hours=1)
+
+    # Сразу после сохранения — не срабатывает; завтра — мало новых сюжетов (1 < 2): пропуск без запроса
+    assert await service.run_due() == 0
+    assert await service.run_due(tomorrow) == 0 and seen == []
+
+    async with session_factory() as session, session.begin():
+        topic = await session.get(Topic, topic_id)
+        assert topic is not None
+        topic.digest_min_stories, topic.digest_last_at = 1, None
+    assert await service.run_due(tomorrow) == 1
+    assert "Только цифры" in str(seen[0]["messages"]) and "дайджест" in str(seen[0]["messages"])
+    assert await service.run_due(tomorrow) == 0  # этот слот уже отработан
+
+    assert ">1</span>" in (await logged_in.get("/digests/badge")).text
+    page = await logged_in.get("/digests")
+    assert "Рекорд угля" in page.text and f'href="/stories/{story_id}"' in page.text
+    assert "</span>" not in (await logged_in.get("/digests/badge")).text  # прочитан
+    rss = await logged_in.get("/rss/tok/digests")
+    assert "Рекорд угля" in rss.text and f"/stories/{story_id}" in rss.text
+    async with session_factory() as session:
+        assert [r.kind for r in await session.scalars(select(TopicReport))] == ["digest"]

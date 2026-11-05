@@ -40,7 +40,7 @@ class TopicReport(IdMixin, Base):
     __tablename__ = "topic_report"
 
     topic_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("topic.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str]               # summary — сводка, question — вопрос
+    kind: Mapped[str]               # summary — сводка, question — вопрос, digest — дайджест по расписанию
     days: Mapped[int]               # за сколько дней
     question: Mapped[str | None]
     text: Mapped[str]               # markdown: ## заголовки, списки, ссылки [n] на сюжеты
@@ -50,3 +50,4 @@ class TopicReport(IdMixin, Base):
     output_tokens: Mapped[int]
     cost: Mapped[float | None]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    read_at: Mapped[datetime | None]  # дайджест открыли: для значка «Дайджесты» в шапке

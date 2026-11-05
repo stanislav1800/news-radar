@@ -2,7 +2,8 @@
 {% set period = periods[report.days] if report.days in periods else report.days ~ " дн." %}
 <details class="report"{% if open %} open{% endif %}>
   <summary>
-    <strong>{% if report.kind == "question" %}Вопрос: {{ report.question }}{% else %}Сводка за {{ period }}{% endif %}</strong>
+    <strong>{% if report.kind == "question" %}Вопрос: {{ report.question }}
+      {%- elif report.kind == "digest" %}Дайджест{% else %}Сводка за {{ period }}{% endif %}</strong>
     <span class="muted small">· {{ report.created_at | ago(user.timezone, now) }}
       {%- if new %} · с тех пор новых сюжетов: {{ new }}{% endif %}</span>
   </summary>

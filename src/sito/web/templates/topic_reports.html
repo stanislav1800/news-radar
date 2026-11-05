@@ -8,7 +8,7 @@
   {% for r in reports %}
   <li>
     <a href="/topics/{{ topic.id }}/reports/{{ r.id }}">
-      {%- if r.kind == "question" %}Вопрос: {{ r.question }}{% else %}Сводка за {{ periods.get(r.days, r.days ~ " дн.") }}{% endif -%}
+      {%- if r.kind == "question" %}Вопрос: {{ r.question }}{% elif r.kind == "digest" %}Дайджест{% else %}Сводка за {{ periods.get(r.days, r.days ~ " дн.") }}{% endif -%}
     </a>
     <span class="muted small">· {{ r.created_at | local_time(user.timezone, now) }} · {{ r.story_ids | length | plural("сюжет", "сюжета", "сюжетов") }}
       {%- if r.cost is not none %} · {{ "%.2f" | format(r.cost) }} ₽{% endif %}</span>

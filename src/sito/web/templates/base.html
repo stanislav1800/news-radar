@@ -17,6 +17,7 @@
       <input type="search" name="q" value="{{ search_query | default('') }}"
              placeholder="Найти или следить: например, уголь в Кузбассе" aria-label="Найти или следить">
     </form>
+    <span hx-get="/digests/badge" hx-trigger="load" hx-swap="outerHTML"></span>
     <details class="menu account">
       <summary>{{ user.username }}{% if user.is_admin %}<span hx-get="/admin/alert" hx-trigger="load" hx-swap="outerHTML"></span>{% endif %}</summary>
       <div class="menu-body right">

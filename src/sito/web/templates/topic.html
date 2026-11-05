@@ -71,6 +71,49 @@
     <button type="submit">Сохранить</button>
   </form>
 </section>
+
+<h2 id="digest">Дайджест по расписанию</h2>
+<section class="card settings">
+  <form class="stack digest-form" method="post" action="/topics/{{ topic.id }}/digest">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <div class="digest-row">
+      <label>Как часто
+        <select name="schedule">
+          <option value="">выключен</option>
+          {% for value, label in schedules.items() %}<option value="{{ value }}"{% if topic.digest_schedule == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>День недели
+        <select name="weekday">
+          {% for name in weekdays %}<option value="{{ loop.index0 }}"{% if topic.digest_weekday == loop.index0 %} selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Во сколько <input type="time" name="at" value="{{ topic.digest_time }}" required></label>
+    </div>
+    <div class="digest-row">
+      <label>Формат
+        <select name="kind">
+          <option value="short"{% if topic.digest_format == "short" %} selected{% endif %}>список главных событий</option>
+          <option value="full"{% if topic.digest_format == "full" %} selected{% endif %}>подробный обзор по разделам</option>
+        </select>
+      </label>
+      <label>Не делать, если новых сюжетов меньше
+        <input type="number" name="min_stories" min="1" max="100" value="{{ topic.digest_min_stories }}">
+      </label>
+    </div>
+    <label for="digest-prompt">Пожелания к дайджесту</label>
+    <textarea id="digest-prompt" name="prompt" rows="2" maxlength="2000"
+              placeholder="Например: только решения властей и цифры, без происшествий">{{ topic.digest_prompt or "" }}</textarea>
+    <p class="muted small">
+      День недели — только для «раз в неделю». Дайджест охватывает всё новое с прошлого дайджеста;
+      в пустые дни не делается и денег не тратит. Время — по вашему часовому поясу из настроек.
+      {% if digest_next %}<br>Следующий: {{ digest_next | local_time(user.timezone, now) }}.{% endif %}
+    </p>
+    <button type="submit">Сохранить</button>
+  </form>
+  <p class="small">Дайджесты появляются вверху ленты темы и в разделе <a href="/digests">«Дайджесты»</a>.
+    RSS для читалки или бота RSS в Telegram: <code>{{ rss_url }}/digests</code></p>
+</section>
 {% endif %}
 
 <h2>Управление</h2>

@@ -17,6 +17,10 @@ def _zone(timezone: str) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
+def zone(timezone: str) -> ZoneInfo:
+    return _zone(timezone)
+
+
 def local_time(moment: datetime, timezone: str, now: datetime | None = None) -> str:
     """«14:05», «вчера, 14:05», «28 окт, 14:05», «28 окт 2025, 14:05»."""
     zone = _zone(timezone)

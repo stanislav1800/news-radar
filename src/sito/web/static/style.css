@@ -474,3 +474,10 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 .report-meta { margin-top: .5rem; }
 .report-list { padding-left: 1.2rem; }
 .report-list li { margin: .3rem 0; }
+
+/* Дайджесты */
+.digests-link { white-space: nowrap; margin-right: .5rem; }
+.digest-row { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
+.digest-row label { display: flex; flex-direction: column; gap: .2rem; }
+.topic-report.unread { border-left: 3px solid var(--accent); }
+.digest-topic { font-size: 1.05rem; margin: 0; }

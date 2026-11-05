@@ -31,6 +31,14 @@ class Topic(IdMixin, TimestampMixin, Base):
     # Искать только в этих источниках (тема «IT» — Хабр и OpenNET); пусто — во всех
     source_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), server_default="{}")
     llm_prompt: Mapped[str | None]  # пожелания пользователя к сводкам и ответам LLM по теме
+    # Дайджест по расписанию (LLM): daily, weekdays, weekly или None — выключен
+    digest_schedule: Mapped[str | None]
+    digest_time: Mapped[str] = mapped_column(server_default="08:00")   # ЧЧ:ММ в часовом поясе пользователя
+    digest_weekday: Mapped[int] = mapped_column(server_default="0")    # для weekly: 0 — понедельник
+    digest_format: Mapped[str] = mapped_column(server_default="short") # short — список событий, full — обзор
+    digest_min_stories: Mapped[int] = mapped_column(server_default="3")  # меньше новых сюжетов — не делать
+    digest_prompt: Mapped[str | None]                                  # пожелания именно к дайджесту
+    digest_last_at: Mapped[datetime | None]  # когда последний раз проверяли расписание (сделан или пропущен)
 
 
 class TopicExample(IdMixin, Base):

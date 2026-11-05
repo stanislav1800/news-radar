@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Дайджесты · Сито{% endblock %}
+{% block content %}
+<h1>Дайджесты</h1>
+{% if rows %}
+{% for report, topic_name in rows %}
+<article class="topic-report card{% if report.id in unread %} unread{% endif %}">
+  <h2 class="digest-topic"><a href="/?topic={{ report.topic_id }}">{{ topic_name }}</a>
+    {% if report.id in unread %}<span class="badge updated">новый</span>{% endif %}</h2>
+  {% with topic={"id": report.topic_id}, open=loop.first or report.id in unread, new=0 %}{% include "_topic_report.html" %}{% endwith %}
+</article>
+{% endfor %}
+{% else %}
+<p class="muted">Дайджестов пока нет. Включить их можно в настройках темы: «Дайджест по расписанию».</p>
+{% endif %}
+{% endblock %}

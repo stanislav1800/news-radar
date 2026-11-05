@@ -4,20 +4,31 @@
 Ollama). Каждый запрос пишется в llm_usage: по нему дневной лимит и счётчик в админке.
 """
 
+import logging
 import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.config import Settings
-from sito.models import LlmUsage, Story, StorySummary, Topic, TopicMatch, TopicReport
+from sito.models import (
+    LlmUsage,
+    Story,
+    StorySummary,
+    Topic,
+    TopicMatch,
+    TopicReport,
+    User,
+)
 from sito.repositories.stories import MaterialPost, StoryRepository
+
+logger = logging.getLogger(__name__)
 
 
 class LlmError(Exception):
@@ -294,6 +305,17 @@ TOPIC_QUESTION_SYSTEM = _TOPIC_INTRO + """
 
 """ + _TOPIC_RULES
 
+TOPIC_DIGEST_SHORT_SYSTEM = _TOPIC_INTRO + """
+
+Это дайджест — регулярная рассылка о новом в теме. Напиши список главных событий периода: \
+по одному пункту «- » на событие, 1–2 предложения в пункте, самое важное — первым. Похожие сюжеты \
+об одном событии объединяй в один пункт. Мелочи пропускай. Не больше 15 пунктов и {words} слов.
+
+""" + _TOPIC_RULES
+
+TOPIC_DIGEST_FULL_SYSTEM = TOPIC_SUMMARY_SYSTEM.replace("Напиши обзор темы за период:", \
+    "Это дайджест — регулярная рассылка о новом в теме. Напиши обзор нового за период:")
+
 USER_PROMPT = """
 
 Пожелания пользователя к ответу (выполняй, если они не требуют выдумывать факты или нарушать правила выше):
@@ -335,14 +357,16 @@ class TopicReportService:
     def _since(self, days: int) -> datetime:
         return datetime.now(UTC) - timedelta(days=days)
 
-    async def _stories(self, topic: Topic, days: int) -> list[tuple[int, str, int, datetime, str | None]]:
-        """Самые заметные сюжеты темы за период, по времени."""
+    async def _stories(
+        self, topic: Topic, since: datetime,
+    ) -> list[tuple[int, str, int, datetime, str | None]]:
+        """Самые заметные сюжеты темы, обновлявшиеся с since, по времени."""
         rows = list(await self.session.execute(
             select(Story.id, func.coalesce(StorySummary.title, Story.title), Story.sources_count, Story.started_at,
                    StorySummary.summary)
             .join(TopicMatch, TopicMatch.story_id == Story.id)
             .outerjoin(StorySummary, StorySummary.story_id == Story.id)
-            .where(TopicMatch.topic_id == topic.id, Story.last_post_at >= self._since(days))
+            .where(TopicMatch.topic_id == topic.id, Story.last_post_at >= since)
             .order_by(Story.sources_count.desc(), Story.last_post_at.desc())
             .limit(self.config.llm_topic_stories)
         ))
@@ -363,31 +387,43 @@ class TopicReportService:
             query = query.where(TopicReport.days == days)
         return await self.session.scalar(query.order_by(TopicReport.id.desc()).limit(1))
 
+    async def count_since(self, topic_id: int, since: datetime) -> int:
+        return int(await self.session.scalar(
+            select(func.count()).select_from(TopicMatch).join(Story, Story.id == TopicMatch.story_id)
+            .where(TopicMatch.topic_id == topic_id, Story.last_post_at >= since)
+        ) or 0)
+
     async def make(
         self, topic: Topic, *, days: int, user_id: int, timezone: str = "UTC", question: str | None = None,
-        force: bool = False,
+        force: bool = False, digest: bool = False, since: datetime | None = None,
     ) -> TopicReport:
-        """Сводка за период (question=None) или ответ на вопрос. Сводку без новых сюжетов не переделывает."""
+        """Сводка за период, ответ на вопрос или дайджест (с since). Сводку без новых сюжетов не переделывает."""
         if days not in PERIODS:
             raise LlmError("неизвестный период")
-        kind = "question" if question else "summary"
+        kind = "digest" if digest else "question" if question else "summary"
         if kind == "summary" and not force:
             last = await self.latest(topic.id, kind, days)
             if last is not None and not await self.new_since(last):
                 return last
-        stories = await self._stories(topic, days)
+        stories = await self._stories(topic, since or self._since(days))
         if not stories:
             raise LlmError(f"в теме нет сюжетов за {PERIODS[days]}")
         await check_limit(self.session, self.config)
         materials = await StoryRepository(self.session).materials(
             [s[0] for s in stories if not s[4]], body_chars=3000
         )
-        system = (TOPIC_QUESTION_SYSTEM if question else TOPIC_SUMMARY_SYSTEM).format(
+        if digest:
+            template = TOPIC_DIGEST_FULL_SYSTEM if topic.digest_format == "full" else TOPIC_DIGEST_SHORT_SYSTEM
+        else:
+            template = TOPIC_QUESTION_SYSTEM if question else TOPIC_SUMMARY_SYSTEM
+        system = template.format(
             name=topic.name, period={1: "сутки", 7: "7 дней", 30: "30 дней"}[days],
             words={1: 500, 7: 1000, 30: 1500}[days],
         )
         if topic.llm_prompt and topic.llm_prompt.strip():
             system += USER_PROMPT.format(prompt=topic.llm_prompt.strip())
+        if digest and topic.digest_prompt and topic.digest_prompt.strip():
+            system += USER_PROMPT.format(prompt=topic.digest_prompt.strip())
         prompt = "Сюжеты:\n\n" + topic_prompt(stories, materials, self.config.llm_topic_chars, ZoneInfo(timezone))
         if question:
             prompt += f"\n\nВопрос: {question}"
@@ -408,3 +444,90 @@ class TopicReportService:
         self.session.add(report)
         await self.session.flush()
         return report
+
+
+DIGEST_SCHEDULES = {"daily": "каждый день", "weekdays": "по будням", "weekly": "раз в неделю"}
+WEEKDAYS = ("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
+
+
+def _fits(schedule: str, weekday: int, day: datetime) -> bool:
+    return (schedule == "daily" or (schedule == "weekdays" and day.weekday() < 5)
+            or (schedule == "weekly" and day.weekday() == weekday))
+
+
+def _local_slot(day: datetime, at: str) -> datetime:
+    hour, minute = (int(x) for x in at.split(":"))
+    return day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def digest_slot(schedule: str, at: str, weekday: int, now: datetime, tz: ZoneInfo) -> datetime:
+    """Последний момент по расписанию, не позже now (в UTC)."""
+    local = now.astimezone(tz)
+    for back in range(8):
+        slot = _local_slot(local - timedelta(days=back), at)
+        if slot <= local and _fits(schedule, weekday, slot):
+            return slot.astimezone(UTC)
+    return (local - timedelta(days=8)).astimezone(UTC)
+
+
+def next_digest(topic: Topic, now: datetime, tz: ZoneInfo) -> datetime | None:
+    """Когда будет следующий дайджест (для подсказки в настройках)."""
+    if not topic.digest_schedule:
+        return None
+    local = now.astimezone(tz)
+    for ahead in range(8):
+        slot = _local_slot(local + timedelta(days=ahead), topic.digest_time)
+        if slot > local and _fits(topic.digest_schedule, topic.digest_weekday, slot):
+            return slot.astimezone(UTC)
+    return None
+
+
+class DigestService:
+    """Дайджесты по расписанию: worker раз в минуту проверяет темы, у которых подошло время."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], client: LlmClient, config: Settings) -> None:
+        self.session_factory = session_factory
+        self.client = client
+        self.config = config
+
+    async def run_due(self, now: datetime | None = None) -> int:
+        now = now or datetime.now(UTC)
+        async with self.session_factory() as session:
+            topics = list(await session.execute(
+                select(Topic.id, User.timezone).join(User, User.id == Topic.user_id)
+                .where(Topic.digest_schedule.is_not(None), Topic.paused.is_(False))
+            ))
+        made = 0
+        for topic_id, timezone in topics:
+            async with self.session_factory() as session, session.begin():
+                topic = await session.get(Topic, topic_id, with_for_update=True)
+                if topic is None or not topic.digest_schedule:
+                    continue
+                tz = _zone(timezone)
+                slot = digest_slot(topic.digest_schedule, topic.digest_time, topic.digest_weekday, now, tz)
+                if topic.digest_last_at is not None and topic.digest_last_at >= slot:
+                    continue
+                weekly = topic.digest_schedule == "weekly"
+                # С прошлого дайджеста, но не дальше недели (или суток — если прошлого не было)
+                default = timedelta(days=7 if weekly else 1)
+                since = max(topic.digest_last_at or slot - default, slot - timedelta(days=7))
+                topic.digest_last_at = now
+                if await TopicReportService(session, self.client, self.config).count_since(topic.id, since) \
+                        < max(1, topic.digest_min_stories):
+                    continue  # нового мало — дайджест не нужен, денег не тратим
+                try:
+                    await TopicReportService(session, self.client, self.config).make(
+                        topic, days=7 if weekly else 1, user_id=topic.user_id, timezone=timezone,
+                        digest=True, since=since,
+                    )
+                    made += 1
+                except LlmError as exc:
+                    logger.warning("дайджест темы %s не сделан: %s", topic.id, exc)
+        return made
+
+
+def _zone(name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")

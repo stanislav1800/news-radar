@@ -28,6 +28,7 @@ from sito.services.connectors import ConnectorSupervisor
 from sito.services.embedding import EmbeddingService, SentenceTransformerEmbedder
 from sito.services.fulltext import FullTextService
 from sito.services.ingest import IngestService
+from sito.services.llm import DigestService, LlmClient
 from sito.services.topics import TopicMatchingService, TopicRules
 from sito.utils.crypto import SecretBox
 
@@ -180,6 +181,23 @@ async def retention_loop(stop: asyncio.Event) -> None:
 
 
 ALERT_SECONDS = 300
+DIGEST_SECONDS = 60
+
+
+async def digest_loop(stop: asyncio.Event) -> None:
+    """Раз в минуту: дайджесты тем, у которых подошло время по расписанию (если LLM настроена)."""
+    client = LlmClient.from_settings(settings)
+    if client is None:
+        return
+    service = DigestService(async_session, client, settings)
+    while not stop.is_set():
+        try:
+            made = await service.run_due()
+            if made:
+                logger.info("дайджестов сделано: %d", made)
+        except Exception:
+            logger.exception("ошибка дайджестов")
+        await sleep_until_stop(stop, DIGEST_SECONDS)
 
 
 async def alerts_loop(stop: asyncio.Event) -> None:
@@ -251,6 +269,7 @@ async def main() -> None:
             tasks.create_task(heartbeat_loop(stop))
             tasks.create_task(retention_loop(stop))
             tasks.create_task(alerts_loop(stop))
+            tasks.create_task(digest_loop(stop))
             if settings.full_text_enabled:
                 full_text = FullTextService(
                     async_session, client, concurrency=settings.full_text_concurrency,

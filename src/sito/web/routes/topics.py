@@ -1,5 +1,6 @@
 """Поиск, темы, 👍/👎 и RSS-лента темы."""
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
@@ -10,14 +11,21 @@ from xml.etree import ElementTree as ET
 from fastapi import APIRouter, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import Select, func, select
 
 from sito.config import Settings
 from sito.models import Topic, TopicReport, User
 from sito.repositories.sources import SourceRepository
 from sito.repositories.stories import StoryRepository
 from sito.repositories.topics import TopicReason, TopicRepository
-from sito.services.llm import PERIODS, LlmError, TopicReportService
+from sito.services.llm import (
+    DIGEST_SCHEDULES,
+    PERIODS,
+    WEEKDAYS,
+    LlmError,
+    TopicReportService,
+    next_digest,
+)
 from sito.services.search import DEFAULT_PERIOD, SearchService
 from sito.services.topics import (
     TopicError,
@@ -29,6 +37,7 @@ from sito.services.topics import (
 )
 from sito.utils.lemmas import parse_query
 from sito.web.deps import CurrentUser, DbSession
+from sito.web.formatting import report_html, zone
 from sito.web.forms import form_fields, validation_errors
 from sito.web.security import flash, safe_next
 from sito.web.templating import templates
@@ -221,6 +230,8 @@ async def _render_topic(
         "topic_sources": set(topic.source_ids or []),
         "default_similarity": request.app.state.settings.topic_example_min_similarity,
         "llm": request.app.state.llm is not None,
+        "schedules": DIGEST_SCHEDULES, "weekdays": WEEKDAYS,
+        "digest_next": next_digest(topic, datetime.now(UTC), zone(user.timezone)),
         "next": f"/topics/{topic.id}",
         "now": datetime.now(UTC),
     }, status_code=status_code)
@@ -256,6 +267,28 @@ async def set_llm_prompt(
     await db.commit()
     flash(request, "Пожелания к сводкам сохранены" if topic.llm_prompt else "Пожелания к сводкам убраны")
     return _redirect(f"/topics/{topic_id}")
+
+
+@router.post("/topics/{topic_id}/digest")
+async def set_digest(
+    request: Request, db: DbSession, user: CurrentUser, topic_id: int,
+    schedule: Annotated[str, Form()] = "", at: Annotated[str, Form()] = "08:00",
+    weekday: Annotated[int, Form()] = 0, kind: Annotated[str, Form()] = "short",
+    min_stories: Annotated[int, Form()] = 3, prompt: Annotated[str, Form()] = "",
+) -> Response:
+    """Расписание дайджеста темы. Прошедшее время сегодня не срабатывает: отсчёт — с момента сохранения."""
+    topic = await _owned(db, user, topic_id)
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
+        at = "08:00"
+    topic.digest_schedule = schedule if schedule in DIGEST_SCHEDULES else None
+    topic.digest_time, topic.digest_weekday = at, min(max(weekday, 0), 6)
+    topic.digest_format = kind if kind in ("short", "full") else "short"
+    topic.digest_min_stories = min(max(min_stories, 1), 100)
+    topic.digest_prompt = prompt.strip()[:2000] or None
+    topic.digest_last_at = datetime.now(UTC)
+    await db.commit()
+    flash(request, "Дайджест включён" if topic.digest_schedule else "Дайджест выключен")
+    return _redirect(f"/topics/{topic_id}#digest")
 
 
 # --- Сводки и вопросы по теме (LLM) ---------------------------------------------------------------
@@ -320,6 +353,9 @@ async def report_page(request: Request, db: DbSession, user: CurrentUser, topic_
     report = await db.get(TopicReport, report_id)
     if report is None or report.topic_id != topic.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сводка не найдена")
+    if report.read_at is None:
+        report.read_at = datetime.now(UTC)
+        await db.commit()
     return templates.TemplateResponse(request, "topic_report.html", {
         "user": user, "topic": topic, "report": report, "periods": PERIODS, "now": datetime.now(UTC),
     })
@@ -418,5 +454,73 @@ async def topic_rss(request: Request, db: DbSession, token: str) -> Response:
         ET.SubElement(item, "pubDate").text = format_datetime(story.started_at)
         sources = f"Изданий: {story.sources_count}" + (f", первым — {story.first_source_name}" if story.first_source_name else "")
         ET.SubElement(item, "description").text = f"{story.lead}\n\n{sources}" if story.lead else sources
+    body = ET.tostring(rss, encoding="unicode", xml_declaration=True)
+    return Response(body, media_type="application/rss+xml; charset=utf-8")
+
+
+# --- Дайджесты ----------------------------------------------------------------------------------
+
+def _digests_query(user: User) -> Select[TopicReport, str]:
+    return (
+        select(TopicReport, Topic.name).join(Topic, Topic.id == TopicReport.topic_id)
+        .where(Topic.user_id == user.id, TopicReport.kind == "digest")
+    )
+
+
+@router.get("/digests/badge", response_class=HTMLResponse)
+async def digests_badge(db: DbSession, user: CurrentUser) -> HTMLResponse:
+    """Ссылка «Дайджесты» в шапке с числом непрочитанных; пусто, если дайджестов нет и не включены."""
+    unread = await db.scalar(select(func.count()).select_from(_digests_query(user)
+                                                              .where(TopicReport.read_at.is_(None)).subquery()))
+    enabled = await db.scalar(select(func.count()).select_from(Topic).where(
+        Topic.user_id == user.id, Topic.digest_schedule.is_not(None)))
+    if not unread and not enabled:
+        return HTMLResponse("")
+    badge = f' <span class="badge updated">{unread}</span>' if unread else ""
+    return HTMLResponse(f'<a class="digests-link" href="/digests">Дайджесты{badge}</a>')
+
+
+@router.get("/digests", response_class=HTMLResponse)
+async def digests_page(request: Request, db: DbSession, user: CurrentUser) -> HTMLResponse:
+    """Все дайджесты пользователя, свежие сверху. Открыл страницу — прочитал."""
+    rows = [(row[0], row[1]) for row in await db.execute(_digests_query(user).order_by(TopicReport.id.desc()).limit(50))]
+    now = datetime.now(UTC)
+    unread = {r.id for r, _ in rows if r.read_at is None}
+    for report, _ in rows:
+        if report.read_at is None:
+            report.read_at = now
+    await db.commit()
+    return templates.TemplateResponse(request, "digests.html", {
+        "user": user, "rows": rows, "unread": unread, "periods": PERIODS, "now": now,
+    })
+
+
+@router.get("/rss/{token}/digests")
+async def digests_rss(request: Request, db: DbSession, token: str) -> Response:
+    """RSS дайджестов темы: в любую читалку или бота RSS в Telegram."""
+    topic = await TopicRepository(db).by_rss_token(token)
+    if topic is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Лента не найдена")
+    reports = list(await db.scalars(
+        select(TopicReport).where(TopicReport.topic_id == topic.id, TopicReport.kind == "digest")
+        .order_by(TopicReport.id.desc()).limit(30)
+    ))
+    base = str(request.base_url)
+    rss = ET.Element("rss", version="2.0")
+    channel = ET.SubElement(rss, "channel")
+    ET.SubElement(channel, "title").text = f"Сито · дайджест · {topic.name}"
+    ET.SubElement(channel, "link").text = f"{base}?topic={topic.id}"
+    ET.SubElement(channel, "description").text = f"Дайджесты по теме «{topic.name}»"
+    ET.SubElement(channel, "language").text = "ru"
+    for report in reports:
+        item = ET.SubElement(channel, "item")
+        url = f"{base}topics/{topic.id}/reports/{report.id}"
+        ET.SubElement(item, "title").text = f"{topic.name}: дайджест"
+        ET.SubElement(item, "link").text = url
+        ET.SubElement(item, "guid", isPermaLink="true").text = url
+        ET.SubElement(item, "pubDate").text = format_datetime(report.created_at)
+        # Ссылки на сюжеты — абсолютные: читалка открывает их вне сайта
+        html = str(report_html(report.text, report.story_ids)).replace('href="/', f'href="{base}')
+        ET.SubElement(item, "description").text = html
     body = ET.tostring(rss, encoding="unicode", xml_declaration=True)
     return Response(body, media_type="application/rss+xml; charset=utf-8")

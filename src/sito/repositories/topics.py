@@ -95,7 +95,8 @@ _SOURCES_PARAM = bindparam("sources", type_=ARRAY(BigInteger))
 # Правило совпадения (шаг 7). Сюжет подходит к теме, если:
 #   — пользователь сам отметил его 👍; или
 #   — в нём есть все слова запроса (в любой форме, по леммам), или он похож на 👍-пример не меньше :min_similarity,
-#     и при этом он не 👎 сам и не похож на 👎-пример (от :dislike_min_similarity) сильнее, чем на лучший 👍.
+#     и при этом он не 👎 сам и не похож на 👎-пример (от :dislike_min_similarity) сильнее, чем на лучший 👍,
+#     и его не отклонила проверка LLM по описанию темы (topic_check).
 # Просматриваются сюжеты, изменённые после :updated_after и живые после :active_after.
 # Для них совпадения пересчитываются: новые добавляются, переставшие подходить удаляются.
 _REMATCH_SQL = text(f"""
@@ -118,7 +119,8 @@ _REMATCH_SQL = text(f"""
                neg.similarity AS neg_similarity,
                cand.id IN (SELECT story_id FROM words) AS by_words,
                cand.id IN (SELECT story_id FROM ex WHERE liked) AS liked,
-               cand.id IN (SELECT story_id FROM ex WHERE NOT liked) AS disliked
+               cand.id IN (SELECT story_id FROM ex WHERE NOT liked) AS disliked,
+               cand.id IN (SELECT story_id FROM topic_check WHERE topic_id = :topic_id AND NOT fits) AS rejected
         FROM cand
         LEFT JOIN LATERAL (
             SELECT ex.id, 1 - (ex.embedding <=> cand.centroid) AS similarity FROM ex
@@ -130,7 +132,7 @@ _REMATCH_SQL = text(f"""
     ),
     decided AS (
         SELECT *, liked OR (
-            NOT disliked
+            NOT disliked AND NOT rejected
             AND (by_words OR coalesce(similarity, -1) >= :min_similarity)
             AND NOT (coalesce(neg_similarity, -1) >= :dislike_min_similarity
                      AND coalesce(neg_similarity, -1) > coalesce(similarity, -1))

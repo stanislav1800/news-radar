@@ -60,6 +60,46 @@
 </section>
 
 {% if llm %}
+<h2 id="check">Проверка по описанию</h2>
+<section class="card settings">
+  {% if topic.description %}
+  <p class="small"><strong>Описание:</strong> {{ topic.description }} <span class="muted">(меняется в форме выше)</span></p>
+  {% else %}
+  <p class="warn small">У темы нет описания. Добавьте в форме выше, что входит в тему и что нет — проверка сверяет с ним.</p>
+  {% endif %}
+  <p class="muted small">LLM смотрит каждый новый сюжет темы и убирает те, что не подходят под описание: например,
+    где нужное слово упомянуто вскользь. Сюжеты, которые вы добавили сами, не проверяются. Пачками по 25 —
+    около 0,05 ₽ за пачку; при включении проверяются сюжеты за последнюю неделю.</p>
+  <form method="post" action="/topics/{{ topic.id }}/llm-check">
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="enabled" value="{{ 'false' if topic.llm_check else 'true' }}">
+    <button class="{{ 'secondary' if topic.llm_check else '' }}" type="submit"
+      {%- if not topic.description and not topic.llm_check %} disabled{% endif %}>
+      {{ "Выключить проверку" if topic.llm_check else "Включить проверку" }}</button>
+    {% if topic.llm_check %}<span class="status-ok small">включена</span>{% endif %}
+  </form>
+  {% if check_counts[0] %}
+  <p class="small">Проверено сюжетов: {{ check_counts[0] }}, убрано: {{ check_counts[1] }}.</p>
+  {% endif %}
+  {% if rejected %}
+  <details class="rejected">
+    <summary>Убранные проверкой ({{ rejected | length }}{% if rejected | length == 50 %}+{% endif %})</summary>
+    <ul class="examples-list">
+      {% for id, title, reason in rejected %}
+      <li>
+        <a href="/stories/{{ id }}">{{ title }}</a>
+        {% if reason %}<span class="muted small">— {{ reason }}</span>{% endif %}
+        <form class="inline" method="post" action="/topics/{{ topic.id }}/checks/{{ id }}/restore">
+          <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+          <button class="link small" type="submit" title="Вернуть в тему: она будет находить похожие">Вернуть</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</section>
+
 <h2>Пожелания к сводкам</h2>
 <section class="card settings">
   <form class="stack" method="post" action="/topics/{{ topic.id }}/llm-prompt">

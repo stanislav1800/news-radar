@@ -31,6 +31,7 @@ class Topic(IdMixin, TimestampMixin, Base):
     # Искать только в этих источниках (тема «IT» — Хабр и OpenNET); пусто — во всех
     source_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), server_default="{}")
     description: Mapped[str | None]  # что входит в тему и что нет — своими словами (тема по описанию, LLM)
+    llm_check: Mapped[bool] = mapped_column(server_default="false")  # LLM проверяет новые совпадения по описанию
     llm_prompt: Mapped[str | None]  # пожелания пользователя к сводкам и ответам LLM по теме
     # Дайджест по расписанию (LLM): daily, weekdays, weekly или None — выключен
     digest_schedule: Mapped[str | None]
@@ -76,3 +77,16 @@ class TopicMatch(Base):
     )
     similarity: Mapped[float | None]  # с ближайшим 👍-примером
     matched_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class TopicCheck(Base):
+    """Решение LLM: подходит ли сюжет к теме по её описанию. Отклонённый в тему больше не попадает,
+    пока пользователь не вернёт его (тогда он становится 👍-примером)."""
+
+    __tablename__ = "topic_check"
+
+    topic_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("topic.id", ondelete="CASCADE"), primary_key=True)
+    story_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("story.id", ondelete="CASCADE"), primary_key=True)
+    fits: Mapped[bool]
+    reason: Mapped[str | None]
+    checked_at: Mapped[datetime] = mapped_column(server_default=func.now())

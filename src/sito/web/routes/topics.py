@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy import Select, func, select
 
 from sito.config import Settings
-from sito.models import Topic, TopicReport, User
+from sito.models import Story, Topic, TopicCheck, TopicReport, User
 from sito.repositories.sources import SourceRepository
 from sito.repositories.stories import StoryRepository
 from sito.repositories.topics import TopicReason, TopicRepository
@@ -290,6 +290,15 @@ async def _render_topic(
         "topic_sources": set(topic.source_ids or []),
         "default_similarity": request.app.state.settings.topic_example_min_similarity,
         "llm": request.app.state.llm is not None,
+        "rejected": [(row[0], row[1], row[2]) for row in await db.execute(
+            select(Story.id, Story.title, TopicCheck.reason).join(Story, Story.id == TopicCheck.story_id)
+            .where(TopicCheck.topic_id == topic.id, TopicCheck.fits.is_(False))
+            .order_by(TopicCheck.checked_at.desc()).limit(50)
+        )],
+        "check_counts": (await db.execute(
+            select(func.count(), func.count().filter(TopicCheck.fits.is_(False)))
+            .where(TopicCheck.topic_id == topic.id)
+        )).one(),
         "schedules": DIGEST_SCHEDULES, "weekdays": WEEKDAYS,
         "digest_next": next_digest(topic, datetime.now(UTC), zone(user.timezone)),
         "next": f"/topics/{topic.id}",
@@ -349,6 +358,36 @@ async def set_digest(
     await db.commit()
     flash(request, "Дайджест включён" if topic.digest_schedule else "Дайджест выключен")
     return _redirect(f"/topics/{topic_id}#digest")
+
+
+@router.post("/topics/{topic_id}/llm-check")
+async def set_llm_check(
+    request: Request, db: DbSession, user: CurrentUser, topic_id: int, enabled: Annotated[bool, Form()] = False,
+) -> Response:
+    """Проверка новых совпадений по описанию темы (LLM, в фоне)."""
+    topic = await _owned(db, user, topic_id)
+    if enabled and not topic.description:
+        flash(request, "Сначала опишите тему: проверка сверяет сюжеты с описанием")
+        return _redirect(f"/topics/{topic_id}#check")
+    topic.llm_check = enabled
+    await db.commit()
+    flash(request, "Проверка по описанию включена: сюжеты за последнюю неделю проверятся в ближайшие минуты"
+                   if enabled else "Проверка по описанию выключена")
+    return _redirect(f"/topics/{topic_id}#check")
+
+
+@router.post("/topics/{topic_id}/checks/{story_id}/restore")
+async def restore_checked(request: Request, db: DbSession, user: CurrentUser, topic_id: int, story_id: int) -> Response:
+    """LLM убрала сюжет зря: вернуть его — он становится 👍-примером, и тема учится на нём."""
+    await _owned(db, user, topic_id)
+    check = await db.get(TopicCheck, (topic_id, story_id))
+    if check is not None:
+        check.fits, check.reason = True, "возвращён вручную"
+        await db.flush()
+    await _service(request, db).vote(user, topic_id, story_id, Vote.LIKE)
+    await db.commit()
+    flash(request, "Сюжет возвращён в тему")
+    return _redirect(f"/topics/{topic_id}#check")
 
 
 # --- Сводки и вопросы по теме (LLM) ---------------------------------------------------------------

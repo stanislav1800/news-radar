@@ -489,3 +489,7 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 .draft-samples { padding-left: 1.2rem; margin: .3rem 0 0; }
 .draft-samples li { margin: .2rem 0; }
 .follow-actions { display: flex; flex-direction: column; align-items: flex-end; gap: .3rem; }
+
+/* Проверка по описанию */
+form.inline { display: inline; }
+.rejected summary { cursor: pointer; }

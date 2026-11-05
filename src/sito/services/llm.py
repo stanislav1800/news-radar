@@ -14,7 +14,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.config import Settings
@@ -23,6 +23,8 @@ from sito.models import (
     Story,
     StorySummary,
     Topic,
+    TopicCheck,
+    TopicExample,
     TopicMatch,
     TopicReport,
     User,
@@ -635,3 +637,134 @@ class TopicDraftService:
             topic_description=draft["description"], explanation=draft["explanation"], found=found, days=days,
             samples=await repo.preview_stories(draft["query"], since), refined=refined,
         )
+
+
+CHECK_SYSTEM = """Ты проверяешь, подходят ли новости к теме, на которую подписан пользователь.
+Тема: «{name}».
+Описание темы: {description}
+{examples}
+Новость подходит, если она в основном о предмете темы и не попадает под то, что описание исключает. \
+Если предмет темы упомянут вскользь, а новость о другом — не подходит. Если сомневаешься — подходит.
+Ответь только JSON-массивом, по элементу на каждую новость: {{"n": номер, "fits": true или false, \
+"why": "до 10 слов — почему"}}."""
+
+
+def parse_verdicts(text: str) -> dict[int, tuple[bool, str]]:
+    """Номер новости → (подходит, почему). Разбирает каждый объект отдельно: если ответ оборвался,
+    уже готовые решения не теряются (остальные сюжеты проверятся в следующий раз)."""
+    verdicts: dict[int, tuple[bool, str]] = {}
+    for chunk in re.findall(r"\{[^{}]*\}", text):
+        try:
+            item = json.loads(chunk)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict) and isinstance(item.get("n"), int) and isinstance(item.get("fits"), bool):
+            verdicts[item["n"]] = (item["fits"], str(item.get("why") or "")[:200])
+    if not verdicts:
+        raise LlmError("модель ответила не в том виде")
+    return verdicts
+
+
+class TopicCheckService:
+    """Проверка совпадений тем по описанию (worker): новые совпадения пачками, отклонённые убираются из темы.
+
+    Не проверяются сюжеты, которые пользователь сам добавил (👍). Совпадения старше window — тоже:
+    при включении проверки она не перебирает всю историю темы.
+    """
+
+    BATCH = 25
+
+    def __init__(
+        self, session_factory: async_sessionmaker[AsyncSession], client: LlmClient, config: Settings,
+        window: timedelta = timedelta(days=7), batches_per_topic: int = 4,
+    ) -> None:
+        self.session_factory = session_factory
+        self.client = client
+        self.config = config
+        self.window = window
+        self.batches_per_topic = batches_per_topic
+
+    async def run_once(self) -> tuple[int, int]:
+        """Один круг по темам с проверкой. Возвращает (проверено, отклонено)."""
+        async with self.session_factory() as session:
+            topic_ids = list(await session.scalars(
+                select(Topic.id).where(Topic.llm_check, Topic.paused.is_(False), Topic.description.is_not(None))
+            ))
+        checked = rejected = 0
+        for topic_id in topic_ids:
+            for _ in range(self.batches_per_topic):
+                async with self.session_factory() as session, session.begin():
+                    done, dropped = await self._check_batch(session, topic_id)
+                checked += done
+                rejected += dropped
+                if done < self.BATCH:
+                    break
+        return checked, rejected
+
+    async def _check_batch(self, session: AsyncSession, topic_id: int) -> tuple[int, int]:
+        topic = await session.get(Topic, topic_id)
+        if topic is None or not topic.description:
+            return 0, 0
+        liked = select(TopicExample.story_id).where(TopicExample.topic_id == topic_id, TopicExample.liked,
+                                                    TopicExample.story_id.is_not(None))
+        checked = select(TopicCheck.story_id).where(TopicCheck.topic_id == topic_id)
+        rows = list(await session.execute(
+            select(Story.id, Story.title, Story.lead, StorySummary.summary)
+            .join(TopicMatch, TopicMatch.story_id == Story.id)
+            .outerjoin(StorySummary, StorySummary.story_id == Story.id)
+            .where(TopicMatch.topic_id == topic_id, TopicMatch.matched_at >= datetime.now(UTC) - self.window,
+                   Story.id.not_in(liked), Story.id.not_in(checked))
+            .order_by(TopicMatch.matched_at.desc()).limit(self.BATCH)
+        ))
+        if not rows:
+            return 0, 0
+        try:
+            await check_limit(session, self.config)
+        except LlmError:
+            return 0, 0
+        examples = await session.execute(
+            select(TopicExample.liked, TopicExample.title).where(TopicExample.topic_id == topic_id)
+            .order_by(TopicExample.id.desc()).limit(16)
+        )
+        good = [title for liked_, title in examples if liked_][:8]
+        bad = [title for liked_, title in await session.execute(
+            select(TopicExample.liked, TopicExample.title).where(TopicExample.topic_id == topic_id,
+                                                               TopicExample.liked.is_(False))
+            .order_by(TopicExample.id.desc()).limit(8))]
+        hint = ""
+        if good:
+            hint += "Пользователь отметил как подходящие: " + "; ".join(f"«{t}»" for t in good) + ".\n"
+        if bad:
+            hint += "Пользователь отметил как неподходящие: " + "; ".join(f"«{t}»" for t in bad) + ".\n"
+        system = CHECK_SYSTEM.format(name=topic.name, description=topic.description, examples=hint)
+        prompt = "\n\n".join(
+            f"[{n}] {title}\n{_cut(summary or lead or '', 500)}".rstrip()
+            for n, (_, title, lead, summary) in enumerate(rows, 1)
+        )
+        try:
+            answer = await self.client.complete(system, prompt, max_tokens=100 * len(rows) + 300)
+        except LlmError as exc:
+            logger.warning("проверка темы %s: %s", topic_id, exc)
+            return 0, 0
+        session.add(LlmUsage(
+            feature="topic_check", model=answer.model, input_tokens=answer.input_tokens,
+            output_tokens=answer.output_tokens, cost=answer.cost, user_id=topic.user_id,
+        ))
+        try:
+            verdicts = parse_verdicts(answer.text)
+        except LlmError as exc:
+            logger.warning("проверка темы %s: %s", topic_id, exc)
+            return 0, 0
+        dropped = []
+        for n, row in enumerate(rows, 1):
+            if n not in verdicts:
+                continue  # модель пропустила — проверится в следующий раз
+            fits, why = verdicts[n]
+            session.add(TopicCheck(topic_id=topic_id, story_id=row[0], fits=fits, reason=why or None))
+            if not fits:
+                dropped.append(row[0])
+        if dropped:
+            await session.execute(
+                delete(TopicMatch).where(TopicMatch.topic_id == topic_id, TopicMatch.story_id.in_(dropped))
+            )
+        return len(verdicts), len(dropped)

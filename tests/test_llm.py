@@ -259,3 +259,60 @@ async def test_topic_from_description(
     async with session_factory() as session:
         topic = await session.scalar(select(Topic))
     assert topic is not None and topic.description == "Добыча угля"
+
+
+async def test_topic_check_removes_and_restore_returns(
+    app: FastAPI, logged_in: httpx.AsyncClient, stories: Stories,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from sito.models import Topic, TopicCheck, TopicMatch, User
+    from sito.services.llm import TopicCheckService
+    from sito.services.topics import TopicRules, TopicService
+
+    good = await stories.add([("ТАСС", "Рекорд добычи угля", timedelta(hours=2))])
+    bad = await stories.add([("РБК", "Золото и уголь в гербе города", timedelta(hours=1))])
+    async with session_factory() as session, session.begin():
+        user = await session.scalar(select(User))
+        assert user is not None
+        topic = Topic(user_id=user.id, name="Уголь", query="уголь", rss_token="c", llm_check=True,
+                      description="Добыча и экспорт угля")
+        session.add(topic)
+        await session.flush()
+        await TopicService(session, TopicRules.from_settings(app.state.settings)).rematch(topic)
+        topic_id = topic.id
+
+    async def matched() -> set[int]:
+        async with session_factory() as session:
+            return set(await session.scalars(select(TopicMatch.story_id).where(TopicMatch.topic_id == topic_id)))
+
+    assert await matched() == {good, bad}
+    seen: list[dict[str, object]] = []
+    verdicts = [{"n": 1, "fits": False, "why": "про герб"}, {"n": 2, "fits": True, "why": "добыча"}]
+    client = fake_llm([answer(json.dumps(verdicts, ensure_ascii=False))], seen)
+    assert await TopicCheckService(session_factory, client, app.state.settings).run_once() == (2, 1)
+    assert "Добыча и экспорт угля" in str(seen[0]["messages"])
+    assert await matched() == {good}
+
+    # Пересчёт темы не возвращает отклонённое
+    async with session_factory() as session, session.begin():
+        topic = await session.get(Topic, topic_id)
+        assert topic is not None
+        await TopicService(session, TopicRules.from_settings(app.state.settings)).rematch(topic)
+    assert await matched() == {good}
+
+    app.state.llm = client
+    page = await logged_in.get(f"/topics/{topic_id}")
+    assert "Золото и уголь в гербе города" in page.text and "про герб" in page.text
+    token = await csrf_from(logged_in, f"/topics/{topic_id}")
+    await logged_in.post(f"/topics/{topic_id}/checks/{bad}/restore", data={"csrf_token": token})
+    assert await matched() == {good, bad}
+    async with session_factory() as session:
+        check = await session.get(TopicCheck, (topic_id, bad))
+    assert check is not None and check.fits
+
+
+def test_parse_verdicts_keeps_answers_before_cut() -> None:
+    from sito.services.llm import parse_verdicts
+
+    text = '```json\n[\n {"n": 1, "fits": true, "why": "да"},\n {"n": 2, "fits": false, "why": "нет"},\n {"n": 3, "fi'
+    assert parse_verdicts(text) == {1: (True, "да"), 2: (False, "нет")}

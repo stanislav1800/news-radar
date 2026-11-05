@@ -28,7 +28,7 @@ from sito.services.connectors import ConnectorSupervisor
 from sito.services.embedding import EmbeddingService, SentenceTransformerEmbedder
 from sito.services.fulltext import FullTextService
 from sito.services.ingest import IngestService
-from sito.services.llm import DigestService, LlmClient
+from sito.services.llm import DigestService, LlmClient, TopicCheckService
 from sito.services.topics import TopicMatchingService, TopicRules
 from sito.utils.crypto import SecretBox
 
@@ -184,6 +184,25 @@ ALERT_SECONDS = 300
 DIGEST_SECONDS = 60
 
 
+CHECK_SECONDS = 120
+
+
+async def topic_check_loop(stop: asyncio.Event) -> None:
+    """Раз в 2 минуты: LLM проверяет новые совпадения тем, где включена проверка по описанию."""
+    client = LlmClient.from_settings(settings)
+    if client is None:
+        return
+    service = TopicCheckService(async_session, client, settings)
+    while not stop.is_set():
+        try:
+            checked, rejected = await service.run_once()
+            if checked:
+                logger.info("проверка тем: проверено %d, убрано %d", checked, rejected)
+        except Exception:
+            logger.exception("ошибка проверки тем")
+        await sleep_until_stop(stop, CHECK_SECONDS)
+
+
 async def digest_loop(stop: asyncio.Event) -> None:
     """Раз в минуту: дайджесты тем, у которых подошло время по расписанию (если LLM настроена)."""
     client = LlmClient.from_settings(settings)
@@ -270,6 +289,7 @@ async def main() -> None:
             tasks.create_task(retention_loop(stop))
             tasks.create_task(alerts_loop(stop))
             tasks.create_task(digest_loop(stop))
+            tasks.create_task(topic_check_loop(stop))
             if settings.full_text_enabled:
                 full_text = FullTextService(
                     async_session, client, concurrency=settings.full_text_concurrency,

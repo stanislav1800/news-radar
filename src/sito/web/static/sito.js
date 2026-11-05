@@ -189,3 +189,12 @@ document.querySelectorAll(".tz-mismatch").forEach((el) => {
     }
   } catch (e) { /* неизвестный пояс — молчим */ }
 });
+
+// Часовой пояс по браузеру, пока пользователь не выбрал свой в настройках
+(() => {
+  const current = document.body.dataset.tzAuto;
+  const browser = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!current || !browser || browser === current || !window.htmx) return;
+  htmx.ajax("POST", "/settings/timezone/auto", { values: { timezone: browser }, swap: "none" })
+    .then(() => { if (document.querySelector("[data-tz-reload]")) location.reload(); });
+})();

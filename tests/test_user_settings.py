@@ -81,3 +81,29 @@ async def test_add_to_topic_from_all_news(logged_in: httpx.AsyncClient, stories:
     page = " ".join((await logged_in.get("/?view=all")).text.split())
 
     assert "Добавить в тему «уголь»" in page and "Не по теме" in page
+
+
+async def test_timezone_from_browser_until_chosen_manually(
+    logged_in: httpx.AsyncClient, session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from sito.models import User
+    from tests.web import csrf_from
+
+    token = await csrf_from(logged_in, "/settings")
+
+    async def tz() -> str:
+        async with session_factory() as session:
+            user = await session.scalar(select(User))
+            assert user is not None
+            return user.timezone
+
+    assert 'data-tz-auto="Europe/Moscow"' in (await logged_in.get("/settings")).text
+    auto = {"csrf_token": token, "timezone": "Asia/Novokuznetsk"}
+    assert (await logged_in.post("/settings/timezone/auto", data=auto)).status_code == 204
+    assert await tz() == "Asia/Novokuznetsk"
+    assert (await logged_in.post("/settings/timezone/auto", data={**auto, "timezone": "Mars/Base"})).status_code == 400
+
+    await logged_in.post("/settings/timezone", data={"csrf_token": token, "timezone": "Asia/Omsk"})
+    await logged_in.post("/settings/timezone/auto", data=auto)
+    assert await tz() == "Asia/Omsk"  # выбран вручную — браузер больше не меняет
+    assert "data-tz-auto" not in (await logged_in.get("/settings")).text

@@ -1,6 +1,7 @@
 """Настройки пользователя: свой пароль и часовой пояс."""
 
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -38,7 +39,9 @@ def _back() -> RedirectResponse:
 @router.get("", response_class=HTMLResponse)
 async def settings_page(request: Request, db: DbSession, user: CurrentUser) -> HTMLResponse:
     return templates.TemplateResponse(request, "settings.html", {
-        "user": user, "timezones": TIMEZONES, "hidden_sources": await UserRepository(db).hidden_sources(user.id),
+        "user": user,
+        # Пояс, определённый по браузеру, может быть не из списка — тогда он тоже в списке
+        "timezones": TIMEZONES if user.timezone in TIMEZONES else {**TIMEZONES, user.timezone: user.timezone}, "hidden_sources": await UserRepository(db).hidden_sources(user.id),
     })
 
 
@@ -47,10 +50,23 @@ async def set_timezone(request: Request, db: DbSession, user: CurrentUser, timez
     if timezone not in TIMEZONES:
         flash(request, "Такого часового пояса нет в списке")
         return _back()
-    user.timezone = timezone
+    user.timezone, user.timezone_auto = timezone, False
     await db.commit()
     flash(request, f"Часовой пояс: {TIMEZONES[timezone]}")
     return _back()
+
+
+@router.post("/timezone/auto")
+async def detect_timezone(db: DbSession, user: CurrentUser, timezone: Annotated[str, Form()]) -> Response:
+    """Пояс из браузера — пока пользователь не выбрал свой в настройках."""
+    if user.timezone_auto and timezone != user.timezone:
+        try:
+            ZoneInfo(timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            return Response(status_code=status.HTTP_400_BAD_REQUEST)
+        user.timezone = timezone
+        await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/password")

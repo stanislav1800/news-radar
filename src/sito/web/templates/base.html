@@ -9,7 +9,7 @@
   <script src="{{ url_for('static', path='sito.js') }}?v={{ static_version('sito.js') }}" defer></script>
 </head>
 {# HTMX отправляет CSRF-токен заголовком в каждом изменяющем запросе #}
-<body{% if user %} hx-headers='{"{{ CSRF_HEADER }}": "{{ csrf_token(request) }}"}'{% endif %}>
+<body{% if user and user.timezone_auto %} data-tz-auto="{{ user.timezone }}"{% endif %}{% if user %} hx-headers='{"{{ CSRF_HEADER }}": "{{ csrf_token(request) }}"}'{% endif %}>
   {% if user %}
   <header class="topbar">
     <a class="brand" href="/">Сито</a>

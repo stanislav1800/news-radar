@@ -8,6 +8,7 @@
   <strong>Новая тема</strong>
   <p>Напишите в строке поиска вверху, о чём хотите знать, — например, «уголь в Кузбассе» или «Python».
      Посмотрите, что нашлось, и нажмите «Следить»: появится вкладка с лентой по этой теме.</p>
+  {% if llm %}<p><a href="/topics/new">Или опишите тему своими словами →</a></p>{% endif %}
 </div>
 {% else %}
 <form class="follow card" method="post" action="/topics">
@@ -32,7 +33,10 @@
     {% endif %}
     {% endif %}
   </div>
-  <button type="submit">Следить</button>
+  <div class="follow-actions">
+    <button type="submit">Следить</button>
+    {% if llm %}<a class="small" href="/topics/new?d={{ results.query | urlencode }}">Описать своими словами →</a>{% endif %}
+  </div>
 </form>
 
 {% if results.hits %}

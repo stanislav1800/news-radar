@@ -1,0 +1,45 @@
+{# Черновик темы от LLM: правится и проверяется без LLM, создаётся обычной формой #}
+{% if error %}<p class="field-error" role="alert">Не получилось: {{ error }}</p>{% endif %}
+{% if draft %}
+<form class="card stack topic-draft" method="post" action="/topics">
+  <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+  <input type="hidden" name="description" value="{{ draft.description }}">
+  <input type="hidden" name="explanation" value="{{ draft.explanation }}">
+  <strong>Черновик темы</strong>
+  {% if draft.explanation %}<p class="muted small">{{ draft.explanation }}</p>{% endif %}
+  {% if draft.refined %}<p class="muted small">Первый вариант запроса находил {{ "слишком много" if draft.found else "мало" }} —
+    модель его поправила.</p>{% endif %}
+  <label>Название <input type="text" name="name" value="{{ draft.name }}" maxlength="80" required></label>
+  <label>Запрос
+    <input type="text" name="query" value="{{ draft.query }}" maxlength="500" required>
+    <span class="muted small">Слова через пробел — все обязательны; <code>OR</code> — любое из них;
+      «-слово» — исключить; «"фраза"» — слова подряд.</span>
+  </label>
+  <label>Описание: что входит в тему и что нет
+    <textarea name="topic_description" rows="2" maxlength="1000">{{ draft.topic_description }}</textarea>
+  </label>
+
+  <div class="draft-preview">
+    {% if draft.found == 0 %}
+    <p class="warn small">За {{ draft.days | plural("день", "дня", "дней") }} этот запрос ничего не нашёл.
+      Уберите лишние слова или добавьте синонимы через OR и нажмите «Проверить запрос».</p>
+    {% else %}
+    <p class="small">За {{ draft.days | plural("день", "дня", "дней") }} нашлось бы
+      {{ draft.found | plural("сюжет", "сюжета", "сюжетов") }} — около {{ "%.1f" | format(draft.found / draft.days) }} в день.
+      Самые заметные:</p>
+    <ul class="draft-samples">
+      {% for id, title, sources in draft.samples %}
+      <li><a href="/stories/{{ id }}" target="_blank">{{ title }}</a>
+        <span class="muted small">· {{ sources | plural("издание", "издания", "изданий") }}</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+
+  <div class="row-actions">
+    <button type="submit">Создать тему</button>
+    <button class="secondary" type="button" hx-post="/topics/draft/check" hx-target="#draft" hx-swap="innerHTML">Проверить запрос</button>
+  </div>
+  <p class="muted small">Не то? Перепишите описание выше и нажмите «Составить тему» ещё раз.</p>
+</form>
+{% endif %}

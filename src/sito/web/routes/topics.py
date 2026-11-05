@@ -23,6 +23,8 @@ from sito.services.llm import (
     PERIODS,
     WEEKDAYS,
     LlmError,
+    TopicDraft,
+    TopicDraftService,
     TopicReportService,
     next_digest,
 )
@@ -93,6 +95,7 @@ async def search_page(
     return templates.TemplateResponse(request, "search.html", {
         "user": user, "results": results, "search_query": results.query, "preview": preview,
         "topic_name": topic_name_from(results.query) if results.query else "",
+        "llm": request.app.state.llm is not None,
         "now": datetime.now(UTC),
     })
 
@@ -122,6 +125,7 @@ async def create_topic(
     request: Request, db: DbSession, user: CurrentUser,
     name: Annotated[str, Form()] = "", query: Annotated[str, Form()] = "",
     like: Annotated[list[int] | None, Form()] = None, dislike: Annotated[list[int] | None, Form()] = None,
+    topic_description: Annotated[str, Form()] = "",
 ) -> Response:
     """«Следить» из поиска: запрос становится темой, отмеченные в результатах 👍/👎 — её первыми примерами."""
     try:
@@ -130,6 +134,7 @@ async def create_topic(
         flash(request, "Чтобы следить, введите, что искать")
         return _redirect("/search")
     topic = await _service(request, db).create(user, form.name, form.query, like or [], dislike or [])
+    topic.description = topic_description.strip()[:1000] or None
     await db.commit()
     count = await TopicRepository(db).matched_count(topic.id)
     examples = len(like or []) + len(dislike or [])
@@ -137,6 +142,61 @@ async def create_topic(
                    + (f", примеров: {examples}." if examples else ".")
                    + " Лишнее убирайте кнопкой «Не по теме» в меню «⋯» у сюжета.")
     return _redirect(f"/?topic={topic.id}")
+
+
+# --- Тема по описанию (LLM) ----------------------------------------------------------------------
+
+@router.get("/topics/new", response_class=HTMLResponse)
+async def new_topic_page(request: Request, user: CurrentUser, d: str = "") -> HTMLResponse:
+    """Описать тему своими словами: модель составит название и запрос."""
+    return templates.TemplateResponse(request, "topic_new.html", {
+        "user": user, "description": d.strip()[:1000], "llm": request.app.state.llm is not None,
+    })
+
+
+def _draft_response(request: Request, user: User, draft: TopicDraft | None, error: str | None = None) -> HTMLResponse:
+    return templates.TemplateResponse(request, "_topic_draft.html", {
+        "user": user, "draft": draft, "error": error, "now": datetime.now(UTC),
+    })
+
+
+@router.post("/topics/draft", response_class=HTMLResponse)
+async def topic_draft(
+    request: Request, db: DbSession, user: CurrentUser, description: Annotated[str, Form()] = "",
+) -> HTMLResponse:
+    description = description.strip()[:1000]
+    if request.app.state.llm is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "LLM не настроена")
+    if len(description) < 3:
+        return _draft_response(request, user, None, "опишите, о чём хотите знать")
+    service = TopicDraftService(db, request.app.state.llm, request.app.state.settings)
+    draft, error = None, None
+    try:
+        draft = await service.draft(description, user.id)
+    except LlmError as exc:
+        error = str(exc)
+    await db.commit()  # расход токенов
+    return _draft_response(request, user, draft, error)
+
+
+@router.post("/topics/draft/check", response_class=HTMLResponse)
+async def topic_draft_check(
+    request: Request, db: DbSession, user: CurrentUser,
+    description: Annotated[str, Form()] = "", name: Annotated[str, Form()] = "",
+    query: Annotated[str, Form()] = "", topic_description: Annotated[str, Form()] = "",
+    explanation: Annotated[str, Form()] = "",
+) -> HTMLResponse:
+    """Пользователь поправил запрос черновика — заново посчитать, что он найдёт (без LLM)."""
+    days = request.app.state.settings.topic_backfill_days
+    since = datetime.now(UTC) - timedelta(days=days)
+    repo = TopicRepository(db)
+    query = query.strip()[:500]
+    draft = TopicDraft(
+        description=description, name=name.strip()[:80], query=query, topic_description=topic_description,
+        explanation=explanation, found=await repo.preview(query, since) if query else 0, days=days,
+        samples=await repo.preview_stories(query, since) if query else [],
+    )
+    return _draft_response(request, user, draft)
 
 
 @router.post("/topics/follow")
@@ -219,7 +279,7 @@ async def _render_topic(
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
     examples = await TopicRepository(db).examples(topic.id)
-    form_values = values or {"name": topic.name, "query": topic.query or ""}
+    form_values = values or {"name": topic.name, "query": topic.query or "", "description": topic.description or ""}
     return templates.TemplateResponse(request, "topic.html", {
         "user": user, "topic": topic,
         "likes": [e for e in examples if e.liked], "dislikes": [e for e in examples if not e.liked],

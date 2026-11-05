@@ -47,6 +47,10 @@ class TopicForm(BaseModel):
         description="Сюжеты, где есть все эти слова (в любой форме), попадают в тему. "
                     "Можно оставить пустым: тогда в тему попадает похожее на добавленные сюжеты.",
     )
+    description: Annotated[str, StringConstraints(max_length=1000)] = Field(
+        "", title="Описание",
+        description="Что входит в тему и что нет, своими словами. Необязательно; LLM учитывает его в сводках.",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +175,7 @@ class TopicService:
         topic = await self.owned(user, topic_id, lock=True)
         query = form.query or None
         query_changed = query != topic.query
-        topic.name, topic.query = form.name, query
+        topic.name, topic.query, topic.description = form.name, query, form.description or None
         if query_changed:
             await self.rematch(topic)
         return topic

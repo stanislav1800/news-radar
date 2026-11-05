@@ -4,6 +4,7 @@
 Ollama). Каждый запрос пишется в llm_usage: по нему дневной лимит и счётчик в админке.
 """
 
+import json
 import logging
 import re
 import time
@@ -27,6 +28,7 @@ from sito.models import (
     User,
 )
 from sito.repositories.stories import MaterialPost, StoryRepository
+from sito.repositories.topics import TopicRepository
 
 logger = logging.getLogger(__name__)
 
@@ -538,3 +540,98 @@ def _zone(name: str) -> ZoneInfo:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
         return ZoneInfo("UTC")
+
+
+DRAFT_SYSTEM = """Ты помогаешь настроить тему в новостном радаре. Пользователь своими словами описывает, \
+о каких новостях хочет знать. Составь тему и ответь только JSON-объектом с полями:
+"name" — короткое название темы, 1–4 слова;
+"query" — поисковый запрос по словам (синтаксис ниже);
+"description" — 1–3 предложения: что входит в тему и что нет (по нему потом проверяются спорные сюжеты);
+"explanation" — одно предложение для пользователя: как устроен запрос.
+
+Синтаксис запроса. Слова через пробел — все должны быть в новости (И). OR между словами или фразами — \
+любое из них: подряд идущие через OR образуют одну группу. Фраза в кавычках — слова подряд. Минус перед \
+словом или фразой — исключить новости с ним. Форма слова не важна (поиск по начальным формам), регистр тоже.
+Примеры:
+«ставка ЦБ и инфляция, без прогнозов аналитиков» → "ключевая ставка" OR инфляция OR "денежно-кредитная политика" \
+-прогноз -аналитик
+«угольная отрасль Кузбасса» → уголь OR угольный OR шахта OR разрез кузбасс OR кемеровский
+
+Запрос должен ловить все новости темы (добавляй синонимы и устойчивые обороты через OR), но не тянуть \
+посторонние: обычно 1–2 обязательные группы. Не делай запрос из одного многозначного слова. Исключения — \
+только то, что пользователь сам просил исключить, или явный шум."""
+
+
+@dataclass(frozen=True, slots=True)
+class TopicDraft:
+    description: str           # что написал пользователь
+    name: str
+    query: str
+    topic_description: str     # описание темы от модели (что входит и что нет)
+    explanation: str
+    found: int                 # сколько сюжетов запрос нашёл бы за days дней
+    days: int
+    samples: list[tuple[int, str, int]]  # (id, заголовок, изданий)
+    refined: bool = False      # первый вариант был пустым или слишком широким — модель его поправила
+
+
+def parse_draft(text: str) -> dict[str, str]:
+    """JSON из ответа модели (бывает обёрнут в ```json ... ```)."""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise LlmError("модель ответила не в том виде, попробуйте ещё раз")
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        raise LlmError("модель ответила не в том виде, попробуйте ещё раз") from exc
+    if not isinstance(data, dict):
+        raise LlmError("модель ответила не в том виде, попробуйте ещё раз")
+    return {key: str(data.get(key) or "").strip() for key in ("name", "query", "description", "explanation")}
+
+
+class TopicDraftService:
+    """Тема по описанию: модель составляет название и запрос, Сито сразу показывает, что он найдёт."""
+
+    def __init__(self, session: AsyncSession, client: LlmClient, config: Settings) -> None:
+        self.session = session
+        self.client = client
+        self.config = config
+
+    async def _ask(self, prompt: str, user_id: int) -> dict[str, str]:
+        answer = await self.client.complete(DRAFT_SYSTEM, prompt, max_tokens=800)
+        self.session.add(LlmUsage(
+            feature="topic_draft", model=answer.model, input_tokens=answer.input_tokens,
+            output_tokens=answer.output_tokens, cost=answer.cost, user_id=user_id,
+        ))
+        await self.session.flush()
+        draft = parse_draft(answer.text)
+        if not draft["query"] or not draft["name"]:
+            raise LlmError("модель не составила запрос, попробуйте описать тему подробнее")
+        return draft
+
+    async def draft(self, description: str, user_id: int) -> TopicDraft:
+        await check_limit(self.session, self.config)
+        repo = TopicRepository(self.session)
+        days = self.config.topic_backfill_days
+        since = datetime.now(UTC) - timedelta(days=days)
+        prompt = f"Описание темы: {description}"
+        draft = await self._ask(prompt, user_id)
+        found = await repo.preview(draft["query"], since)
+        refined = False
+        # Пустой или слишком широкий запрос — один раз попросить поправить, с цифрами
+        too_wide = found > self.config.topic_wide_per_day * 3 * days
+        if found == 0 or too_wide:
+            hint = (f"За {days} дней этот запрос не нашёл ни одной новости: сделай его шире — меньше обязательных "
+                    "групп, больше синонимов." if found == 0 else
+                    f"За {days} дней этот запрос нашёл {found} новостей — слишком широко: сузь его, добавь "
+                    "уточняющую группу или исключения.")
+            retry = await self._ask(f"{prompt}\n\nТвой прошлый вариант: {json.dumps(draft, ensure_ascii=False)}\n{hint}",
+                                    user_id)
+            retry_found = await repo.preview(retry["query"], since)
+            if retry_found and (found == 0 or retry_found < found):
+                draft, found, refined = retry, retry_found, True
+        return TopicDraft(
+            description=description, name=draft["name"][:80], query=draft["query"][:500],
+            topic_description=draft["description"], explanation=draft["explanation"], found=found, days=days,
+            samples=await repo.preview_stories(draft["query"], since), refined=refined,
+        )

@@ -218,3 +218,44 @@ async def test_digest_by_schedule_page_badge_and_rss(
     assert "Рекорд угля" in rss.text and f"/stories/{story_id}" in rss.text
     async with session_factory() as session:
         assert [r.kind for r in await session.scalars(select(TopicReport))] == ["digest"]
+
+
+def test_parse_draft() -> None:
+    from sito.services.llm import LlmError, parse_draft
+
+    text = '```json\n{"name": "Уголь", "query": "уголь OR шахта", "description": "Добыча", "explanation": "Синонимы"}\n```'
+    assert parse_draft(text)["query"] == "уголь OR шахта"
+    with pytest.raises(LlmError):
+        parse_draft("не знаю")
+
+
+async def test_topic_from_description(
+    app: FastAPI, logged_in: httpx.AsyncClient, stories: Stories,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from sito.models import Topic
+
+    await stories.add([("ТАСС", "Рекорд добычи угля в Кузбассе", timedelta(hours=2))])
+
+    def draft(query: str) -> dict[str, object]:
+        return answer(json.dumps({"name": "Уголь", "query": query, "description": "Добыча угля, без цен",
+                                  "explanation": "Уголь и синонимы"}, ensure_ascii=False))
+
+    seen: list[dict[str, object]] = []
+    # Первый запрос ничего не находит — модель просят расширить
+    app.state.llm = fake_llm([draft("кобальт"), draft("уголь OR угольный")], seen)
+    assert "Составить тему" in (await logged_in.get("/topics/new?d=уголь")).text
+    token = await csrf_from(logged_in, "/topics/new")
+    response = await logged_in.post("/topics/draft", data={"csrf_token": token, "description": "добыча угля"})
+    assert 'value="уголь OR угольный"' in response.text and "Рекорд добычи угля" in response.text
+    assert "модель его поправила" in response.text and "не нашёл ни одной" in str(seen[1]["messages"])
+
+    checked = await logged_in.post("/topics/draft/check", data={"csrf_token": token, "query": "уголь -рекорд"})
+    assert "ничего не нашёл" in checked.text and len(seen) == 2
+
+    created = await logged_in.post("/topics", data={
+        "csrf_token": token, "name": "Уголь", "query": "уголь OR угольный", "topic_description": "Добыча угля"})
+    assert created.status_code == 303
+    async with session_factory() as session:
+        topic = await session.scalar(select(Topic))
+    assert topic is not None and topic.description == "Добыча угля"

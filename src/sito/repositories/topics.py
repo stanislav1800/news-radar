@@ -55,6 +55,16 @@ _WORD_MATCH_SQL = """
          ))
 """
 
+# Примеры для предпросмотра: сначала сюжеты, где слова есть в большинстве постов (тема — главное),
+# а не там, где их мимоходом упомянул один пост из многих
+_PREVIEW_STORIES_SQL = text(f"""
+    SELECT story.id, story.title, story.sources_count FROM story JOIN post ON post.story_id = story.id
+    WHERE story.last_post_at >= :since AND {_WORD_MATCH_SQL}
+    GROUP BY story.id
+    ORDER BY count(*)::float / greatest(story.posts_count, 1) DESC, story.sources_count DESC, story.last_post_at DESC
+    LIMIT :limit
+""")
+
 _PREVIEW_SQL = text(f"""
     SELECT count(DISTINCT post.story_id) FROM post JOIN story ON story.id = post.story_id
     WHERE story.last_post_at >= :since AND {_WORD_MATCH_SQL}
@@ -387,6 +397,14 @@ class TopicRepository:
         else:
             return []
         return [Suggestion(row.id, row.similarity, basis) for row in result]
+
+    async def preview_stories(self, query: str, since: datetime, limit: int = 8) -> list[tuple[int, str, int]]:
+        """Самые заметные сюжеты, которые тема с таким запросом нашла бы: показать до создания."""
+        params = _word_params(query)
+        if not params["words"]:
+            return []
+        rows = await self.session.execute(_PREVIEW_STORIES_SQL, {**params, "since": since, "limit": limit})
+        return [(row[0], row[1], row[2]) for row in rows]
 
     async def preview(self, query: str, since: datetime) -> int:
         """Сколько сюжетов с since тема с таким запросом нашла бы по словам: до того, как её создать."""

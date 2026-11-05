@@ -481,3 +481,11 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 .digest-row label { display: flex; flex-direction: column; gap: .2rem; }
 .topic-report.unread { border-left: 3px solid var(--accent); }
 .digest-topic { font-size: 1.05rem; margin: 0; }
+
+/* Тема по описанию */
+.topic-new .busy-note { display: none; }
+.topic-new form.busy .busy-note { display: inline; }
+.topic-draft label { display: flex; flex-direction: column; gap: .2rem; }
+.draft-samples { padding-left: 1.2rem; margin: .3rem 0 0; }
+.draft-samples li { margin: .2rem 0; }
+.follow-actions { display: flex; flex-direction: column; align-items: flex-end; gap: .3rem; }

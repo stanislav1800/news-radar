@@ -30,6 +30,7 @@ class Topic(IdMixin, TimestampMixin, Base):
     min_similarity: Mapped[float | None]
     # Искать только в этих источниках (тема «IT» — Хабр и OpenNET); пусто — во всех
     source_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), server_default="{}")
+    description: Mapped[str | None]  # что входит в тему и что нет — своими словами (тема по описанию, LLM)
     llm_prompt: Mapped[str | None]  # пожелания пользователя к сводкам и ответам LLM по теме
     # Дайджест по расписанию (LLM): daily, weekdays, weekly или None — выключен
     digest_schedule: Mapped[str | None]

@@ -17,7 +17,7 @@ class User(IdMixin, TimestampMixin, Base):
     # Входит в cookie сессии. Смена пароля увеличивает версию, и все прежние входы перестают действовать.
     session_version: Mapped[int] = mapped_column(server_default="1")
     timezone: Mapped[str] = mapped_column(server_default="Europe/Moscow")
-    # Пока пользователь не выбрал пояс сам, он берётся из браузера при заходе
+    # Пояс ещё не определён: при первом заходе возьмётся из браузера (один раз)
     timezone_auto: Mapped[bool] = mapped_column(server_default="true")
     last_login_at: Mapped[datetime | None]
 

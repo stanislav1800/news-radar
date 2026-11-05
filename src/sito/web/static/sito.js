@@ -190,11 +190,11 @@ document.querySelectorAll(".tz-mismatch").forEach((el) => {
   } catch (e) { /* неизвестный пояс — молчим */ }
 });
 
-// Часовой пояс по браузеру, пока пользователь не выбрал свой в настройках
+// Часовой пояс по браузеру — один раз, при первом заходе (дальше только вручную в настройках)
 (() => {
   const current = document.body.dataset.tzAuto;
   const browser = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (!current || !browser || browser === current || !window.htmx) return;
+  if (!current || !browser || !window.htmx) return;
   htmx.ajax("POST", "/settings/timezone/auto", { values: { timezone: browser }, swap: "none" })
-    .then(() => { if (document.querySelector("[data-tz-reload]")) location.reload(); });
+    .then(() => { if (browser !== current && document.querySelector("[data-tz-reload]")) location.reload(); });
 })();

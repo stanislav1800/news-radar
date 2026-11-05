@@ -58,13 +58,14 @@ async def set_timezone(request: Request, db: DbSession, user: CurrentUser, timez
 
 @router.post("/timezone/auto")
 async def detect_timezone(db: DbSession, user: CurrentUser, timezone: Annotated[str, Form()]) -> Response:
-    """Пояс из браузера — пока пользователь не выбрал свой в настройках."""
-    if user.timezone_auto and timezone != user.timezone:
+    """Пояс из браузера — один раз, при первом заходе. Дальше только вручную в настройках:
+    иначе открыл сайт в отпуске — и дайджесты дома приходят не в то время."""
+    if user.timezone_auto:
         try:
             ZoneInfo(timezone)
         except (ZoneInfoNotFoundError, ValueError):
             return Response(status_code=status.HTTP_400_BAD_REQUEST)
-        user.timezone = timezone
+        user.timezone, user.timezone_auto = timezone, False
         await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

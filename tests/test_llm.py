@@ -461,6 +461,20 @@ async def test_same_answer_is_not_prepared_twice() -> None:
         pass
 
 
+async def test_user_cannot_run_many_answers_at_once() -> None:
+    """Сотня пересказов разных сюжетов разом прошла бы проверку лимита вся: одновременно — не больше двух."""
+    from sito.services.llm import LlmError, exclusive
+
+    async with exclusive("story", 1, user_id=7), exclusive("topic", 2, user_id=7):
+        with pytest.raises(LlmError, match="несколько ответов"):
+            async with exclusive("story", 3, user_id=7):
+                pass
+        async with exclusive("story", 3, user_id=8):  # другому пользователю можно
+            pass
+    async with exclusive("story", 3, user_id=7):  # ответы готовы — можно снова
+        pass
+
+
 async def test_daily_limit_in_rubles(session_factory: async_sessionmaker[AsyncSession]) -> None:
     from sito.config import settings
     from sito.services.llm import LlmError, check_limit

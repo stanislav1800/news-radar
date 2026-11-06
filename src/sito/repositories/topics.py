@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from sito.models import Story, Topic, TopicExample, TopicMatch
+from sito.models import Story, Topic, TopicExample, TopicMatch, User
 from sito.models.post import EMBEDDING_DIM, STORY_HAS_TEXT_SQL
 from sito.utils.lemmas import parse_query
 
@@ -296,7 +296,10 @@ class TopicRepository:
         )
 
     async def by_rss_token(self, token: str) -> Topic | None:
-        return await self.session.scalar(select(Topic).where(Topic.rss_token == token))
+        """Тема по ссылке RSS; у отключённого пользователя ссылки не работают, как и вход."""
+        return await self.session.scalar(
+            select(Topic).join(User, User.id == Topic.user_id).where(Topic.rss_token == token, User.is_active)
+        )
 
     async def list_for_user(self, user_id: int, *, active_only: bool = False) -> list[Topic]:
         query = select(Topic).where(Topic.user_id == user_id).order_by(func.lower(Topic.name), Topic.id)

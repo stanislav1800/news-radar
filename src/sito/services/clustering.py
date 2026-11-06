@@ -158,5 +158,22 @@ class ClusteringService:
         Ждёт, пока другой процесс закончит текущую пачку. Возвращает число постов к пересклейке.
         """
         async with self.session_factory() as session, session.begin():
-            await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": CLUSTERING_LOCK_KEY})
+            await self._lock_for_bulk(session)
             return await StoryRepository(session).reset_all()
+
+    async def reprocess(self, source_type: str, *, untitled: bool = False) -> int:
+        """Отправить посты источников типа заново через конвейер (см. StoryRepository.reprocess).
+
+        Под той же блокировкой, что и склейка: иначе worker мог бы приклеить пост к сюжету, который
+        reprocess тут же удалит, — пост остался бы «склеенным» без сюжета и пропал из ленты.
+        """
+        async with self.session_factory() as session, session.begin():
+            await self._lock_for_bulk(session)
+            return await StoryRepository(session).reprocess(source_type, untitled=untitled)
+
+    @staticmethod
+    async def _lock_for_bulk(session: AsyncSession) -> None:
+        """Дождаться, пока worker допишет пачку, и снять лимит времени запроса: на полной базе
+        массовый UPDATE и удаление сюжетов дольше обычных 300 с, а откат по таймауту не нужен никому."""
+        await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": CLUSTERING_LOCK_KEY})
+        await session.execute(text("SET LOCAL statement_timeout = 0"))

@@ -73,7 +73,7 @@ class TopicMatch(Base):
     story_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("story.id", ondelete="CASCADE"), primary_key=True)
     by_words: Mapped[bool]
     example_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("topic_example.id", ondelete="SET NULL")
+        BigInteger, ForeignKey("topic_example.id", ondelete="SET NULL"), index=True
     )
     similarity: Mapped[float | None]  # с ближайшим 👍-примером
     matched_at: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -86,7 +86,9 @@ class TopicCheck(Base):
     __tablename__ = "topic_check"
 
     topic_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("topic.id", ondelete="CASCADE"), primary_key=True)
-    story_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("story.id", ondelete="CASCADE"), primary_key=True)
+    story_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("story.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
     fits: Mapped[bool]
     by_llm: Mapped[bool] = mapped_column(server_default="true")  # false — явно по теме, модель не спрашивали
     reason: Mapped[str | None]

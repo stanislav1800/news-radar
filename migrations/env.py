@@ -75,6 +75,10 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # Выкатка: миграция стартует, пока старые web и worker ещё работают. Если таблицу держит их долгая
+        # транзакция, ALTER/CREATE INDEX встал бы в очередь, а за ним — все запросы ленты. Лучше упасть
+        # через 10 с и повторить выкатку, чем повесить сайт
+        connect_args={"server_settings": {"lock_timeout": "10s"}},
     )
 
     async with connectable.connect() as connection:

@@ -305,19 +305,33 @@ async def check_limit(session: AsyncSession, config: Settings, user_id: int | No
 
 
 _busy: set[tuple[str, int]] = set()
+# check_limit видит только уже записанный расход: без потолка сто одновременных пересказов разных сюжетов
+# прошли бы проверку все и превысили лимит во много раз. С потолком перерасход — не больше пары ответов
+USER_CONCURRENCY = 2
+_user_calls: dict[int, int] = {}
 
 
 @asynccontextmanager
-async def exclusive(kind: str, key: int) -> AsyncIterator[None]:
+async def exclusive(kind: str, key: int, user_id: int | None = None) -> AsyncIterator[None]:
     """Одно и то же (пересказ этого сюжета, сводка этой темы) не делается дважды одновременно:
-    двойной клик или две вкладки — второй запрос не платит повторно, а получает «уже готовлю»."""
+    двойной клик или две вкладки — второй запрос не платит повторно, а получает «уже готовлю».
+    С user_id — ещё и не больше USER_CONCURRENCY ответов пользователю одновременно."""
     if (kind, key) in _busy:
         raise LlmError("уже готовлю ответ — подождите несколько секунд и обновите страницу")
+    if user_id is not None and _user_calls.get(user_id, 0) >= USER_CONCURRENCY:
+        raise LlmError("уже готовлю несколько ответов — дождитесь их и повторите")
     _busy.add((kind, key))
+    if user_id is not None:
+        _user_calls[user_id] = _user_calls.get(user_id, 0) + 1
     try:
         yield
     finally:
         _busy.discard((kind, key))
+        if user_id is not None:
+            if (left := _user_calls[user_id] - 1) > 0:
+                _user_calls[user_id] = left
+            else:
+                del _user_calls[user_id]
 
 
 def record_usage(session: AsyncSession, feature: str, answer: LlmAnswer, user_id: int | None) -> None:
@@ -355,7 +369,7 @@ class StorySummaryService:
     ) -> tuple[StorySummary, LlmAnswer]:
         """Пересказ. Пока модель отвечает (до минуты), соединение с базой свободно: транзакция закрыта.
         Записывает в сессию, фиксирует вызывающий."""
-        async with exclusive("story", story_id):
+        async with exclusive("story", story_id, user_id):
             story = await self.session.get(Story, story_id)
             if story is None:
                 raise LlmError("сюжет не найден")
@@ -519,7 +533,7 @@ class TopicReportService:
         if days not in PERIODS:
             raise LlmError("неизвестный период")
         kind = "digest" if digest else "question" if question else "summary"
-        async with exclusive("topic", topic.id):
+        async with exclusive("topic", topic.id, user_id):
             if kind == "summary" and not force:
                 last = await self.latest(topic.id, kind, days)
                 if last is not None and not await self.new_since(last):
@@ -665,6 +679,11 @@ class DigestService:
                     await session.execute(update(Topic).where(Topic.id == topic_id).values(digest_last_at=previous))
                     await session.commit()
                     logger.warning("дайджест темы %s не сделан, повторю: %s", topic_id, exc)
+                except Exception:
+                    # Непредвиденное (сбой базы, ошибка в коде): слот этой темы пропускаем — модель могла уже
+                    # ответить за деньги, повторять каждую минуту нельзя, — но остальные темы делаем
+                    logger.exception("дайджест темы %s не сделан", topic_id)
+                    await session.rollback()
         return made
 
 

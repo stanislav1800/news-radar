@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, ForeignKey, func
+from sqlalchemy import BigInteger, ForeignKey, Index, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,6 +24,8 @@ class LlmUsage(IdMixin, Base):
     """Каждый запрос к LLM: для дневного лимита и счётчика расходов в админке."""
 
     __tablename__ = "llm_usage"
+    # Лимит на пользователя за сутки; и удаление пользователя не перебирает весь журнал
+    __table_args__ = (Index("ix_llm_usage_user_id_created_at", "user_id", "created_at"),)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
     feature: Mapped[str]        # story_summary, …
@@ -62,7 +64,9 @@ class StoryMergeCheck(Base):
     __tablename__ = "story_merge_check"
 
     story_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("story.id", ondelete="CASCADE"), primary_key=True)
-    other_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("story.id", ondelete="SET NULL"))
+    other_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("story.id", ondelete="SET NULL"), index=True
+    )
     similarity: Mapped[float | None]
     same: Mapped[bool | None]       # None — похожего рядом нет, модель не спрашивали
     reason: Mapped[str | None]

@@ -7,10 +7,10 @@ from xml.etree import ElementTree as ET
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sito.models import Topic
+from sito.models import Topic, User
 from sito.services.users import UserService
 from tests.conftest import FakeEmbedder, MakeSource
 from tests.test_topics import direction
@@ -296,6 +296,12 @@ async def test_rss_feed(
     # Новый адрес — старый перестаёт работать
     await post(logged_in, f"/topics/{topic_id}/rss-token", page=f"/topics/{topic_id}")
     assert (await logged_in.get(rss_path)).status_code == 404
+
+    # Пользователя отключили — его ленты RSS тоже не работают
+    [topic] = await topics_of(session_factory)
+    async with session_factory() as session, session.begin():
+        await session.execute(update(User).where(User.id == topic.user_id).values(is_active=False))
+    assert (await logged_in.get(f"/rss/{topic.rss_token}")).status_code == 404
 
 
 async def test_vote_requires_csrf(logged_in: httpx.AsyncClient, stories: Stories) -> None:

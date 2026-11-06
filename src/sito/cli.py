@@ -22,7 +22,6 @@ from sito.log import setup_logging
 from sito.models import SourceType
 from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.sources import SourceRepository
-from sito.repositories.stories import StoryRepository
 from sito.repositories.users import UserRepository
 from sito.services.clustering import ClusteringRules, ClusteringService
 from sito.services.collector.registry import RssSourceForm
@@ -253,8 +252,7 @@ def pipeline_reprocess(
         typer.confirm(f"Посты типа {source_type} будут обработаны заново. Продолжить?", abort=True)
 
     async def run() -> None:
-        async with async_session() as session, session.begin():
-            total = await StoryRepository(session).reprocess(source_type, untitled=untitled)
+        total = await ClusteringService(async_session).reprocess(source_type, untitled=untitled)
         console.print(f"Отправлено в обработку постов: {total}. Worker обработает их в фоне.")
 
     _run(run())

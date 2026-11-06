@@ -29,9 +29,12 @@ class Story(IdMixin, TimestampMixin, Base):
 
     # Кто написал первым
     first_post_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("post.id", ondelete="SET NULL", use_alter=True)
+        BigInteger, ForeignKey("post.id", ondelete="SET NULL", use_alter=True), index=True
     )
-    first_source_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("source.id", ondelete="SET NULL"))
+    # Индексы под внешними ключами: без них удаление поста или источника перебирает все сюжеты
+    first_source_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("source.id", ondelete="SET NULL"), index=True
+    )
 
     started_at: Mapped[datetime]                                   # время первого поста
     last_post_at: Mapped[datetime] = mapped_column(index=True)    # время самого свежего поста

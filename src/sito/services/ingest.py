@@ -205,7 +205,9 @@ class IngestService:
 
         Тот же пост того же источника не отбрасывается: это обновление, его обработает upsert.
         """
-        owners = await repo.url_owners({p.url_normalized for p in posts})
+        urls = {p.url_normalized for p in posts}
+        await repo.lock_urls(urls)
+        owners = await repo.url_owners(urls)
         fresh: list[NewPost] = []
         for post in posts:
             key = (post.source_id, post.external_id)

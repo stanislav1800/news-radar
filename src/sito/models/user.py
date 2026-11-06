@@ -37,4 +37,6 @@ class UserHiddenSource(Base):
     __tablename__ = "user_hidden_source"
 
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user_account.id", ondelete="CASCADE"), primary_key=True)
-    source_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("source.id", ondelete="CASCADE"), primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("source.id", ondelete="CASCADE"), primary_key=True, index=True
+    )

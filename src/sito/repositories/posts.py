@@ -2,12 +2,15 @@ from collections.abc import Collection, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
 
-from sqlalchemy import Boolean, func, literal_column, select
+from sqlalchemy import Boolean, func, literal_column, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sito.models import Post, PostStatus
 from sito.models.post import EVENT_AT_SQL
+
+# Своё пространство ключей advisory-блокировок для адресов статей (двухключевая форма)
+URL_LOCK_SPACE = 7101
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +51,16 @@ class PostRepository:
             query = query.order_by(Post.id)
         result = await self.session.scalars(query)
         return list(result)
+
+    async def lock_urls(self, urls: Collection[str]) -> None:
+        """Блокировка адресов до конца транзакции: две ленты одного издания с одной статьёй сохраняются
+        по очереди, и вторая увидит статью первой, а не упадёт на уникальности url_normalized.
+        По порядку — чтобы встречные пачки не заблокировали друг друга."""
+        if urls:
+            await self.session.execute(
+                text("SELECT count(pg_advisory_xact_lock(:space, hashtext(u))) FROM unnest(CAST(:urls AS text[])) u"),
+                {"space": URL_LOCK_SPACE, "urls": sorted(urls)},
+            )
 
     async def url_owners(self, urls: Collection[str]) -> dict[str, tuple[int, str]]:
         """Какие из адресов уже есть в базе и чьи они: url → (source_id, external_id)."""

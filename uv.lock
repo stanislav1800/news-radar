@@ -2030,6 +2030,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pymorphy3" },
     { name = "python-multipart" },
+    { name = "rich" },
     { name = "segno" },
     { name = "sentence-transformers" },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -2046,6 +2047,7 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "python-dotenv" },
     { name = "ruff" },
 ]
 
@@ -2065,6 +2067,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.16.1" },
     { name = "pymorphy3", specifier = ">=2.0.6" },
     { name = "python-multipart", specifier = ">=0.0.32" },
+    { name = "rich", specifier = ">=15.0.0" },
     { name = "segno", specifier = ">=1.6.6" },
     { name = "sentence-transformers", specifier = ">=6.2.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.1.6" },
@@ -2080,6 +2083,7 @@ dev = [
     { name = "mypy", specifier = ">=2.4.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.1" },
+    { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "ruff", specifier = ">=0.17.2" },
 ]
 

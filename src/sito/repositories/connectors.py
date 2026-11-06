@@ -49,11 +49,24 @@ class ConnectorRepository:
     async def get_command(self, command_id: int) -> ConnectorCommand | None:
         return await self.session.get(ConnectorCommand, command_id)
 
-    async def next_command(self, connector_id: int) -> ConnectorCommand | None:
-        return await self.session.scalar(
+    async def take_command(self, connector_id: int) -> ConnectorCommand | None:
+        """Взять следующее поручение в работу (status → running): если результат потом не запишется,
+        поручение не выполнится второй раз — отписка или уведомление не повторятся."""
+        command = await self.session.scalar(
             select(ConnectorCommand)
             .where(ConnectorCommand.connector_id == connector_id, ConnectorCommand.status == "pending")
-            .order_by(ConnectorCommand.id).limit(1)
+            .order_by(ConnectorCommand.id).limit(1).with_for_update(skip_locked=True)
+        )
+        if command is not None:
+            command.status = "running"
+        return command
+
+    async def fail_interrupted(self, connector_id: int) -> None:
+        """Поручения, которые выполнялись, когда соединение или worker упали: веб не должен ждать их вечно."""
+        await self.session.execute(
+            update(ConnectorCommand)
+            .where(ConnectorCommand.connector_id == connector_id, ConnectorCommand.status == "running")
+            .values(status="failed", error="Выполнение прервалось — попробуйте ещё раз", finished_at=func.now())
         )
 
     async def last_command(self, connector_id: int, kind: str) -> ConnectorCommand | None:

@@ -1,5 +1,5 @@
 {# Предпросмотр каналов по ссылкам: ответ worker'а на поручение preview #}
-{% if command.status == "pending" %}
+{% if command.status in ("pending", "running") %}
 <div hx-get="/admin/connectors/{{ connector.id }}/commands/{{ command.id }}" hx-trigger="load delay:1s" hx-swap="outerHTML">
   <p class="muted">Смотрю каналы…{% if slow %} Долго: worker занят догрузкой или не запущен — подождите.{% endif %}</p>
 </div>

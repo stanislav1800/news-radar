@@ -327,6 +327,7 @@ class _Session:
 
     async def run(self) -> None:
         await self.sink.connected(self.connector.id)
+        await self.sink.fail_interrupted_commands(self.connector.id)
         await self._refresh_sources()
         # Каналы с курсором ждут догрузки: живые сообщения до неё курсор в базе не двигают
         self.behind = set(self.saved_ids)

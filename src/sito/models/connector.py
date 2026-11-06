@@ -50,7 +50,7 @@ class ConnectorCommand(IdMixin, Base):
     connector_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("connector.id", ondelete="CASCADE"))
     kind: Mapped[str]                       # preview, leave
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
-    status: Mapped[str] = mapped_column(server_default="pending")  # pending, done, failed
+    status: Mapped[str] = mapped_column(server_default="pending")  # pending, running, done, failed
     result: Mapped[Any | None] = mapped_column(JSONB)
     error: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

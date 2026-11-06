@@ -157,7 +157,11 @@ class PostSink(Protocol):
         ...
 
     async def next_command(self, connector_id: int) -> Command | None:
-        """Следующее поручение из веба или None."""
+        """Следующее поручение из веба (уже отмечено «выполняется») или None."""
+        ...
+
+    async def fail_interrupted_commands(self, connector_id: int) -> None:
+        """Закрыть ошибкой поручения, прерванные прошлым соединением."""
         ...
 
     async def finish_command(self, command_id: int, result: Any = None, error: str | None = None) -> None:

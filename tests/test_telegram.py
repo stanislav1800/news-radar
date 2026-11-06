@@ -557,3 +557,19 @@ async def test_failed_catch_up_keeps_cursor_and_is_retried(
     assert [p[1] for p in await posts(session_factory)] == ["1", "2", "3", "4"]
     [source] = await sink.sources(config.id)
     assert source.state == {"last_id": 4} and session.retry == set()
+
+
+async def test_command_is_not_repeated_and_interrupted_one_fails(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    """Взятое поручение второй раз не выдаётся, даже если результат не записался; прерванное — ошибкой."""
+    sink, config = setup
+    await add_command(session_factory, config.id, "notify", {"text": "Сломалось"})
+
+    taken = await sink.next_command(config.id)
+    assert taken is not None and await sink.next_command(config.id) is None  # finish_command так и не вызван
+
+    await _Session(config, sink, FakeTelegram(), TelegramRules()).run()  # переподключение
+    async with session_factory() as db:
+        command = await db.get(ConnectorCommand, taken.id)
+    assert command is not None and command.status == "failed" and "прервалось" in (command.error or "")

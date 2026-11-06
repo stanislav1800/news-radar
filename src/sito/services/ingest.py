@@ -168,9 +168,13 @@ class IngestService:
             logger.info("source=%s: источник удалил постов: %d", source_id, removed)
 
     async def next_command(self, connector_id: int) -> Command | None:
-        async with self.session_factory() as session:
-            found = await ConnectorRepository(session).next_command(connector_id)
-        return Command(found.id, found.kind, dict(found.payload)) if found else None
+        async with self.session_factory() as session, session.begin():
+            found = await ConnectorRepository(session).take_command(connector_id)
+            return Command(found.id, found.kind, dict(found.payload)) if found else None
+
+    async def fail_interrupted_commands(self, connector_id: int) -> None:
+        async with self.session_factory() as session, session.begin():
+            await ConnectorRepository(session).fail_interrupted(connector_id)
 
     async def finish_command(self, command_id: int, result: Any = None, error: str | None = None) -> None:
         async with self.session_factory() as session, session.begin():

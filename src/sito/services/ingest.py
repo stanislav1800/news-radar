@@ -24,13 +24,10 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class IngestResult:
-    fetched: int = 0      # пришло из источника
-    invalid: int = 0      # без нормального адреса
-    duplicates: int = 0   # статья уже есть у другого поста
-    inserted: int = 0
-    updated: int = 0      # источник отредактировал пост
-    unchanged: int = 0
+class IngestResult(SaveResult):
+    """Итог опроса источника: что сохранилось плюс сколько пришло."""
+
+    fetched: int = 0            # пришло из источника
     not_modified: bool = False  # лента не менялась (HTTP 304)
     skipped: bool = False       # источник выключен
 
@@ -39,10 +36,7 @@ class IngestResult:
             return "выключен, пропущен"
         if self.not_modified:
             return "не менялся (304)"
-        return (
-            f"получено={self.fetched} новых={self.inserted} обновлено={self.updated} "
-            f"без изменений={self.unchanged} дублей={self.duplicates} без адреса={self.invalid}"
-        )
+        return f"получено={self.fetched} {SaveResult.__str__(self)}"
 
 
 def _known(source: Source) -> KnownSource:
@@ -96,14 +90,7 @@ class IngestService:
             return IngestResult(not_modified=True)
 
         saved = await self.save(source_id, fetched.posts, fetched.state)
-        return IngestResult(
-            fetched=len(fetched.posts),
-            invalid=saved.invalid,
-            duplicates=saved.duplicates,
-            inserted=saved.inserted,
-            updated=saved.updated,
-            unchanged=saved.unchanged,
-        )
+        return IngestResult(fetched=len(fetched.posts), **asdict(saved))
 
     # --- PostSink: общее сохранение для опрашивающих и слушающих сборщиков ---------------------
 

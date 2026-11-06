@@ -428,18 +428,6 @@ async def test_gap_after_failed_save_is_filled(
     assert [p[1] for p in await posts(session_factory)] == ["1", "2", "3"] and session.gaps == {}
 
 
-async def test_silent_connection_is_restarted(setup: tuple[IngestService, ConnectorConfig]) -> None:
-    sink, config = setup
-    session = _Session(config, sink, FakeTelegram(subscribed=[COAL]), TelegramRules(silence_limit=timedelta(0),
-                                                                                      watch_channels=1))
-    await session.run()
-    session.last_event = 0
-
-    await session._check_alive()
-
-    assert session.stale.is_set()
-
-
 async def test_repost_keeps_link_to_original(
     session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
 ) -> None:

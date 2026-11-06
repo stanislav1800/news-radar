@@ -310,7 +310,6 @@ async def main() -> None:
             tasks.create_task(poll_loop(ingest, stop))
             tasks.create_task(drain_loop("очистка", cleaning.process_batch, settings.clean_tick_seconds, stop))
             # Леммы постов, собранных до поиска по леммам; когда их нет, цикл просто ждёт
-            tasks.create_task(drain_loop("леммы", cleaning.backfill_lemmas, 600, stop))
             tasks.create_task(embed_loop(stop))
             tasks.create_task(
                 drain_loop("склейка", clustering.process_batch, settings.cluster_tick_seconds, stop)

@@ -276,7 +276,8 @@ class TelegramRules:
     per_round: int = 5                       # сведений о каналах за круг
     read_per_round: int = 20                 # отметок «прочитано» за круг
     details_every: timedelta = timedelta(days=1)
-    # Соединение «повисло»: столько тишины при watch_channels+ собираемых каналах не бывает — переподключиться
+    # Соединение «повисло»: столько тишины при watch_channels+ собираемых каналах не бывает — сторож worker'а
+    # перезапустит подключение
     silence_limit: timedelta = timedelta(minutes=15)
     watch_channels: int = 20
     # Один запрос к Telegram может повиснуть без ответа: догрузка канала и шаг обслуживания не дольше этого
@@ -312,8 +313,6 @@ class _Session:
         self.channels: dict[int, Channel] = {}
         # Канал → с какого сообщения догрузить: сохранение не удалось, а курсор мог уйти дальше
         self.gaps: dict[int, int] = {}
-        self.last_event = 0.0  # когда пришло последнее сообщение (часы цикла)
-        self.stale = asyncio.Event()
         # Каналы, на которые подписались в приложении: собирать сразу или ждать решения в Сито
         self.collect_new = connector.settings.get("new_channels", "collect") == "collect"
         self.keep_quiet = bool(connector.settings.get("quiet", True))
@@ -331,27 +330,16 @@ class _Session:
         # Поручения из веба и обслуживание (подписчики, тишина, подписки по ссылкам) идут параллельно
         # с догрузкой: у сотен каналов она занимает минуты, и ждать её незачем
         background = [asyncio.create_task(self._commands()), asyncio.create_task(self._maintenance())]
-        self.last_event = asyncio.get_running_loop().time()
-        # Тишину ждём сразу, а не после догрузки: если догрузка повиснет, переподключение всё равно будет.
-        # Обрыв во время догрузки и так даст ошибку запроса
-        stale = asyncio.create_task(self.stale.wait())
-        catch_up = asyncio.create_task(self._catch_up_all())
-        tasks = [stale, catch_up]
+        # Соединение, которое не оборвалось, но перестало присылать посты, перезапускает сторож worker'а
+        # (смотрит на посты в базе, см. ConnectorListener.silence_limit)
         try:
-            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            if catch_up in done:
-                catch_up.result()
-                logger.info("connector=%s: догрузка закончена, слушаю", self.connector.id)
-                closed = asyncio.create_task(self.api.disconnected())
-                tasks.append(closed)
-                await asyncio.wait([closed, stale], return_when=asyncio.FIRST_COMPLETED)
-            if self.stale.is_set():
-                # Соединение не оборвалось, но сообщения перестали приходить: переподключение всё починит
-                raise ConnectionError(f"Telegram молчит дольше {self.rules.silence_limit}: переподключаюсь")
+            await self._catch_up_all()
+            logger.info("connector=%s: догрузка закончена, слушаю", self.connector.id)
+            await self.api.disconnected()
         finally:
-            for task in [*tasks, *background]:
+            for task in background:
                 task.cancel()
-            await asyncio.gather(*tasks, *background, return_exceptions=True)
+            await asyncio.gather(*background, return_exceptions=True)
 
     async def _catch_up_all(self) -> None:
         for channel in await self.api.channels():
@@ -401,7 +389,6 @@ class _Session:
             await self._save(channel, source, batch)
 
     async def _on_message(self, channel: Channel, message: Message) -> None:
-        self.last_event = asyncio.get_running_loop().time()
         try:
             source = await self._source(channel)
             if source.enabled:
@@ -518,7 +505,7 @@ class _Session:
         loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(self.rules.refresh_interval)
-            for step in (self._refresh_sources, self._check_alive, self._fill_gaps, self._join_one,
+            for step in (self._refresh_sources, self._fill_gaps, self._join_one,
                          self._update_details, self._quiet, self._mark_read):
                 name = step.__name__
                 if loop.time() < paused_until.get(name, 0):
@@ -536,12 +523,6 @@ class _Session:
                                        self.connector.id, wait // 60 + 1, name)
                     else:
                         logger.exception("connector=%s: ошибка обслуживания (%s)", self.connector.id, name)
-
-    async def _check_alive(self) -> None:
-        collected = sum(s.enabled for s in self.sources.values())
-        silent = asyncio.get_running_loop().time() - self.last_event
-        if collected >= self.rules.watch_channels and silent > self.rules.silence_limit.total_seconds():
-            self.stale.set()
 
     async def _fill_gaps(self) -> None:
         """Догрузить каналы, где сообщение не сохранилось: с него и до последнего."""

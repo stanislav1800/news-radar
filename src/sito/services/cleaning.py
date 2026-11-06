@@ -3,7 +3,6 @@
 import logging
 from dataclasses import asdict, dataclass, replace
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import Post, PostStatus
@@ -45,11 +44,6 @@ def set_lemmas(post: Post) -> None:
     post.text_lemmas = lemma_text((post.text or "")[:LEMMA_TEXT_MAX_CHARS])
 
 
-@dataclass(frozen=True, slots=True)
-class LemmaBatchResult:
-    total: int = 0
-
-
 class CleaningService:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession], batch_size: int = 100) -> None:
         self.session_factory = session_factory
@@ -77,20 +71,6 @@ class CleaningService:
         if result.total:
             logger.info("очистка: %s", result, extra=asdict(result))
         return result
-
-    async def backfill_lemmas(self) -> LemmaBatchResult:
-        """Леммы для постов, очищенных до появления поиска по леммам. Пустой результат — всё готово."""
-        async with self.session_factory() as session, session.begin():
-            posts = list(await session.scalars(
-                select(Post)
-                .where(Post.title_lemmas.is_(None), Post.status != PostStatus.NEW)
-                .order_by(Post.id.desc())  # свежие нужнее в поиске
-                .limit(self.batch_size * 5)
-                .with_for_update(skip_locked=True)
-            ))
-            for post in posts:
-                set_lemmas(post)
-        return LemmaBatchResult(len(posts))
 
     @staticmethod
     def _clean(post: Post) -> PostStatus:

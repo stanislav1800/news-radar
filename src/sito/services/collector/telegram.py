@@ -272,6 +272,8 @@ class TelegramRules:
     # на канал: массовые подписки подряд Telegram ограничивает (FloodWait)
     refresh_interval: float = 60
     command_interval: float = 2              # как часто смотреть поручения из веба
+    # Поручение не дольше этого: повисший запрос иначе держал бы все следующие поручения
+    command_timeout: timedelta = timedelta(minutes=2)
     batch: int = 100                         # постов в одной записи при догрузке
     per_round: int = 5                       # сведений о каналах за круг
     read_per_round: int = 20                 # отметок «прочитано» за круг
@@ -438,30 +440,40 @@ class _Session:
 
     async def _run_command(self, command: Command) -> None:
         try:
-            if command.kind == "preview":
-                result: Any = await self._preview(str(command.payload.get("links", "")))
-            elif command.kind == "search":
-                result = self._found(await self.api.search(str(command.payload.get("query", ""))))
-            elif command.kind == "similar":
-                result = self._found(await self.api.similar(int(self._by_id(int(command.payload["source_id"])).external_id)))
-            elif command.kind == "notify":
-                await self.api.notify(str(command.payload.get("text", "")))
-                result = {}
-            elif command.kind == "logout":
-                # После выхода соединение закроется, подключение станет «нужен вход»
-                await self.sink.finish_command(command.id, {})
-                await self.api.log_out()
-                return
-            elif command.kind == "leave":
-                result = await self._leave(int(command.payload["source_id"]), bool(command.payload.get("delete")))
-            else:
-                raise ValueError(f"Неизвестное поручение {command.kind}")
+            async with asyncio.timeout(self.rules.command_timeout.total_seconds()):
+                result = await self._dispatch(command)
+        except TimeoutError:
+            logger.warning("connector=%s: поручение %s не выполнено за %s", self.connector.id, command.kind,
+                           self.rules.command_timeout)
+            await self.sink.finish_command(command.id, error="Telegram не ответил вовремя, попробуйте ещё раз")
+            return
         except Exception as exc:
             logger.warning("connector=%s: поручение %s не выполнено: %s", self.connector.id, command.kind, exc,
                            exc_info=True)
             await self.sink.finish_command(command.id, error=str(exc) or type(exc).__name__)
             return
-        await self.sink.finish_command(command.id, result)
+        if command.kind != "logout":  # ответ на выход записан до него: после выхода соединения уже нет
+            await self.sink.finish_command(command.id, result)
+
+    async def _dispatch(self, command: Command) -> Any:
+        payload = command.payload
+        if command.kind == "preview":
+            return await self._preview(str(payload.get("links", "")))
+        if command.kind == "search":
+            return self._found(await self.api.search(str(payload.get("query", ""))))
+        if command.kind == "similar":
+            return self._found(await self.api.similar(int(self._by_id(int(payload["source_id"])).external_id)))
+        if command.kind == "notify":
+            await self.api.notify(str(payload.get("text", "")))
+            return {}
+        if command.kind == "logout":
+            # После выхода соединение закроется, подключение станет «нужен вход»
+            await self.sink.finish_command(command.id, {})
+            await self.api.log_out()
+            return None
+        if command.kind == "leave":
+            return await self._leave(int(payload["source_id"]), bool(payload.get("delete")))
+        raise ValueError(f"Неизвестное поручение {command.kind}")
 
     async def _preview(self, text: str) -> list[dict[str, Any]]:
         """Каналы по ссылкам — до подписки: название, подписчики, последние посты."""

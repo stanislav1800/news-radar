@@ -1,8 +1,10 @@
 """Поиск по сюжетам: по словам и по смыслу."""
 
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from weakref import WeakKeyDictionary
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +45,12 @@ class SearchResults:
     meaning_unavailable: bool = False  # модель не загрузилась или выключена: только по словам
 
 
+# Векторы запросов: лента темы считает вектор её запроса при каждом открытии, а модель на процессоре
+# тратит на это десятки миллисекунд. Запросы тем повторяются — помним последние
+QUERY_CACHE_SIZE = 512
+_query_vectors: WeakKeyDictionary[Embedder, OrderedDict[str, list[float]]] = WeakKeyDictionary()
+
+
 class SearchService:
     def __init__(
         self, session: AsyncSession, embedder: Embedder | None, limit: int, retention_days: int | None = None
@@ -58,11 +66,19 @@ class SearchService:
         """Вектор запроса или None, если поиск по смыслу недоступен. Ошибка модели не ломает поиск."""
         if self.embedder is None:
             return None
+        key = meaning_text(query)
+        cache = _query_vectors.setdefault(self.embedder, OrderedDict())
+        if (vector := cache.get(key)) is not None:
+            cache.move_to_end(key)
+            return vector
         try:
-            [vector] = await self.embedder.embed([meaning_text(query)])
+            [vector] = await self.embedder.embed([key])
         except Exception:
             logger.exception("поиск по смыслу недоступен: модель не посчитала вектор запроса")
             return None
+        cache[key] = vector
+        if len(cache) > QUERY_CACHE_SIZE:
+            cache.popitem(last=False)
         return vector
 
     async def search(self, user: User, query: str, period: int) -> SearchResults:

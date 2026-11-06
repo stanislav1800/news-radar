@@ -17,14 +17,15 @@ from tests.conftest import MakeSource
 class FakeEmbedder(Embedder):
     """Вектор из длины текста: детерминированный и нормализованный."""
 
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, bad: str | None = None) -> None:
         self.name = "fake-model"
         self.dim = EMBEDDING_DIM
         self.fail = fail
+        self.bad = bad  # текст с этим кусочком модель не переваривает
         self.received: list[str] = []
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        if self.fail:
+        if self.fail or (self.bad and any(self.bad in t for t in texts)):
             raise RuntimeError("модель упала")
         self.received.extend(texts)
         return [self._vector(len(t)) for t in texts]
@@ -124,6 +125,20 @@ async def test_model_error_counts_for_whole_batch(
         assert post.status is PostStatus.FAILED
         assert post.last_error == "RuntimeError: модель упала"
         assert post.embedding is None
+
+
+async def test_one_bad_text_does_not_fail_the_batch(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    source_id = await make_source()
+    good = await add_post(session_factory, source_id, 1)
+    bad = await add_post(session_factory, source_id, 2, text="битый текст")
+
+    result = await EmbeddingService(session_factory, FakeEmbedder(bad="битый")).process_batch()
+
+    assert (result.embedded, result.errors) == (1, 1)
+    assert (await get_post(session_factory, good)).status is PostStatus.EMBEDDED
+    assert (await get_post(session_factory, bad)).attempt == 1
 
 
 async def test_edited_post_drops_embedding(

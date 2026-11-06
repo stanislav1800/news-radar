@@ -1,5 +1,6 @@
 """Шаг 3 пайплайна: очистить текст новых постов, достать ссылки, отсеять мусор."""
 
+import asyncio
 import logging
 from dataclasses import asdict, dataclass, replace
 
@@ -54,23 +55,33 @@ class CleaningService:
         counts = {PostStatus.CLEANED: 0, PostStatus.SKIPPED: 0}
         errors = 0
         async with self.session_factory() as session, session.begin():
-            for post in await PostRepository(session).take_pending(PostStatus.NEW, self.batch_size):
-                try:
-                    status = self._clean(post)
-                except Exception as exc:
-                    errors += 1
-                    record_post_error(post, exc)
-                    logger.exception(
-                        "post=%s: ошибка очистки, попытка %d", post.id, post.attempt, extra={"post_id": post.id}
-                    )
-                else:
-                    counts[status] += 1
+            posts = await PostRepository(session).take_pending(PostStatus.NEW, self.batch_size)
+            # Разбор HTML и леммы — работа процессора на сотни миллисекунд: в отдельном потоке, чтобы
+            # остальные циклы worker'а (Telegram, опрос лент) не стояли. Пока поток работает, к этой сессии
+            # и этим постам никто больше не обращается
+            if posts:
+                errors = await asyncio.to_thread(self._clean_all, posts, counts)
             # Изменения объектов Post запишет commit при выходе из session.begin()
 
         result = CleanBatchResult(counts[PostStatus.CLEANED], counts[PostStatus.SKIPPED], errors)
         if result.total:
             logger.info("очистка: %s", result, extra=asdict(result))
         return result
+
+    def _clean_all(self, posts: list[Post], counts: dict[PostStatus, int]) -> int:
+        errors = 0
+        for post in posts:
+            try:
+                status = self._clean(post)
+            except Exception as exc:
+                errors += 1
+                record_post_error(post, exc)
+                logger.exception(
+                    "post=%s: ошибка очистки, попытка %d", post.id, post.attempt, extra={"post_id": post.id}
+                )
+            else:
+                counts[status] += 1
+        return errors
 
     @staticmethod
     def _clean(post: Post) -> PostStatus:

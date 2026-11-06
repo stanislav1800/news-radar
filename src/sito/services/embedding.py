@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sito.models import PostStatus
+from sito.models import Post, PostStatus
 from sito.repositories.posts import PostRepository
 from sito.services.pipeline import mark_post_done, record_post_error
 from sito.utils.text import embedding_plain
@@ -130,21 +130,36 @@ class EmbeddingService:
             if not posts:
                 return EmbedBatchResult()
             try:
-                vectors = await self.embedder.embed([embedding_text(p.title, p.text, self.max_chars) for p in posts])
-                if len(vectors) != len(posts):
-                    raise RuntimeError(f"Модель вернула {len(vectors)} векторов на {len(posts)} текстов")
-            except Exception as exc:
-                # Модель обрабатывает пачку целиком: ошибка засчитывается всем постам пачки
+                vectors = await self._embed(posts)
+            except Exception:
+                # Пачка не посчиталась — по одному: один «плохой» текст не должен тянуть за собой остальные
+                logger.exception("ошибка расчёта векторов для пачки из %d постов, считаю по одному", len(posts))
+                errors = 0
                 for post in posts:
-                    record_post_error(post, exc)
-                logger.exception("ошибка расчёта векторов для пачки из %d постов", len(posts))
-                result = EmbedBatchResult(errors=len(posts))
+                    try:
+                        [vector] = await self._embed([post])
+                    except Exception as exc:
+                        errors += 1
+                        record_post_error(post, exc)
+                        logger.exception("post=%s: вектор не посчитан", post.id, extra={"post_id": post.id})
+                    else:
+                        self._done(post, vector)
+                result = EmbedBatchResult(embedded=len(posts) - errors, errors=errors)
             else:
                 for post, vector in zip(posts, vectors, strict=True):
-                    post.embedding = vector
-                    post.embedding_model = self.embedder.name
-                    mark_post_done(post, PostStatus.EMBEDDED)
+                    self._done(post, vector)
                 result = EmbedBatchResult(embedded=len(posts))
 
         logger.info("эмбеддинги: %s", result, extra=asdict(result))
         return result
+
+    async def _embed(self, posts: list[Post]) -> list[list[float]]:
+        vectors = await self.embedder.embed([embedding_text(p.title, p.text, self.max_chars) for p in posts])
+        if len(vectors) != len(posts):
+            raise RuntimeError(f"Модель вернула {len(vectors)} векторов на {len(posts)} текстов")
+        return vectors
+
+    def _done(self, post: Post, vector: list[float]) -> None:
+        post.embedding = vector
+        post.embedding_model = self.embedder.name
+        mark_post_done(post, PostStatus.EMBEDDED)

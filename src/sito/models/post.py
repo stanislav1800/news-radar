@@ -39,6 +39,11 @@ STORY_HAS_TEXT_SQL = "EXISTS (SELECT 1 FROM post WHERE post.story_id = story.id 
 # Размер вектора задаёт модель эмбеддингов. Смена модели с другим размером — миграция и пересчёт.
 EMBEDDING_DIM = 768
 
+PURGE_WHERE = (
+    "raw_text IS NOT NULL OR text IS NOT NULL OR text_lemmas IS NOT NULL"
+    " OR embedding IS NOT NULL OR full_text IS NOT NULL"
+)
+
 
 class Post(IdMixin, TimestampMixin, Base):
     __tablename__ = "post"
@@ -54,6 +59,14 @@ class Post(IdMixin, TimestampMixin, Base):
         Index("ix_post_search_vector", "search_vector", postgresql_using="gin"),
         # Склейка по ссылкам: какие посты ссылаются на эту статью (links @> ARRAY[url])
         Index("ix_post_links", "links", postgresql_using="gin"),
+        # Сводка, уведомления и статистика источников считают посты за сутки и неделю
+        Index("ix_post_fetched_at", "fetched_at"),
+        Index("ix_post_source_id_fetched_at", "source_id", "fetched_at"),
+        # Хранение 90 дней: только посты, у которых ещё есть что убирать (условие — как в purge_old_texts)
+        Index(
+            "ix_post_purge", "fetched_at",
+            postgresql_where=text(PURGE_WHERE),
+        ),
     )
     
     source_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("source.id", ondelete="CASCADE"))

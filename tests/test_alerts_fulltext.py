@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import Post, Source
+from sito.repositories.pipeline import PipelineRepository
 from sito.services.alerts import Problem, alert_text, find_problems
 from sito.services.fulltext import FullTextService
 from tests.conftest import MakeSource
@@ -39,6 +40,19 @@ async def test_problems_and_alert_text(
     assert [p.key for p in problems] == [f"failing:{source_id}"]
     text = alert_text(problems, [Problem("silent:1", "RSS «РБК» молчит")])
     assert "«ТАСС» не собирается: HTTP 503" in text and "Починилось" in text and "РБК" in text
+
+
+async def test_stale_backup_is_a_problem(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    async with session_factory() as session:
+        assert not await find_problems(session, datetime.now(UTC))  # отметки нет — сервиса копий нет
+    async with session_factory() as session, session.begin():
+        await PipelineRepository(session).beat("backup", datetime.now(UTC))
+
+    async with session_factory() as session:
+        fresh = await find_problems(session, datetime.now(UTC))
+        stale = await find_problems(session, datetime.now(UTC) + timedelta(hours=27))
+
+    assert fresh == [] and [p.key for p in stale] == ["backup-stale"]
 
 
 async def test_full_text_of_rss_article(

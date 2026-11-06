@@ -80,7 +80,9 @@ async def search_page(
     request: Request, db: DbSession, user: CurrentUser, q: str = "", period: int = DEFAULT_PERIOD,
 ) -> HTMLResponse:
     config: Settings = request.app.state.settings
-    results = await SearchService(db, request.app.state.embedder, config.search_limit).search(user, q, period)
+    results = await SearchService(
+        db, request.app.state.embedder, config.search_limit, config.post_retention_days
+    ).search(user, q, period)
     # Что найдёт тема по этим словам, если нажать «Следить»: поиск показывает и частичные совпадения,
     # а тема берёт только сюжеты со всеми словами
     preview = None

@@ -3,8 +3,16 @@
 #   docker compose up -d db       — только база (для разработки, веб и worker запускаются из исходников)
 # Настройки — в .env (пример: .env.example), обязателен SITO_SECRET_KEY.
 
+# Логи контейнеров: не больше 5 файлов по 20 МБ на сервис, иначе за месяцы займут весь диск
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 20m
+    max-file: "5"
+
 x-app: &app
   build: .
+  logging: *logging
   image: sito:latest
   restart: unless-stopped
   env_file: .env
@@ -20,6 +28,7 @@ x-app: &app
 services:
   db:
     image: pgvector/pgvector:pg16
+    logging: *logging
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -34,10 +43,12 @@ services:
       retries: 20
 
   # Резервная копия базы раз в сутки: ./backups/sito-ГГГГММДД-ЧЧММ.dump, хранятся BACKUP_KEEP последних (7).
-  # Восстановить: docker compose exec -T db pg_restore -U postgres -d sito --clean --if-exists < backups/файл.dump
+  # Восстановить — см. README, «Резервные копии». После удачной копии пишет отметку в heartbeat:
+  # нет свежей дольше 26 часов — администратор увидит уведомление
   # Секреты подключений (сессия Telegram) в копии зашифрованы: без SITO_SECRET_KEY из .env их не открыть
   backup:
     image: pgvector/pgvector:pg16
+    logging: *logging
     restart: unless-stopped
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:-pass}
@@ -54,6 +65,7 @@ services:
           f=/backups/sito-$$(date +%Y%m%d-%H%M).dump
           if pg_dump -h db -U postgres -Fc sito -f "$$f.tmp" && mv "$$f.tmp" "$$f"; then
             echo "backup: $$f ($$(du -h "$$f" | cut -f1))"
+            psql -h db -U postgres -d sito -qc "INSERT INTO heartbeat (name, started_at, beat_at) VALUES ('backup', now(), now()) ON CONFLICT (name) DO UPDATE SET beat_at = now()" || true
             ls -1t /backups/sito-*.dump | tail -n +$$((BACKUP_KEEP + 1)) | xargs -r rm --
           else
             rm -f "$$f.tmp"; echo "backup: ОШИБКА, следующая попытка через час"; sleep 3600; continue

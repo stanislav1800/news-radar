@@ -15,12 +15,19 @@ CSRF_HEADER = "X-CSRF-Token"
 class _Attempts:
     failures: int = 0
     locked_until: float = 0.0
+    last_at: float = 0.0
+
+
+LOGIN_WIDE_FACTOR = 4      # на один логин со всех адресов — вчетверо больше попыток
+MAX_TRACKED = 10_000       # сколько записей держать в памяти, прежде чем чистить устаревшие
 
 
 @dataclass
 class LoginLimiter:
-    """Пауза после нескольких неудачных попыток входа для пары «адрес + логин».
+    """Пауза после нескольких неудачных попыток входа.
 
+    Считается для пары «адрес + логин» и отдельно для логина со всех адресов: адрес клиента берётся
+    из заголовка прокси, и перебор с подменой адреса упрётся во второй счётчик.
     Хранится в памяти процесса: для одного процесса веба этого достаточно,
     после перезапуска счётчики обнуляются.
     """
@@ -29,19 +36,40 @@ class LoginLimiter:
     lockout_seconds: float
     _attempts: dict[tuple[str, str], _Attempts] = field(default_factory=dict)
 
+    @staticmethod
+    def _keys(key: tuple[str, str]) -> tuple[tuple[str, str], tuple[str, str]]:
+        return key, ("*", key[1])
+
     def seconds_left(self, key: tuple[str, str]) -> float:
-        attempts = self._attempts.get(key)
-        return max(0.0, attempts.locked_until - time.monotonic()) if attempts else 0.0
+        now = time.monotonic()
+        return max(
+            (max(0.0, a.locked_until - now) for k in self._keys(key) if (a := self._attempts.get(k))),
+            default=0.0,
+        )
 
     def record_failure(self, key: tuple[str, str]) -> None:
-        attempts = self._attempts.setdefault(key, _Attempts())
-        attempts.failures += 1
-        if attempts.failures >= self.max_failures:
-            attempts.locked_until = time.monotonic() + self.lockout_seconds
-            attempts.failures = 0
+        if len(self._attempts) >= MAX_TRACKED:
+            self._prune()
+        for k in self._keys(key):
+            limit = self.max_failures * (LOGIN_WIDE_FACTOR if k[0] == "*" else 1)
+            attempts = self._attempts.setdefault(k, _Attempts())
+            attempts.failures += 1
+            attempts.last_at = time.monotonic()
+            if attempts.failures >= limit:
+                attempts.locked_until = time.monotonic() + self.lockout_seconds
+                attempts.failures = 0
 
     def reset(self, key: tuple[str, str]) -> None:
-        self._attempts.pop(key, None)
+        for k in self._keys(key):
+            self._attempts.pop(k, None)
+
+    def _prune(self) -> None:
+        """Забыть неудачи старше паузы: иначе перебор случайных логинов раздувал бы память."""
+        now = time.monotonic()
+        self._attempts = {
+            k: a for k, a in self._attempts.items()
+            if a.locked_until > now or now - a.last_at < self.lockout_seconds
+        }
 
 
 def csrf_token(request: Request) -> str:

@@ -1,5 +1,6 @@
 """Страницы администратора: подключения и источники."""
 
+import time
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -67,17 +68,31 @@ async def _broken_connectors(db: DbSession) -> list[Connector]:
     ]
 
 
+ALERT_CACHE_SECONDS = 60
+_alert_cache: tuple[float, str] = (0.0, "")  # (до какого момента верно, html)
+
+
 @router.get("/alert", response_class=HTMLResponse)
 async def alert(db: DbSession) -> HTMLResponse:
-    """Красная точка у меню аккаунта, если что-то сломалось. Подгружается в шапку каждой страницы."""
+    """Красная точка у меню аккаунта, если что-то сломалось. Подгружается в шапку каждой страницы,
+    поэтому ответ кэшируется на минуту: проверка проблем перебирает все источники."""
+    global _alert_cache
+    if time.monotonic() < _alert_cache[0]:
+        return HTMLResponse(_alert_cache[1])
+    html = await _alert_html(db)
+    _alert_cache = (time.monotonic() + ALERT_CACHE_SECONDS, html)
+    return HTMLResponse(html)
+
+
+async def _alert_html(db: DbSession) -> str:
     now = datetime.now(UTC)
     beat = await PipelineRepository(db).heartbeat("worker")
     problems = [p.text for p in await find_problems(db, now)]
     if worker_state(beat.beat_at if beat else None, now) != "ok":
         problems.insert(0, "worker не работает")
     if not problems:
-        return HTMLResponse("")
-    return HTMLResponse(f'<span class="alert-dot" title="{escape("; ".join(problems))}"></span>')
+        return ""
+    return f'<span class="alert-dot" title="{escape("; ".join(problems))}"></span>'
 
 
 @router.post("/failed/retry")

@@ -178,6 +178,9 @@ async def retention_loop(stop: asyncio.Event) -> None:
                     break
             if total:
                 logger.info("хранение: убраны тексты и векторы %d старых постов", total, extra={"purged": total})
+            async with async_session() as session, session.begin():
+                if removed := await PipelineRepository(session).purge_service_rows(datetime.now(UTC)):
+                    logger.info("хранение: удалено служебных записей: %d", removed)
         except Exception:
             logger.exception("ошибка чистки старых постов")
         try:

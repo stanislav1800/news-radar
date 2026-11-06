@@ -17,7 +17,10 @@ class Story(IdMixin, TimestampMixin, Base):
     __tablename__ = "story"
     # updated_at (из TimestampMixin) — когда сюжет изменился у нас; по нему worker находит
     # сюжеты, которые надо заново сопоставить с темами
-    __table_args__ = (Index("ix_story_updated_at", "updated_at"),)
+    __table_args__ = (
+        Index("ix_story_updated_at", "updated_at"),
+        Index("ix_story_started_at_id", "started_at", "id"),  # лента: новые сюжеты сверху
+    )
 
     title: Mapped[str]             # из самого свежего поста: в нём обычно последние данные
     lead: Mapped[str | None]       # анонс свежего поста, не длиннее ~300 знаков (ТЗ)

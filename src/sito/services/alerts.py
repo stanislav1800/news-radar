@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 PIPELINE_STALL = timedelta(minutes=30)  # обычно пост проходит конвейер за секунды
+BACKUP_STALE = timedelta(hours=26)      # копия делается раз в сутки (сервис backup в compose)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +40,12 @@ async def find_problems(session: AsyncSession, now: datetime) -> list[Problem]:
         elif s.type == SourceType.RSS and (since := s.silent_since(now)):
             # Telegram-каналы не в счёт: тихих каналов много, это не поломка
             problems.append(Problem(f"silent:{s.id}", f"RSS «{s.name}» молчит с {since:%d.%m %H:%M} UTC"))
-    summary = await PipelineRepository(session).summary()
+    pipeline = PipelineRepository(session)
+    # Отметки нет — сервис копий не запущен (разработка): не тревожим
+    backup = await pipeline.heartbeat("backup")
+    if backup is not None and now - backup.beat_at > BACKUP_STALE:
+        problems.append(Problem("backup-stale", f"Нет свежей резервной копии базы: последняя {backup.beat_at:%d.%m %H:%M} UTC"))
+    summary = await pipeline.summary()
     if failed := summary.by_status.get("failed", 0):
         problems.append(Problem("failed-posts", f"Постов с ошибкой обработки: {failed}"))
     oldest = summary.oldest_pending_at

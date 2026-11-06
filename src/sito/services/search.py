@@ -44,10 +44,15 @@ class SearchResults:
 
 
 class SearchService:
-    def __init__(self, session: AsyncSession, embedder: Embedder | None, limit: int) -> None:
+    def __init__(
+        self, session: AsyncSession, embedder: Embedder | None, limit: int, retention_days: int | None = None
+    ) -> None:
         self.session = session
         self.embedder = embedder
         self.limit = limit
+        # «За всё время» по смыслу — только в пределах срока хранения: у более старых сюжетов
+        # тексты уже убраны, а перебор всех векторов с годами становится всё дольше
+        self.retention_days = retention_days
 
     async def embed_query(self, query: str) -> list[float] | None:
         """Вектор запроса или None, если поиск по смыслу недоступен. Ошибка модели не ломает поиск."""
@@ -67,14 +72,16 @@ class SearchService:
         period = period if period in PERIODS else DEFAULT_PERIOD
         if not query:
             return SearchResults(query, period)
-        since = datetime.now(UTC) - timedelta(days=period) if period else None
+        now = datetime.now(UTC)
+        since = now - timedelta(days=period) if period else None
+        meaning_since = since or (now - timedelta(days=self.retention_days) if self.retention_days else None)
         stories = StoryRepository(self.session)
         parsed = parse_query(query)
 
         word_ids = await stories.search_words(parsed.words, parsed.excluded, since, self.limit)
         vector = await self.embed_query(query)
         meaning_ids = (
-            await stories.search_meaning(vector, since, MEANING_LIMIT, MEANING_MIN_SIMILARITY, exclude=word_ids)
+            await stories.search_meaning(vector, meaning_since, MEANING_LIMIT, MEANING_MIN_SIMILARITY, exclude=word_ids)
             if vector is not None else []
         )
         cards = {

@@ -2,13 +2,22 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sito.models import Heartbeat, Post, PostStatus, Source, Story
+from sito.models import (
+    ConnectorCommand,
+    Heartbeat,
+    Post,
+    PostStatus,
+    Source,
+    Story,
+    StoryMergeCheck,
+)
+from sito.models.post import PURGE_WHERE
 
 # Посты, которые ещё идут по конвейеру: отставание считается по самому старому из них
 IN_PROGRESS = (PostStatus.NEW, PostStatus.CLEANED, PostStatus.EMBEDDED)
@@ -117,6 +126,19 @@ class PipelineRepository:
     async def heartbeat(self, name: str) -> Heartbeat | None:
         return await self.session.get(Heartbeat, name)
 
+    async def purge_service_rows(self, now: datetime) -> int:
+        """Служебные записи, которые иначе копились бы вечно: проверенные пары для объединения сюжетов
+        (спрашиваются только про сюжеты последних часов) и выполненные поручения подключениям."""
+        checks = await self.session.execute(
+            delete(StoryMergeCheck).where(StoryMergeCheck.checked_at < now - timedelta(days=7))
+        )
+        commands = await self.session.execute(
+            delete(ConnectorCommand).where(
+                ConnectorCommand.status != "pending", ConnectorCommand.created_at < now - timedelta(days=30),
+            )
+        )
+        return checks.rowcount + commands.rowcount  # type: ignore[attr-defined, no-any-return]
+
     async def purge_old_texts(self, before: datetime, limit: int) -> int:
         """Убрать тексты и векторы постов старше before (ТЗ: храним 90 дней). Заголовок, его леммы
         (поиск по старым сюжетам идёт по заголовкам) и ссылка остаются.
@@ -127,8 +149,7 @@ class PipelineRepository:
             select(Post.id)
             .where(
                 Post.fetched_at < before,
-                (Post.raw_text.is_not(None)) | (Post.text.is_not(None)) | (Post.text_lemmas.is_not(None))
-                | (Post.embedding.is_not(None)) | (Post.full_text.is_not(None)),
+                text(f"({PURGE_WHERE})"),  # тот же текст, что у частичного индекса ix_post_purge
             )
             .limit(limit)
             .scalar_subquery()

@@ -8,6 +8,7 @@ from sito.config import settings
 from sito.repositories.users import UserRepository
 from sito.services.users import UserError, UserService
 from sito.web.app import create_app
+from sito.web.security import LOGIN_WIDE_FACTOR, LoginLimiter
 from tests.web import PASSWORD, csrf_from, login
 
 
@@ -95,6 +96,26 @@ async def test_lockout_after_failures(client: httpx.AsyncClient, user: str) -> N
 
     assert response.status_code == 429
     assert "Слишком много неудачных попыток" in response.text
+
+
+def test_lockout_per_login_from_many_addresses() -> None:
+    """Перебор с подменой адреса (заголовок прокси) упирается в счётчик на сам логин."""
+    limiter = LoginLimiter(max_failures=3, lockout_seconds=60)
+    for i in range(3 * LOGIN_WIDE_FACTOR):
+        assert limiter.seconds_left((f"10.0.0.{i}", "admin")) == 0
+        limiter.record_failure((f"10.0.0.{i}", "admin"))
+
+    assert limiter.seconds_left(("10.9.9.9", "admin")) > 0
+    assert limiter.seconds_left(("10.9.9.9", "other")) == 0
+
+
+def test_limiter_forgets_old_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sito.web.security.MAX_TRACKED", 4)
+    limiter = LoginLimiter(max_failures=3, lockout_seconds=0)
+    for i in range(10):
+        limiter.record_failure(("ip", f"user{i}"))
+
+    assert len(limiter._attempts) <= 4 + 2
 
 
 async def test_password_change_ends_old_sessions(

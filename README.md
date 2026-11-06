@@ -73,10 +73,23 @@ uv run sito web                  # в другом
 
 ## Резервные копии
 
-Сервис `backup` раз в сутки делает копию базы в `./backups/sito-ГГГГММДД-ЧЧММ.dump` и хранит 7 последних (`BACKUP_KEEP` в `.env`). Восстановить:
+Сервис `backup` раз в сутки делает копию базы в `./backups/sito-ГГГГММДД-ЧЧММ.dump` и хранит 7 последних (`BACKUP_KEEP` в `.env`). Если свежей копии нет больше 26 часов, администратор увидит уведомление (красная точка и сообщение в Telegram).
+
+Восстановить (веб и worker на это время остановить, чтобы не писали в базу):
 
 ```bash
+docker compose stop web worker
 docker compose exec -T db pg_restore -U postgres -d sito --clean --if-exists < backups/sito-20261103-0400.dump
+docker compose start web worker
+```
+
+Проверить, что копия читается, не трогая рабочую базу, — восстановить её в отдельную базу и удалить:
+
+```bash
+docker compose exec db createdb -U postgres sito_check
+docker compose exec -T db pg_restore -U postgres -d sito_check < backups/sito-20261103-0400.dump
+docker compose exec db psql -U postgres -d sito_check -c "select count(*) from post"
+docker compose exec db dropdb -U postgres sito_check
 ```
 
 Сессия Telegram и другие секреты в копии зашифрованы ключом `SITO_SECRET_KEY`: храните `.env` отдельно от копий, без него секреты не открыть. Папку `backups/` лучше регулярно уносить на другой диск или в облако — копия на том же диске не спасёт от его поломки.

@@ -46,27 +46,33 @@ async def login(
     client_ip = request.client.host if request.client else "unknown"
     key = (client_ip, username.strip().lower())
 
-    if (wait := limiter.seconds_left(key)) > 0:
+    user_id: int | None = None
+    session_version: int | None = None
+    async with limiter.lock(key[1]):
+        wait = limiter.seconds_left(key)
+        if wait <= 0:
+            async with db.begin():
+                user = await UserService(db).authenticate(username, password)
+                user_id, session_version = (user.id, user.session_version) if user else (None, None)
+            if user_id is None:
+                limiter.record_failure(key)
+            else:
+                limiter.reset(key)
+
+    if wait > 0:
         minutes = math.ceil(wait / 60)
         return await _render_login(
             request, db, next_url=safe_next(next), username=username,
             error=f"Слишком много неудачных попыток. Попробуйте через {minutes} мин.",
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
-
-    async with db.begin():
-        user = await UserService(db).authenticate(username, password)
-        user_id, session_version = (user.id, user.session_version) if user else (None, None)
-
     if user_id is None:
-        limiter.record_failure(key)
         logger.warning("неудачный вход: логин=%r адрес=%s", key[1], client_ip, extra={"client_ip": client_ip})
         return await _render_login(
             request, db, next_url=safe_next(next), username=username,
             error="Неверный логин или пароль", status_code=status.HTTP_400_BAD_REQUEST,
         )
 
-    limiter.reset(key)
     # Новая сессия при входе: старый CSRF-токен и прочее не переносятся
     request.session.clear()
     request.session.update({"user_id": user_id, "session_version": session_version})

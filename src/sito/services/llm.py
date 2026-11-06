@@ -325,6 +325,18 @@ def record_usage(session: AsyncSession, feature: str, answer: LlmAnswer, user_id
                          output_tokens=answer.output_tokens, cost=answer.cost, user_id=user_id))
 
 
+async def _still_there(session: AsyncSession, model: type[Story] | type[Topic], row_id: int) -> bool:
+    """Строка ещё в базе — после ответа модели, пока соединение было отпущено.
+
+    Не session.get: при expire_on_commit=False он вернёт объект из памяти сессии, даже если строку удалили.
+    FOR KEY SHARE — объединение сюжетов или удаление темы подождут, пока не запишем результат.
+    """
+    found = await session.scalar(
+        select(model.id).where(model.id == row_id).with_for_update(read=True, key_share=True)
+    )
+    return found is not None
+
+
 class StorySummaryService:
     FEATURE = "story_summary"
 
@@ -366,7 +378,7 @@ class StorySummaryService:
                       "posts_count": posts_count, "sources_count": sources_count}
             if not save:
                 return StorySummary(story_id=story_id, **values), answer
-            if await self.session.get(Story, story_id) is None:
+            if not await _still_there(self.session, Story, story_id):
                 raise LlmError("сюжет за это время объединился с другим — откройте его заново", paid=True)
             current = await self.get(story_id)
             if current is None:
@@ -544,7 +556,7 @@ class TopicReportService:
             if not answer.text:
                 await self.session.flush()
                 raise LlmError("модель вернула пустой ответ, попробуйте ещё раз", paid=True)
-            if await self.session.get(Topic, topic_id) is None:
+            if not await _still_there(self.session, Topic, topic_id):
                 await self.session.flush()
                 raise LlmError("тему удалили, пока готовился ответ", paid=True)
             text = answer.text + ("\n\n(Ответ обрезан: модель упёрлась в лимит длины.)" if answer.truncated else "")
@@ -885,7 +897,7 @@ class TopicCheckService:
                 verdicts = {}
             # За время ответа сюжеты могли объединиться, а тему — удалить: пишем только про то, что осталось
             alive = set(await session.scalars(select(Story.id).where(Story.id.in_([c.story_id for c in doubtful]))))
-            if await session.get(Topic, topic_id) is None:
+            if not await _still_there(session, Topic, topic_id):
                 await session.commit()
                 return len(obvious), 0
             dropped = []

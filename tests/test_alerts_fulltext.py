@@ -11,6 +11,7 @@ from sito.models import Post, Source
 from sito.repositories.pipeline import PipelineRepository
 from sito.services.alerts import Problem, alert_text, find_problems
 from sito.services.fulltext import FullTextService
+from sito.utils.http import UnsafeUrl, check_public
 from tests.conftest import MakeSource
 from tests.test_web_stories import Stories
 
@@ -18,6 +19,11 @@ from tests.test_web_stories import Stories
 @pytest.fixture
 def stories(session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource) -> Stories:
     return Stories(session_factory, make_source)
+
+
+async def public_dns(host: str, port: int) -> list[str]:
+    """Все хосты — в интернете (в тестах DNS не нужен), кроме internal.example."""
+    return ["10.0.0.5"] if host == "internal.example" else ["93.184.216.34"]
 
 
 ARTICLE = "<html><body><nav>Меню</nav><article><h1>Заголовок</h1>" + "<p>" + (
@@ -64,7 +70,7 @@ async def test_full_text_of_rss_article(
         return httpx.Response(200, html=ARTICLE)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(page)) as client:
-        result = await FullTextService(session_factory, client).process_batch()
+        result = await FullTextService(session_factory, client, resolve=public_dns).process_batch()
 
     async with session_factory() as session:
         post = await session.scalar(select(Post))
@@ -105,7 +111,7 @@ async def test_full_text_of_short_telegram_post_by_link(
         return httpx.Response(200, html=ARTICLE)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(page)) as client:
-        await FullTextService(session_factory, client).process_batch()
+        await FullTextService(session_factory, client, resolve=public_dns).process_batch()
 
     async with session_factory() as session:
         posts = {p.external_id: p for p in await session.scalars(select(Post))}
@@ -125,7 +131,7 @@ async def test_full_text_skips_files_and_huge_pages(
         return httpx.Response(200, headers={"content-type": "text/html"}, content=b"<p>" + b"a" * 4_000_000)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(page)) as client:
-        result = await FullTextService(session_factory, client).process_batch()
+        result = await FullTextService(session_factory, client, resolve=public_dns).process_batch()
 
     assert result.fetched == 0 and result.failed == 2  # ни видео, ни 4 МБ не читаются в память
 
@@ -140,3 +146,33 @@ async def test_rss_html_stub_is_an_error() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(stub)) as client:
         with pytest.raises(ValueError, match="не лента"):
             await RssCollector(client).fetch(Source(id=1, url="https://feed.example/rss", state={}))
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1/admin", "http://web:8000/", "http://169.254.169.254/latest/meta-data",
+    "http://[::1]/", "http://[::ffff:10.0.0.1]/", "http://internal.example/", "ftp://news.example/a",
+    "https://news.example:8443/a",
+])
+async def test_internal_addresses_are_not_fetched(url: str) -> None:
+    async def dns(host: str, port: int) -> list[str]:
+        return {"web": ["172.18.0.3"], "internal.example": ["10.0.0.5"]}.get(host, [host.strip("[]")])
+
+    with pytest.raises(UnsafeUrl):
+        await check_public(url, dns)
+
+
+async def test_full_text_does_not_follow_redirect_into_internal_network(
+    session_factory: async_sessionmaker[AsyncSession], stories: Stories,
+) -> None:
+    """Ссылка из чужого поста ведёт на внешний сайт, а тот редиректит во внутреннюю сеть — не идём."""
+    await stories.add([("ТАСС", "Редирект", timedelta(hours=1))], url="https://news.example/a")
+    asked: list[str] = []
+
+    def page(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(302, headers={"location": "http://internal.example/secret"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(page), follow_redirects=True) as client:
+        result = await FullTextService(session_factory, client, resolve=public_dns).process_batch()
+
+    assert asked == ["https://news.example/a"] and result.fetched == 0 and result.failed == 1

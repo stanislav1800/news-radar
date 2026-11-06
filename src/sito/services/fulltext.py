@@ -21,7 +21,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import Post, PostStatus, Source, SourceType
-from sito.utils.http import get_limited
+from sito.utils.http import Resolve, get_limited, resolve_host
 from sito.utils.urls import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -75,10 +75,11 @@ class FullTextService:
     def __init__(
         self, session_factory: async_sessionmaker[AsyncSession], client: httpx.AsyncClient, *,
         batch_size: int = 10, concurrency: int = 4, max_age: timedelta = timedelta(days=1),
-        short_post_chars: int = 500,
+        short_post_chars: int = 500, resolve: Resolve = resolve_host,
     ) -> None:
         self.session_factory = session_factory
         self.client = client
+        self.resolve = resolve  # ссылки из чужих постов: качаем только с публичных адресов
         self.batch_size = batch_size
         self.semaphore = asyncio.Semaphore(concurrency)
         self.max_age = max_age
@@ -134,7 +135,7 @@ class FullTextService:
             try:
                 response, content = await get_limited(
                     self.client, url, max_bytes=MAX_PAGE_BYTES, timeout=PAGE_TIMEOUT,
-                    accept=lambda headers: "html" in headers.get("content-type", "html"),
+                    accept=lambda headers: "html" in headers.get("content-type", "html"), resolve=self.resolve,
                 )
                 response.raise_for_status()
             except (httpx.HTTPError, TimeoutError) as exc:

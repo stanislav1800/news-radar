@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import LlmUsage, StorySummary
@@ -471,3 +471,31 @@ async def test_daily_limit_in_rubles(session_factory: async_sessionmaker[AsyncSe
         await session.flush()
         with pytest.raises(LlmError, match="дневной лимит"):
             await check_limit(session, config)
+
+
+async def test_summary_of_story_merged_while_model_answered(
+    session_factory: async_sessionmaker[AsyncSession], stories: Stories,
+) -> None:
+    """Пока модель писала пересказ, сюжет влился в другой и удалён: понятная ошибка, а расход записан."""
+    from sito.config import settings
+    from sito.models import Story
+    from sito.services.llm import LlmError, StorySummaryService
+
+    story_id = await stories.add([("ТАСС", "Рекорд добычи угля", timedelta(hours=2))])
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        async with session_factory() as other, other.begin():
+            await other.execute(delete(Story).where(Story.id == story_id))
+        return httpx.Response(200, json=answer("Рекорд угля\n\nПересказ."))
+
+    client = LlmClient("https://llm.example/v1", "key", "test/model", no_reasoning=True,
+                       transport=httpx.MockTransport(handle))
+    async with session_factory() as session:
+        with pytest.raises(LlmError, match="объединился") as error:
+            await StorySummaryService(session, client, settings).summarize(story_id, user_id=None)
+        assert error.value.paid
+        await session.commit()  # так делает страница при оплаченной ошибке
+
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(LlmUsage)) == 1
+        assert await session.get(StorySummary, story_id) is None

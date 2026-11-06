@@ -41,6 +41,7 @@ from sito.services.collector.telegram import (
     ChannelPreview,
     Connect,
     DeletedHandler,
+    FailedHandler,
     JoinError,
     Link,
     Message,
@@ -231,11 +232,22 @@ class TelethonApi(TelegramApi):
     async def mark_read(self, channel_id: int, max_id: int) -> None:
         await self.client.send_read_acknowledge(await self._entity(channel_id), max_id=max_id)
 
-    def on_message(self, handler: MessageHandler) -> None:
+    def on_message(self, handler: MessageHandler, failed: FailedHandler) -> None:
         async def handle(event: Any) -> None:
-            chat = await event.get_chat()
-            if _is_broadcast(chat):
-                await handler(_channel(chat), _message(event.message))
+            try:
+                chat = await event.get_chat()
+                if not _is_broadcast(chat):
+                    return
+                channel, message = _channel(chat), _message(event.message)
+            except Exception:
+                # Иначе ошибку тихо проглотит Telethon, а следующее сообщение сдвинет курсор за пропуск
+                logger.exception("не удалось разобрать сообщение %s чата %s", event.message.id, event.chat_id)
+                if event.chat_id is not None:
+                    channel_id, kind = utils.resolve_id(event.chat_id)
+                    if kind is PeerChannel:
+                        failed(channel_id, event.message.id)
+                return
+            await handler(channel, message)
 
         self.client.add_event_handler(handle, events.NewMessage())
         self.client.add_event_handler(handle, events.MessageEdited())

@@ -182,6 +182,8 @@ class ChannelDetails:
 
 
 MessageHandler = Callable[[Channel, Message], Awaitable[None]]
+# Сообщение пришло, но разобрать его не удалось: (id канала, номер сообщения) — место для догрузки
+FailedHandler = Callable[[int, int], None]
 DeletedHandler = Callable[[int, list[int]], Awaitable[None]]
 
 
@@ -236,8 +238,8 @@ class TelegramApi(Protocol):
         """Отметить прочитанным до max_id: на телефоне не копятся тысячи непрочитанных."""
         ...
 
-    def on_message(self, handler: MessageHandler) -> None:
-        """Новые и отредактированные сообщения каналов."""
+    def on_message(self, handler: MessageHandler, failed: FailedHandler) -> None:
+        """Новые и отредактированные сообщения каналов; failed — сообщение не удалось даже разобрать."""
         ...
 
     def on_deleted(self, handler: DeletedHandler) -> None:
@@ -308,8 +310,12 @@ class _Session:
         self.api = api
         self.rules = rules
         self.sources: dict[str, KnownSource] = {}
-        self.last_ids: dict[int, int] = {}  # канал → последний сохранённый id: курсор только растёт
-        self.catch_up_from: dict[int, int] = {}  # курсоры на момент подключения: от них догрузка
+        self.last_ids: dict[int, int] = {}  # канал → последний сохранённый id (с живыми сообщениями)
+        # Канал → курсор в базе: всё до него сохранено подряд. Пока канал не догружен, живые сообщения
+        # его не двигают — иначе после сбоя или перезапуска пропуск между курсором и ними потерялся бы
+        self.saved_ids: dict[int, int] = {}
+        self.behind: set[int] = set()  # каналы, ещё не догруженные в этом соединении
+        self.retry: set[int] = set()  # догрузка не удалась — повторить на круге обслуживания
         self.read_ids: dict[int, int] = {}  # канал → до какого id отмечено прочитанным
         self.locks: dict[int, asyncio.Lock] = {}
         self.channels: dict[int, Channel] = {}
@@ -322,12 +328,11 @@ class _Session:
     async def run(self) -> None:
         await self.sink.connected(self.connector.id)
         await self._refresh_sources()
-        # Догрузка идёт от курсоров на момент подключения. Живые сообщения двигают курсор вперёд, пока
-        # очередь догрузки не дошла до канала, — догрузка от текущего курсора пропустила бы всё за простой
-        self.catch_up_from = dict(self.last_ids)
+        # Каналы с курсором ждут догрузки: живые сообщения до неё курсор в базе не двигают
+        self.behind = set(self.saved_ids)
         # Новые сообщения слушаем ещё до догрузки: то, что придёт во время неё, не потеряется;
-        # пересечения не страшны — пост с тем же id просто обновится (догрузка идёт от catch_up_from)
-        self.api.on_message(self._on_message)
+        # пересечения не страшны — пост с тем же id просто обновится (догрузка идёт от курсора в базе)
+        self.api.on_message(self._on_message, self._on_failed)
         self.api.on_deleted(self._on_deleted)
         # Поручения из веба и обслуживание (подписчики, тишина, подписки по ссылкам) идут параллельно
         # с догрузкой: у сотен каналов она занимает минуты, и ждать её незачем
@@ -344,16 +349,25 @@ class _Session:
             await asyncio.gather(*background, return_exceptions=True)
 
     async def _catch_up_all(self) -> None:
-        for channel in await self.api.channels():
-            try:
-                await asyncio.wait_for(self._catch_up(channel), self.rules.step_timeout.total_seconds())
-            except TimeoutError:
-                logger.warning("connector=%s: догрузка «%s» не ответила за %s, дальше",
-                               self.connector.id, channel.title, self.rules.step_timeout)
-            except Exception:
-                # Канал закрыт, заблокирован, удалён — это его беда: остальные каналы догружаем
-                logger.warning("connector=%s: догрузка «%s» не удалась, дальше", self.connector.id, channel.title,
-                               exc_info=True)
+        channels = await self.api.channels()
+        # Ждут догрузки каналы аккаунта; каналы с курсором, от которых он уже отписан, догружать нечего
+        self.behind = {c.id for c in channels}
+        for channel in channels:
+            await self._try_catch_up(channel)
+
+    async def _try_catch_up(self, channel: Channel) -> None:
+        try:
+            await asyncio.wait_for(self._catch_up(channel), self.rules.step_timeout.total_seconds())
+        except TimeoutError:
+            self.retry.add(channel.id)
+            logger.warning("connector=%s: догрузка «%s» не ответила за %s, повторю позже",
+                           self.connector.id, channel.title, self.rules.step_timeout)
+        except Exception:
+            # Канал закрыт, заблокирован, удалён — это его беда: остальные каналы догружаем,
+            # а этот попробуем снова на круге обслуживания (курсор в базе пропуск не перескочил)
+            self.retry.add(channel.id)
+            logger.warning("connector=%s: догрузка «%s» не удалась, повторю позже", self.connector.id,
+                           channel.title, exc_info=True)
 
     async def _refresh_sources(self) -> None:
         self.sources = {s.external_id: s for s in await self.sink.sources(self.connector.id)}
@@ -361,6 +375,7 @@ class _Session:
             last_id = source.state.get("last_id")
             if isinstance(last_id, int):
                 self.last_ids.setdefault(int(source.external_id), last_id)
+                self.saved_ids.setdefault(int(source.external_id), last_id)
 
     async def _source(self, channel: Channel) -> KnownSource:
         self.channels[channel.id] = channel
@@ -378,17 +393,28 @@ class _Session:
     async def _catch_up(self, channel: Channel) -> None:
         """Догрузить пропущенное за время простоя; у нового канала — за последние rules.catch_up."""
         source = await self._source(channel)
-        if not source.enabled:
-            return
-        since = datetime.now(UTC) - self.rules.catch_up
-        batch: list[Message] = []
-        async for message in self.api.messages(channel, after_id=self.catch_up_from.get(channel.id), since=since):
-            batch.append(message)
-            if len(batch) >= self.rules.batch:
-                await self._save(channel, source, batch)
-                batch = []
-        if batch:
-            await self._save(channel, source, batch)
+        if source.enabled:
+            since = datetime.now(UTC) - self.rules.catch_up
+            batch: list[Message] = []
+            # Сообщения идут от старых к новым: курсор в базе после каждой пачки — без пропусков
+            async for message in self.api.messages(channel, after_id=self.saved_ids.get(channel.id), since=since):
+                batch.append(message)
+                if len(batch) >= self.rules.batch:
+                    await self._save(channel, source, batch, catch_up=True)
+                    batch = []
+            if batch:
+                await self._save(channel, source, batch, catch_up=True)
+        await self._caught_up(channel, source)
+
+    async def _caught_up(self, channel: Channel, source: KnownSource) -> None:
+        """Канал догружен: курсор в базе догоняет живые сообщения (их сбои уже записаны в gaps)."""
+        async with self.locks.setdefault(channel.id, asyncio.Lock()):
+            self.behind.discard(channel.id)
+            self.retry.discard(channel.id)
+            last_id = self.last_ids.get(channel.id)
+            if source.enabled and last_id is not None and last_id != self.saved_ids.get(channel.id):
+                await self.sink.save(source.id, [], {"last_id": last_id})
+                self.saved_ids[channel.id] = last_id
 
     async def _on_message(self, channel: Channel, message: Message) -> None:
         try:
@@ -398,9 +424,12 @@ class _Session:
         except Exception:
             # Ошибка одного сообщения не должна рвать соединение. Курсор канала могут сдвинуть следующие
             # сообщения, поэтому место запоминается: на ближайшем круге канал догрузится с него
-            self.gaps[channel.id] = min(self.gaps.get(channel.id, message.id), message.id)
+            self._on_failed(channel.id, message.id)
             logger.exception("connector=%s: не сохранилось сообщение %s канала %s, догружу позже",
                              self.connector.id, message.id, channel.id)
+
+    def _on_failed(self, channel_id: int, message_id: int) -> None:
+        self.gaps[channel_id] = min(self.gaps.get(channel_id, message_id), message_id)
 
     async def _on_deleted(self, channel_id: int, message_ids: list[int]) -> None:
         """Канал удалил пост — обычно ошибка или фейк: из Сито он тоже уходит."""
@@ -412,7 +441,9 @@ class _Session:
         except Exception:
             logger.exception("connector=%s: не удалось убрать удалённые посты канала %s", self.connector.id, channel_id)
 
-    async def _save(self, channel: Channel, source: KnownSource, messages: Sequence[Message]) -> None:
+    async def _save(
+        self, channel: Channel, source: KnownSource, messages: Sequence[Message], *, catch_up: bool = False,
+    ) -> None:
         posts = [
             RawPost(
                 source_id=source.id, external_id=str(m.id), url=post_url(channel, m.id),
@@ -424,8 +455,15 @@ class _Session:
         lock = self.locks.setdefault(channel.id, asyncio.Lock())
         async with lock:
             last_id = max([self.last_ids.get(channel.id, 0), *(m.id for m in messages)])
-            await self.sink.save(source.id, posts, {"last_id": last_id})
+            saved = self.saved_ids.get(channel.id)
+            if channel.id not in self.behind:
+                saved = last_id
+            elif catch_up:
+                saved = max([saved or 0, *(m.id for m in messages)])
+            await self.sink.save(source.id, posts, None if saved is None else {"last_id": saved})
             self.last_ids[channel.id] = last_id
+            if saved is not None:
+                self.saved_ids[channel.id] = saved
 
     # --- Поручения из веба -------------------------------------------------------------------------
 
@@ -537,14 +575,19 @@ class _Session:
                         logger.exception("connector=%s: ошибка обслуживания (%s)", self.connector.id, name)
 
     async def _fill_gaps(self) -> None:
-        """Догрузить каналы, где сообщение не сохранилось: с него и до последнего."""
+        """Повторить неудавшиеся догрузки и догрузить каналы, где сообщение не сохранилось: с него и дальше."""
+        for channel_id in list(self.retry):
+            if (channel := self.channels.get(channel_id)) is not None:
+                await self._try_catch_up(channel)
         for channel_id, from_id in list(self.gaps.items()):
             channel, source = self.channels.get(channel_id), self.sources.get(str(channel_id))
             if channel is not None and source is not None and source.enabled:
                 batch = [m async for m in self.api.messages(channel, after_id=from_id - 1, since=datetime.now(UTC))]
                 if batch:
                     await self._save(channel, source, batch)
-            del self.gaps[channel_id]
+            # Пока догружали, мог записаться новый пропуск — его не стираем
+            if self.gaps.get(channel_id) == from_id:
+                del self.gaps[channel_id]
 
     async def _join_one(self) -> None:
         """Подписаться на один канал, добавленный ссылкой. По одному с паузой: так Telegram не ограничит."""

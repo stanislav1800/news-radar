@@ -16,6 +16,7 @@ from sito.services.collector.telegram import (
     ChannelDetails,
     ChannelPreview,
     DeletedHandler,
+    FailedHandler,
     JoinError,
     Link,
     Message,
@@ -116,7 +117,7 @@ class FakeTelegram(TelegramApi):
     async def mark_read(self, channel_id: int, max_id: int) -> None:
         self.calls.append(f"read {channel_id} {max_id}")
 
-    def on_message(self, handler: MessageHandler) -> None:
+    def on_message(self, handler: MessageHandler, failed: FailedHandler) -> None:
         self.handler = handler
 
     async def disconnected(self) -> None:
@@ -521,3 +522,38 @@ async def test_broken_channel_does_not_stop_catch_up(
     await _Session(config, sink, tg, TelegramRules()).run()
 
     assert [p[1] for p in await posts(session_factory)] == ["1"]
+
+
+async def test_failed_catch_up_keeps_cursor_and_is_retried(
+    session_factory: async_sessionmaker[AsyncSession], setup: tuple[IngestService, ConnectorConfig],
+) -> None:
+    """Догрузка канала упала, а живой пост пришёл: курсор в базе не перескакивает пропуск, повтор его догружает."""
+    sink, config = setup
+    tg = FakeTelegram(subscribed=[COAL], history={COAL.id: [message(1)]})
+    await _Session(config, sink, tg, TelegramRules()).run()  # курсор — 1
+    tg.history[COAL.id] += [message(2), message(3)]  # вышли за время простоя
+
+    class Failing(FakeTelegram):
+        fail = True
+
+        async def messages(self, channel: Channel, *, after_id: int | None, since: datetime) -> AsyncIterator[Message]:
+            if self.fail:
+                raise ValueError("сеть")
+            async for m in super().messages(channel, after_id=after_id, since=since):
+                yield m
+
+    failing = Failing(subscribed=[COAL], history=tg.history)
+    session = _Session(config, sink, failing, TelegramRules())
+    await session.run()
+    assert failing.handler is not None
+    await failing.handler(COAL, message(4))
+
+    [source] = await sink.sources(config.id)
+    assert source.state == {"last_id": 1}  # после перезапуска догрузка снова пойдёт от 1
+
+    failing.fail = False
+    await session._fill_gaps()
+
+    assert [p[1] for p in await posts(session_factory)] == ["1", "2", "3", "4"]
+    [source] = await sink.sources(config.id)
+    assert source.state == {"last_id": 4} and session.retry == set()

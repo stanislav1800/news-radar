@@ -1,7 +1,9 @@
 """Защита веба: ограничение попыток входа, CSRF-токены, безопасные адреса перехода."""
 
+import asyncio
 import secrets
 import time
+import zlib
 from dataclasses import dataclass, field
 
 from starlette.requests import Request
@@ -20,6 +22,7 @@ class _Attempts:
 
 LOGIN_WIDE_FACTOR = 4      # на один логин со всех адресов — вчетверо больше попыток
 MAX_TRACKED = 10_000       # сколько записей держать в памяти, прежде чем чистить устаревшие
+LOGIN_LOCKS = 64           # попытки на один логин идут по очереди; замков — фиксированное число
 
 
 @dataclass
@@ -35,6 +38,12 @@ class LoginLimiter:
     max_failures: int
     lockout_seconds: float
     _attempts: dict[tuple[str, str], _Attempts] = field(default_factory=dict)
+    _locks: list[asyncio.Lock] = field(default_factory=lambda: [asyncio.Lock() for _ in range(LOGIN_LOCKS)])
+
+    def lock(self, login: str) -> asyncio.Lock:
+        """Замок логина: проверка паузы, пароля и запись неудачи — одним шагом. Без него сотня параллельных
+        запросов прошла бы проверку паузы раньше, чем запишется первая неудача."""
+        return self._locks[zlib.crc32(login.encode()) % LOGIN_LOCKS]
 
     @staticmethod
     def _keys(key: tuple[str, str]) -> tuple[tuple[str, str], tuple[str, str]]:

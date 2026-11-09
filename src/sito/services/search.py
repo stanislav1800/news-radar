@@ -105,6 +105,10 @@ class SearchService:
                 [*word_ids, *meaning_ids], user_id=user.id, read_all_before=user.read_all_before
             )
         }
+        # Поиск по словам отдаёт только лучшие limit сюжетов: следующие со словами приходят «по смыслу» —
+        # без пометки и сразу за найденными по словам
+        worded = await stories.with_words(meaning_ids, parsed.words)
         hits = [SearchHit(cards[i], False) for i in word_ids if i in cards]
-        hits += [SearchHit(cards[i], True) for i in meaning_ids if i in cards]
+        hits += [SearchHit(cards[i], False) for i in meaning_ids if i in cards and i in worded]
+        hits += [SearchHit(cards[i], True) for i in meaning_ids if i in cards and i not in worded]
         return SearchResults(query, period, hits, meaning_unavailable=vector is None)

@@ -25,6 +25,9 @@ __all__ = ["MAX_ATTEMPTS", "CleanBatchResult", "CleaningService"]
 logger = logging.getLogger(__name__)
 
 
+# Пост короче этого (в буквах, без цифр и имён) — не новость: «Бггггг», «ОК от униан))», «красиво))»
+SHORT_POST_LETTERS = 12
+
 @dataclass(frozen=True, slots=True)
 class CleanBatchResult:
     cleaned: int = 0
@@ -104,7 +107,11 @@ class CleaningService:
 
         # Короткий пост без текста — не мусор: для склейки хватит заголовка. Но пост без своего заголовка
         # (Telegram), где нет ни имён, ни мест, ни чисел, — болтовня канала, а не новость
-        chatter = derived and is_chatter(f"{post.title}\n{post.text or ''}")
+        # Заголовок — повтор первой фразы, и в «Бггггг\nБггггг» второе слово выглядит как имя. Совсем
+        # короткое проверяем без повтора: новость из одной фразы («Трамп допустил…») длиннее
+        body = post.text or post.title or ""
+        short = sum(ch.isalpha() for ch in body) < SHORT_POST_LETTERS and is_chatter(body)
+        chatter = derived and (short or is_chatter(f"{post.title}\n{post.text or ''}"))
         wordless = sum(ch.isalpha() for ch in f"{post.title}{post.text or ''}") < 3  # одни эмодзи и значки
         junk = cleaned.is_ad or chatter or wordless or not (post.title or post.text)
         mark_post_done(post, PostStatus.SKIPPED if junk else PostStatus.CLEANED)

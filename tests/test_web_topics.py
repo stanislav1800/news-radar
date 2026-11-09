@@ -372,3 +372,18 @@ async def test_my_topics_and_new_topic_pages(logged_in: httpx.AsyncClient, stori
 
     new = (await logged_in.get("/topics/new")).text
     assert 'action="/search"' in new and "LLM не настроена" in new
+
+
+async def test_search_word_hits_beyond_limit_are_not_marked_as_meaning(
+    app: FastAPI, logged_in: httpx.AsyncClient, stories: Stories, embedder: FakeEmbedder,
+) -> None:
+    """Поиск по словам отдаёт лучшие search_limit сюжетов; следующий со словом приходит через смысл,
+    но пометки «по смыслу» у него нет: слово-то в нём есть."""
+    app.state.settings = app.state.settings.model_copy(update={"search_limit": 1})
+    await stories.add([("ТАСС", "Добыча угля выросла", timedelta(hours=1))], embedding=direction(5))
+    await stories.add([("РБК", "Уголь подешевел", timedelta(hours=2))], embedding=direction(3))
+    embedder.vectors["уголь"] = direction(0)
+
+    html = (await logged_in.get("/search", params={"q": "уголь"})).text
+
+    assert len(titles(html)) == 2 and "по смыслу</span>" not in html

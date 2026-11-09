@@ -253,6 +253,12 @@ _SIMILAR_SQL = text("""
 #   — свежие выше: вес плавно падает с возрастом сюжета (за две недели — вдвое).
 # Слова исключённые (-слово) отсекают сюжет целиком. Поиск идёт по индексу ix_post_search_vector.
 TITLE_BOOST = 1.5
+_WITH_WORDS_SQL = text("""
+    SELECT DISTINCT post.story_id FROM post
+    WHERE post.story_id = ANY(CAST(:ids AS bigint[]))
+      AND post.search_vector @@ to_tsquery('simple', array_to_string(CAST(:words AS text[]), ' | '))
+""")
+
 _SEARCH_WORDS_SQL = text("""
     WITH q AS (
         SELECT lemma, to_tsquery('simple', lemma) AS any_q, to_tsquery('simple', lemma || '\\:A') AS title_q  -- \\: — двоеточие, а не параметр
@@ -442,6 +448,13 @@ class StoryRepository:
             "title_boost": TITLE_BOOST,
         })
         return list(result.scalars())
+
+    async def with_words(self, story_ids: Sequence[int], words: Sequence[str]) -> set[int]:
+        """Какие из этих сюжетов содержат хотя бы одно слово запроса (лемму)."""
+        if not story_ids or not words:
+            return set()
+        result = await self.session.execute(_WITH_WORDS_SQL, {"ids": list(story_ids), "words": list(words)})
+        return set(result.scalars())
 
     async def search_meaning(
         self, embedding: list[float], since: datetime | None, limit: int, min_similarity: float,

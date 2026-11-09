@@ -163,3 +163,24 @@ async def test_edited_post_is_cleaned_again(
 
     post = await get_post(session_factory, post_id)
     assert (post.status, post.text, post.links) == (PostStatus.CLEANED, "Новый текст", [])
+
+
+async def test_chatter_without_title_is_skipped(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    """«Бггггг» в Telegram — болтовня. Заголовок поста — его же первая фраза, и повтор не делает
+    слово «именем» (раньше «Бггггг\\nБггггг» проходило в сюжеты и в поиск)."""
+    source_id = await make_source()
+    junk = [await add_post(session_factory, source_id, n, "", raw)
+            for n, raw in enumerate(["Бггггг", 'Бггггг<a href="https://t.me/x/1"></a>', "ОК от униан))"])]
+    # Новость из одной фразы, где имя — первое слово, не болтовня
+    news = [await add_post(session_factory, source_id, 10 + n, "", raw) for n, raw in enumerate([
+        "Новости дня\nПутин провёл совещание", "Трамп допустил перестановки в администрации",
+        "Гурцкая призналась, что не может пережить смерть супруга",
+        "<b>Лавров: ОБСЕ в плачевном состоянии</b>",  # весь пост — заголовок, тела нет
+    ])]
+
+    await CleaningService(session_factory).process_batch()
+
+    assert [(await get_post(session_factory, i)).status for i in junk] == [PostStatus.SKIPPED] * 3
+    assert [(await get_post(session_factory, i)).status for i in news] == [PostStatus.CLEANED] * 4

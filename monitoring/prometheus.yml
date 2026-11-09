@@ -1,0 +1,12 @@
+# Prometheus для Сито: собирает метрики веба и worker'а (порт 9100 внутри docker-сети)
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: sito
+    static_configs:
+      - targets: ["web:9100"]
+        labels: {process: web}
+      - targets: ["worker:9100"]
+        labels: {process: worker}

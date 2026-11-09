@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from sito import metrics
 from sito.models import ConnectorStatus, Source, SourceType
 from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.posts import NewPost, PostRepository
@@ -103,13 +104,17 @@ class IngestService:
             fresh = await self._drop_duplicates(PostRepository(session), prepared)
             saved = await PostRepository(session).upsert_many(fresh) if fresh else None
             await SourceRepository(session).mark_success(source_id, state)
-        return SaveResult(
+        result = SaveResult(
             inserted=saved.inserted if saved else 0,
             updated=saved.updated if saved else 0,
             unchanged=saved.unchanged if saved else 0,
             duplicates=len(prepared) - len(fresh),
             invalid=invalid,
         )
+        for name, count in asdict(result).items():
+            if count:
+                metrics.POSTS_SAVED.labels(name).inc(count)
+        return result
 
     async def sources(self, connector_id: int) -> list[KnownSource]:
         async with self.session_factory() as session:

@@ -14,6 +14,7 @@ from pydantic import BaseModel, SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from sito import metrics
 from sito.models import Connector, ConnectorStatus, SourceType
 from sito.repositories.connectors import ConnectorRepository
 from sito.services.collector.base import (
@@ -236,6 +237,7 @@ class ConnectorSupervisor:
                         return
                     # Зависло что-то внутри подключения (запрос без ответа, оборванное соединение без
                     # ошибки): посты не идут — перезапустить. Так было 3–5.11: 39 часов без постов Telegram
+                    metrics.CONNECTOR_RESTARTS.labels("silence").inc()
                     logger.warning("connector=%s: новых постов нет дольше %s — перезапуск",
                                    connector.id, self.listeners[connector.type].silence_limit)
                     await self._stop(connector.id)
@@ -311,6 +313,7 @@ class ConnectorSupervisor:
         failures = 1 if long_run else running.failures + 1
         delay = min(self.retry_max, self.retry_min * 2 ** (failures - 1))
         error = f"{type(exc).__name__}: {exc}" if exc else "Соединение завершилось"
+        metrics.CONNECTOR_RESTARTS.labels("failure").inc()
         logger.warning(
             "connector=%s: сбой (%s), повтор через %.0f с", connector_id, error, delay,
             exc_info=exc, extra={"connector_id": connector_id},

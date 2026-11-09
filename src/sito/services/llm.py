@@ -21,6 +21,7 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from sito import metrics
 from sito.config import Settings
 from sito.models import (
     LlmUsage,
@@ -335,6 +336,12 @@ async def exclusive(kind: str, key: int, user_id: int | None = None) -> AsyncIte
 
 
 def record_usage(session: AsyncSession, feature: str, answer: LlmAnswer, user_id: int | None) -> None:
+    metrics.LLM_CALLS.labels(feature).inc()
+    metrics.LLM_TOKENS.labels(feature, "input").inc(answer.input_tokens)
+    metrics.LLM_TOKENS.labels(feature, "output").inc(answer.output_tokens)
+    metrics.LLM_SECONDS.labels(feature).observe(answer.seconds)
+    if answer.cost:
+        metrics.LLM_COST.labels(feature).inc(answer.cost)
     session.add(LlmUsage(feature=feature, model=answer.model, input_tokens=answer.input_tokens,
                          output_tokens=answer.output_tokens, cost=answer.cost, user_id=user_id))
 

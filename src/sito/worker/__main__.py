@@ -2,12 +2,14 @@ import asyncio
 import contextlib
 import logging
 import signal
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 import httpx
 
+from sito import metrics
 from sito.config import settings
 from sito.db.engine import async_session, engine
 from sito.log import setup_logging
@@ -55,11 +57,13 @@ async def poll_one(service: IngestService, semaphore: asyncio.Semaphore, source_
         try:
             await service.ingest_source(source_id)
         except (httpx.HTTPError, TimeoutError) as exc:
+            metrics.POLL_ERRORS.labels(type(exc).__name__).inc()
             logger.warning(
                 "source=%s: %s: %s", source_id, type(exc).__name__, exc,
                 extra={"source_id": source_id, "error": type(exc).__name__},
             )
         except Exception:
+            metrics.POLL_ERRORS.labels("unexpected").inc()
             logger.exception("source=%s: непредвиденная ошибка", source_id, extra={"source_id": source_id})
 
 
@@ -105,16 +109,21 @@ async def drain_loop(
 ) -> None:
     """Обрабатывать пачки подряд, пока есть работа, потом ждать tick секунд."""
     while not stop.is_set():
+        started = time.monotonic()
         try:
             # Зависшая пачка не должна остановить шаг навсегда: отменить и начать заново
             async with asyncio.timeout(BATCH_TIMEOUT):
                 result = await process_batch()
         except TimeoutError:
+            metrics.STEP_ERRORS.labels(name, "timeout").inc()
             logger.error("шаг «%s»: пачка не закончилась за %d мин, повторяю", name, BATCH_TIMEOUT // 60)
         except Exception:
+            metrics.STEP_ERRORS.labels(name, "error").inc()
             logger.exception("ошибка шага «%s»", name)
         else:
             if result.total:
+                metrics.BATCH_SECONDS.labels(name).observe(time.monotonic() - started)
+                metrics.BATCH_ITEMS.labels(name).inc(result.total)
                 continue
         await sleep_until_stop(stop, tick)
 
@@ -193,6 +202,20 @@ async def retention_loop(stop: asyncio.Event) -> None:
         except Exception:
             logger.exception("ошибка определения изданий")
         await sleep_until_stop(stop, RETENTION_SECONDS)
+
+
+METRICS_SECONDS = 60
+
+
+async def metrics_loop(stop: asyncio.Event) -> None:
+    """Раз в минуту: состояние из базы (очередь, задержка, источники, расход LLM) — в метрики Prometheus."""
+    while not stop.is_set():
+        try:
+            async with async_session() as session:
+                await metrics.refresh_state(session)
+        except Exception:
+            logger.exception("ошибка сбора метрик")
+        await sleep_until_stop(stop, METRICS_SECONDS)
 
 
 ALERT_SECONDS = 300
@@ -304,6 +327,7 @@ async def main() -> None:
         matching = TopicMatchingService(async_session, TopicRules.from_settings(settings))
         box = SecretBox(settings.secret_key.get_secret_value()) if settings.secret_key else None
         supervisor = ConnectorSupervisor(async_session, LISTENERS, ingest, box)
+        metrics.serve(settings.metrics_port)
         logger.info("worker запущен")
 
         async with asyncio.TaskGroup() as tasks:
@@ -319,6 +343,8 @@ async def main() -> None:
             )
             tasks.create_task(supervisor.run(stop, settings.connector_check_seconds))
             tasks.create_task(heartbeat_loop(stop))
+            if settings.metrics_port is not None:
+                tasks.create_task(metrics_loop(stop))
             tasks.create_task(retention_loop(stop))
             tasks.create_task(alerts_loop(stop))
             tasks.create_task(digest_loop(stop))

@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -16,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.middleware.sessions import SessionMiddleware
 
+from sito import metrics
 from sito.config import Settings, settings
 from sito.db.engine import async_session
 from sito.models.post import EMBEDDING_DIM
@@ -89,6 +91,7 @@ def create_app(
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # Модель грузится несколько секунд: начинаем сразу, чтобы первый поиск не ждал
         task = asyncio.create_task(_warm_up(search_embedder)) if isinstance(search_embedder, LazyEmbedder) else None
+        metrics.serve(config.metrics_port)
         yield
         if task is not None:
             task.cancel()
@@ -113,6 +116,20 @@ def create_app(
         max_failures=config.login_max_failures,
         lockout_seconds=timedelta(minutes=config.login_lockout_minutes).total_seconds(),
     )
+
+    @app.middleware("http")
+    async def count_requests(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        started = time.monotonic()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            # Шаблон маршрута (/stories/{story_id}), а не адрес: иначе на каждый сюжет — своя метрика
+            route = getattr(request.scope.get("route"), "path", "unmatched")
+            metrics.HTTP_REQUESTS.labels(request.method, route, str(status)).inc()
+            metrics.HTTP_SECONDS.labels(request.method, route).observe(time.monotonic() - started)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:

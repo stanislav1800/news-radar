@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     log_level: LogLevel = "INFO"
     log_format: LogFormat = "text"  # json — для Docker и сборщиков логов
     log_sql: bool = False           # печатать каждый SQL-запрос
+    # Порт метрик Prometheus (внутренний, не публикуется наружу). Не задан — метрики не отдаются
+    metrics_port: int | None = None
+
+    # Их читает только docker compose, не приложение. Объявлены, чтобы .env с ними проходил проверку:
+    # незнакомые переменные в .env — ошибка (защита от опечаток в именах настроек)
+    postgres_password: SecretStr | None = None
+    grafana_password: SecretStr | None = None
+    backup_keep: int | None = None
 
     # Веб
     # Подписывает cookie сессий (позже и шифрует учётные данные подключений). Без него веб не стартует.

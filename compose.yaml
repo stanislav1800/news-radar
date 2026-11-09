@@ -19,6 +19,10 @@ x-app: &app
   environment:
     # Внутри compose база доступна по имени сервиса; DATABASE_URL из .env (для разработки) здесь не нужен
     DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-pass}@db:5432/sito
+    # Метрики для Prometheus: порт виден только внутри docker-сети (не в ports)
+    METRICS_PORT: 9100
+    # Логи — JSON: их разбирает Loki (профиль monitoring). Читать без него: docker compose logs worker | jq
+    LOG_FORMAT: json
   volumes:
     - models:/home/sito/.cache/huggingface  # модель эмбеддингов (около 1 ГБ) скачивается один раз
   depends_on:
@@ -88,6 +92,8 @@ services:
     command: ["sito", "web"]
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-pass}@db:5432/sito
+      METRICS_PORT: 9100
+      LOG_FORMAT: json
       # Порт открыт только на этой машине (см. ports), поэтому доверять X-Forwarded-* можно любому
       # отправителю — это обратный прокси на хосте. Открываете порт наружу — укажите адрес прокси.
       FORWARDED_ALLOW_IPS: "*"
@@ -104,6 +110,72 @@ services:
     command: ["python", "-m", "sito.worker"]
     stop_grace_period: 30s  # дать дописать текущую пачку
 
+  # --- Мониторинг (необязательно): docker compose --profile monitoring up -d -------------------
+  # Grafana — http://127.0.0.1:3000 (вход admin / GRAFANA_PASSWORD из .env), дашборд «Сито» уже настроен.
+  # Метрики — Prometheus, логи — Loki (собирает Alloy), всё хранится 30 дней
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    logging: *logging
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus:/prometheus
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: [monitoring]
+    logging: *logging
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/sito.json
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+
+  loki:
+    image: grafana/loki:3.5.3
+    profiles: [monitoring]
+    logging: *logging
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki:/loki
+
+  # Читает логи контейнеров через Docker API. Доступ к docker.sock — почти права root на машине:
+  # только чтение и только внутри сети compose, наружу Alloy не открыт
+  alloy:
+    image: grafana/alloy:v1.10.0
+    profiles: [monitoring]
+    logging: *logging
+    restart: unless-stopped
+    command: ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    environment:
+      SITO_PROJECT: ${COMPOSE_PROJECT_NAME}
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy:/var/lib/alloy/data
+    depends_on:
+      - loki
+
 volumes:
   pgdata:
   models:
+  prometheus:
+  grafana:
+  loki:
+  alloy:

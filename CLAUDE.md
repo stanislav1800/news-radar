@@ -72,5 +72,11 @@ Telegram, HTTP и LLM подменяются; `tests/conftest.py` обнуляе
 **Веб:** страницы Jinja2 (`web/templates/`), частичные обновления HTMX (шаблоны `_*.html`), CSRF-токен в формах,
 вход — сессия в cookie. Время в базе — UTC; показывается в часовом поясе пользователя (`user.timezone`).
 
+**Метрики** (`metrics.py`, Prometheus): события — счётчики там, где произошли; состояние из базы снимает
+только worker (`metrics_loop`, раз в минуту). Порт `METRICS_PORT` (в compose 9100, только внутри сети).
+Prometheus, Loki (логи, собирает Alloy из docker; в compose `LOG_FORMAT=json`) и Grafana — профиль
+`monitoring` в compose, дашборд — `monitoring/grafana/dashboards/sito.json`
+(генерировать не нужно, правится как JSON). Метки — без id и адресов (маршрут — шаблон), иначе рост рядов.
+
 **Миграции** — Alembic autogenerate по моделям; индексы и частичные условия объявляются в `__table_args__`
 моделей, иначе autogenerate предложит их удалить.

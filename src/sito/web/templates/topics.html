@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Мои темы · Сито{% endblock %}
+{% block content %}
+<a class="back" href="/?view=my">← Лента</a>
+<div class="page-head">
+  <h1>Мои темы</h1>
+  <div class="actions"><a class="button sm" href="/topics/new">+ Новая тема</a></div>
+</div>
+
+{% if rows %}
+<ul class="topic-list">
+  {% for row in rows %}
+  {% set t = row.topic %}
+  <li class="card topic-row{% if t.paused %} paused{% endif %}">
+    <div class="topic-main">
+      <a class="topic-title" href="/?topic={{ t.id }}">{{ t.name }}</a>
+      {% if new_counts.get(t.id) %}<span class="badge updated" title="Новых с прошлого визита">{{ new_counts[t.id] | plural("новый", "новых", "новых") }}</span>{% endif %}
+      <div class="meta">
+        <span>{{ row.matches_week | plural("сюжет", "сюжета", "сюжетов") }} за неделю</span>
+        {% if t.query %}· <span title="Слова запроса">«{{ t.query }}»</span>{% endif %}
+        {% if row.likes or row.dislikes %}· <span>отмечено: добавлено {{ row.likes }}, убрано {{ row.dislikes }}</span>{% endif %}
+      </div>
+      <div class="topic-flags">
+        {% if t.paused %}<span class="badge quiet">на паузе</span>{% endif %}
+        {% if llm and t.digest_schedule %}<span class="badge">дайджест {{ schedules.get(t.digest_schedule, t.digest_schedule) }}</span>{% endif %}
+        {% if llm and t.llm_check %}<span class="badge">проверка по описанию</span>{% endif %}
+      </div>
+    </div>
+    <a class="topic-settings small" href="/topics/{{ t.id }}">Настройки →</a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="card intro">
+  <strong>Тем пока нет</strong>
+  <p>Тема — ваша лента по одному вопросу: «уголь в Кузбассе», «ставка ЦБ», «ДТП в Кемерове».
+    Новые сюжеты по ней собираются сами.</p>
+  <p><a class="button sm" href="/topics/new">+ Создать тему</a></p>
+</div>
+{% endif %}
+{% endblock %}

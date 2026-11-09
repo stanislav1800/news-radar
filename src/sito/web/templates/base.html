@@ -21,6 +21,8 @@
     <details class="menu account">
       <summary>{{ user.username }}{% if user.is_admin %}<span hx-get="/admin/alert" hx-trigger="load" hx-swap="outerHTML"></span>{% endif %}</summary>
       <div class="menu-body right">
+        <a href="/topics">Мои темы</a>
+        <a href="/digests">Дайджесты</a>
         <a href="/settings">Настройки</a>
         {% if user.is_admin %}<a href="/admin">Администрирование</a>{% endif %}
         <form method="post" action="/logout">

@@ -587,3 +587,18 @@ details.disclosure[open] > summary::before { transform: rotate(90deg); }
 .tabs.more-right .tab.add { box-shadow: -2rem 0 1.25rem -.5rem var(--bg); }
 .anchor { scroll-margin-top: calc(var(--topbar-h) + 1rem); }
 .tabs { scroll-padding-inline: 1rem 7rem; }  /* активная вкладка не прячется под «+ Тема» */
+
+/* Мои темы и новая тема */
+.topic-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s2); }
+.topic-row { display: flex; align-items: flex-start; gap: var(--s4); padding: var(--s3) var(--s4); }
+.topic-row.paused .topic-title { color: var(--muted); }
+.topic-main { flex: 1; min-width: 0; }
+.topic-title { font-weight: 600; font-size: 1.05rem; color: var(--text); margin-right: var(--s2); }
+.topic-title:hover { color: var(--accent); text-decoration: none; }
+.topic-row .meta { margin-top: .2rem; }
+.topic-flags { display: flex; flex-wrap: wrap; gap: var(--s1); margin-top: var(--s1); }
+.topic-flags:empty { display: none; }
+.topic-settings { white-space: nowrap; }
+.new-topic-words { display: flex; gap: var(--s2); }
+.new-topic-words input { flex: 1; min-width: 0; }
+.card .hint { margin-top: var(--s2); }

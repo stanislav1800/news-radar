@@ -116,10 +116,16 @@ class TopicPreview:
 
 # --- Список тем и создание -----------------------------------------------------------------------
 
-@router.get("/topics")
-async def topics_page() -> Response:
-    """Темы — вкладки ленты; отдельного списка больше нет."""
-    return _redirect("/")
+@router.get("/topics", response_class=HTMLResponse)
+async def topics_page(request: Request, db: DbSession, user: CurrentUser) -> HTMLResponse:
+    """Мои темы: все сразу (вкладки при 5+ темах не влезают), с паузой, дайджестом и проверкой."""
+    repo = TopicRepository(db)
+    now = datetime.now(UTC)
+    new_counts, _ = await repo.new_counts(user.id, user.previous_visit_at) if user.previous_visit_at else ({}, 0)
+    return templates.TemplateResponse(request, "topics.html", {
+        "user": user, "rows": await repo.stats(user.id, now - timedelta(days=7)), "new_counts": new_counts,
+        "schedules": DIGEST_SCHEDULES, "llm": request.app.state.llm is not None, "now": now,
+    })
 
 
 @router.post("/topics")
@@ -150,7 +156,7 @@ async def create_topic(
 
 @router.get("/topics/new", response_class=HTMLResponse)
 async def new_topic_page(request: Request, user: CurrentUser, d: str = "") -> HTMLResponse:
-    """Описать тему своими словами: модель составит название и запрос."""
+    """Новая тема: по словам (через поиск) или описанием своими словами (модель составит запрос)."""
     return templates.TemplateResponse(request, "topic_new.html", {
         "user": user, "description": d.strip()[:1000], "llm": request.app.state.llm is not None,
     })

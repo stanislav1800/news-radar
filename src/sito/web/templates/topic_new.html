@@ -1,25 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Новая тема · Сито{% endblock %}
 {% block content %}
-<a class="back" href="/">← Лента</a>
-<h1>Новая тема</h1>
-{% if not llm %}
-<p class="muted">Составлять тему по описанию может LLM, но она не настроена. Создайте тему через поиск: напишите слова
-  в строке поиска вверху и нажмите «Следить».</p>
-{% else %}
+<a class="back" href="/topics">← Мои темы</a>
+<div class="page-head"><h1>Новая тема</h1></div>
+<p class="muted">Тема — ваша лента по одному вопросу. Новые сюжеты по ней собираются сами, лишнее можно убирать.</p>
+
+<h2>По ключевым словам</h2>
+<section class="card">
+  <form class="new-topic-words" method="get" action="/search">
+    <input type="search" name="q" required autofocus aria-label="Ключевые слова"
+           placeholder="Например: уголь Кузбасс">
+    <button type="submit">Найти</button>
+  </form>
+  <p class="hint">Покажу, что нашлось за последние недели, и сколько сюжетов в день будет в теме. Понравится — нажмёте «Следить».
+    В тему попадают сюжеты, где есть все слова.</p>
+</section>
+
+<h2>Описать своими словами</h2>
+{% if llm %}
 <section class="card topic-new">
   <form class="stack" method="post" action="/topics/draft" hx-post="/topics/draft" hx-target="#draft" hx-swap="innerHTML"
         hx-on::before-request="this.classList.add('busy'); this.querySelector('button').disabled = true"
         hx-on::after-request="this.classList.remove('busy'); this.querySelector('button').disabled = false">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <label for="topic-description">О чём вы хотите знать? Опишите своими словами — что важно и что не нужно.</label>
-    <textarea id="topic-description" name="description" rows="3" maxlength="1000" required
+    <textarea id="topic-description" name="description" rows="3" maxlength="1000" required aria-label="Описание темы"
               placeholder="Например: ставка ЦБ и инфляция, без прогнозов аналитиков">{{ description }}</textarea>
-    <div><button type="submit">Составить тему</button>
+    <div class="form-actions"><button type="submit">Составить тему</button>
       <span class="busy-note muted small">Составляю тему и проверяю, что она найдёт…</span></div>
+    <p class="hint">Что важно и что не нужно — модель подберёт название и запрос, вы проверите и поправите перед созданием.</p>
   </form>
 </section>
 <div id="draft"></div>
-<p class="muted small">Тему можно создать и по словам: напишите их в строке поиска вверху и нажмите «Следить».</p>
+{% else %}
+<p class="muted small">Недоступно: LLM не настроена. Создайте тему по ключевым словам.</p>
 {% endif %}
+
+<p class="muted small">Ещё способ: откройте любой сюжет и нажмите «Следить за похожими» — тема соберёт похожие на него.</p>
 {% endblock %}

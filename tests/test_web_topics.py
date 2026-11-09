@@ -354,3 +354,19 @@ async def test_search_shows_what_topic_would_find(logged_in: httpx.AsyncClient, 
 
     assert "за 30 дней таких 1" in " ".join(found.split())
     assert "все эти слова, за 30 дней нет" in " ".join(empty.split())
+
+
+async def test_my_topics_and_new_topic_pages(logged_in: httpx.AsyncClient, stories: Stories) -> None:
+    """«Мои темы» — все темы списком с настройками; «Новая тема» — по словам и, без LLM, без описания."""
+    empty = (await logged_in.get("/topics")).text
+    assert "Тем пока нет" in empty and 'href="/topics/new"' in empty
+
+    await stories.add([("ТАСС", "Уголь подешевел", timedelta(hours=1))])
+    topic_id = await follow_search(logged_in, "уголь")
+    await post(logged_in, f"/topics/{topic_id}/pause", page=f"/topics/{topic_id}", paused="true")
+    page = (await logged_in.get("/topics")).text
+    assert f'href="/?topic={topic_id}"' in page and f'href="/topics/{topic_id}"' in page
+    assert "1 сюжет за неделю" in page and "на паузе" in page
+
+    new = (await logged_in.get("/topics/new")).text
+    assert 'action="/search"' in new and "LLM не настроена" in new

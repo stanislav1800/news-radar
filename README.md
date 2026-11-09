@@ -39,7 +39,7 @@
 | **Мои темы** | **Настройки темы** |
 | ![Мои темы](docs/screenshots/topics.png) | ![Настройки темы](docs/screenshots/topic-settings.png) |
 | **Администрирование: состояние конвейера** | **Телефон, тёмная тема** |
-| ![Состояние](docs/screenshots/admin.png) | <img src="docs/screenshots/mobile-dark.png" width="260" alt="Телефон"> |
+| ![Состояние](docs/screenshots/admin.png) | ![Телефон, тёмная тема](docs/screenshots/mobile-dark.png) |
 
 ## Возможности
 

@@ -10,6 +10,6 @@
   <form class="votes transient" method="post" action="/topics/{{ topic.id }}/delete"
         hx-post="/topics/{{ topic.id }}/delete" hx-target="closest .reason" hx-swap="outerHTML">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button class="link" type="submit">Отменить</button>
+    <button class="ghost" type="submit">Отменить</button>
   </form>
 </div>

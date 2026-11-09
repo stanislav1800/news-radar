@@ -1,6 +1,9 @@
 {# Блок «Сводка» вверху ленты темы (LLM): кнопки периода, вопрос, последний отчёт #}
 <section class="topic-report card" id="topic-report">
   {% set busy = "this.closest('section').classList.add('busy'); this.querySelectorAll('button').forEach(b => b.disabled = true)" %}
+  {# Свёрнуто в строку: на телефоне кнопки и вопрос заняли бы полэкрана до первой новости #}
+  <details class="disclosure report-tools"{% if report_error or question %} open{% endif %}>
+  <summary>Сводка и вопросы по теме</summary>
   <div class="report-bar">
     <span>Сводка за</span>
     {% for days, label in periods.items() %}
@@ -24,6 +27,7 @@
     </select>
     <button class="secondary" type="submit">Спросить</button>
   </form>
+  </details>
   {% if report_error %}<p class="small field-error" role="alert">Не получилось: {{ report_error }}</p>{% endif %}
   {% if report %}
   {% with open=report_open, new=report_new %}{% include "_topic_report.html" %}{% endwith %}
@@ -33,7 +37,7 @@
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
     <input type="hidden" name="days" value="{{ report.days }}">
     <input type="hidden" name="force" value="true">
-    <button class="link small" type="submit">Обновить сводку с учётом новых сюжетов</button>
+    <button class="ghost small" type="submit">Обновить сводку с учётом новых сюжетов</button>
   </form>
   {% endif %}
   {% endif %}

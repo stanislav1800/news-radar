@@ -244,3 +244,23 @@ async def test_channels_page_actions(
     async with session_factory() as session:
         mash = await session.scalar(select(Source).where(Source.url == "https://t.me/mash"))
     assert mash is not None and mash.external_id is None and mash.name == "@mash"
+
+
+async def test_silent_channels_filter_and_summary(
+    admin: httpx.AsyncClient, fake_login: FakeLogin, session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Заброшенные каналы: на «Состоянии» — одной строкой со ссылкой, в списке — фильтр «Молчат»."""
+    from datetime import timedelta
+
+    await add_account(admin)
+    connector_id = (await connector(session_factory)).id
+    async with session_factory() as session, session.begin():
+        session.add(Source(connector_id=connector_id, type="telegram", name="Брошенный канал", external_id="333",
+                           state={}, created_at=datetime.now(UTC) - timedelta(days=30)))
+
+    summary = (await admin.get("/admin")).text
+    assert "1 канал Telegram" in summary and f"/admin/connectors/{connector_id}/channels?show=silent" in summary
+    assert "лента отвечает" not in summary  # текст про ленты RSS — не для каналов
+
+    page = (await admin.get(f"/admin/connectors/{connector_id}/channels?show=silent")).text
+    assert 'class="chip active" data-state-filter="silent"' in page  # фильтр выбран заранее and 'data-silent="1"' in page

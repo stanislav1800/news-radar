@@ -25,7 +25,7 @@
           <input type="hidden" name="vote" value="{{ vote }}">
           <input type="hidden" name="mode" value="feed">
           <input type="hidden" name="next" value="/">
-          <button class="link one-line" type="submit" title="{{ title or r.topic_name }}">{{ label }}</button>
+          <button class="ghost one-line" type="submit" title="{{ title or r.topic_name }}">{{ label }}</button>
         </form>
         {% endmacro %}
         {% set matched = reasons | selectattr("matched") | list %}
@@ -35,7 +35,7 @@
         {% endfor %}
         {% if other %}
         <details class="topic-pick" data-list="{{ s.id }}">
-          <summary class="link">Добавить в тему…</summary>
+          <summary class="ghost">Добавить в тему…</summary>
           {% if other | length > 8 %}<input type="search" class="topic-filter" placeholder="Найти тему" aria-label="Найти тему">{% endif %}
           <div class="topic-pick-list">
             {% for r in other %}{{ vote_form(r, "like", r.topic_name, "Добавить в тему «" ~ r.topic_name ~ "»: она будет находить похожие") }}{% endfor %}
@@ -47,7 +47,7 @@
           <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
           <input type="hidden" name="source_id" value="{{ s.first_source_id }}">
           <input type="hidden" name="next" value="{{ hide_next }}">
-          <button class="link" type="submit" title="Сюжеты только из этого источника не будут показываться в «Главном» и «Всех новостях»">Не показывать «{{ s.first_source_name }}»</button>
+          <button class="ghost" type="submit" title="Сюжеты только из этого источника не будут показываться в «Главном» и «Всех новостях»">Не показывать «{{ s.first_source_name }}»</button>
         </form>
         {% endif %}
       </div>
@@ -66,7 +66,8 @@
     {% if (s.last_post_at - s.started_at).total_seconds() > 600 %}
     · <span>обновлено {{ s.last_post_at | ago(user.timezone, now) }}</span>
     {% endif %}
-    {% for r in reasons if r.matched %}<a class="tag" href="/?topic={{ r.topic_id }}" title="{{ r.topic_name }}: {{ why(r) }}">{{ r.topic_name }}</a>{% endfor %}
+    {# Во вкладке темы её метка на каждой карточке — лишняя #}
+    {% for r in reasons if r.matched and not (view is defined and view.topic_id == r.topic_id) %}<a class="tag" href="/?topic={{ r.topic_id }}" title="{{ r.topic_name }}: {{ why(r) }}">{{ r.topic_name }}</a>{% endfor %}
   </div>
   {% if suggest %}
   <form class="card-action" method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="#story-{{ s.id }}" hx-swap="outerHTML">
@@ -75,8 +76,8 @@
     <input type="hidden" name="story_id" value="{{ s.id }}">
     <input type="hidden" name="mode" value="suggest">
     <input type="hidden" name="next" value="/?topic={{ suggest.topic_id }}">
-    <button class="secondary" name="vote" value="like" title="Добавить в тему: она будет находить похожие">Подходит</button>
-    <button class="link" name="vote" value="dislike" title="Тема перестанет предлагать такие">Не подходит</button>
+    <button class="secondary sm" name="vote" value="like" title="Добавить в тему: она будет находить похожие">Подходит</button>
+    <button class="secondary sm" name="vote" value="dislike" title="Тема перестанет предлагать такие">Не подходит</button>
   </form>
   {% endif %}
   {% if caller is defined %}{{ caller() }}{% endif %}

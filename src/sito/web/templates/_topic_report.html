@@ -1,6 +1,6 @@
 {# Один отчёт по теме: report, topic. open — раскрыт; new — сколько сюжетов с тех пор #}
 {% set period = periods[report.days] if report.days in periods else report.days ~ " дн." %}
-<details class="report"{% if open %} open{% endif %}>
+<details class="disclosure report"{% if open %} open{% endif %}>
   <summary>
     <strong>{% if report.kind == "question" %}Вопрос: {{ report.question }}
       {%- elif report.kind == "digest" %}Дайджест{% else %}Сводка за {{ period }}{% endif %}</strong>

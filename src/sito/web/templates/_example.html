@@ -3,6 +3,6 @@
   {% if e.story_id %}<a href="/stories/{{ e.story_id }}">{{ e.title }}</a>{% else %}{{ e.title }}{% endif %}
   <form class="inline" method="post" action="/topics/{{ topic.id }}/examples/{{ e.id }}/delete">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button class="link small" type="submit">{{ "убрать" if e.liked else "вернуть" }}</button>
+    <button class="ghost small" type="submit">{{ "убрать" if e.liked else "вернуть" }}</button>
   </form>
 </span>

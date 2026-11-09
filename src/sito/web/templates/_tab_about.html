@@ -4,6 +4,6 @@
   {%- elif view.kind == "all" %}Все сюжеты подряд, со всех источников.
   {%- elif view.kind == "my" %}Сюжеты по всем вашим темам.
   {%- else %}{% set current = topics | selectattr("id", "equalto", view.topic_id) | first %}
-    {%- if current.paused %}Тема на паузе: новые сюжеты не добавляются. {% endif %}<a href="/topics/{{ view.topic_id }}">Настроить тему</a>
+    {%- if current.paused %}Тема на паузе: новые сюжеты не добавляются. {% endif %}<a href="/topics/{{ view.topic_id }}">Настройки темы →</a>
   {%- endif -%}
 </p>

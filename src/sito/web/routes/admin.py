@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
-from sito.models import Connector, ConnectorStatus, User
+from sito.models import Connector, ConnectorStatus, SourceType, User
 from sito.repositories.connectors import ConnectorRepository
 from sito.repositories.pipeline import PipelineRepository
 from sito.repositories.sources import SourceRepository
@@ -49,7 +49,10 @@ async def summary_page(request: Request, db: DbSession, user: AdminUser) -> HTML
         "failed": await pipeline.failed_posts(FAILED_SHOWN),
         "broken": [s for s in sources if s.failing],
         "broken_connectors": await _broken_connectors(db),
-        "silent": [(s, since) for s in sources if (since := s.silent_since(now))],
+        # Ленты RSS молчат редко и по делу (сменился адрес) — каждая отдельно; каналов Telegram, брошенных
+        # авторами, бывают десятки — одной строкой на подключение со ссылкой на список
+        "silent": [(s, since) for s in sources if s.type != "telegram" and (since := s.silent_since(now))],
+        "silent_channels": await _silent_channels(db, now),
         "worker": worker_state(beat.beat_at if beat else None, now),
         "beat": beat,
         "llm": request.app.state.llm,
@@ -58,6 +61,17 @@ async def summary_page(request: Request, db: DbSession, user: AdminUser) -> HTML
         "llm_limit": request.app.state.settings.llm_daily_tokens,
         "now": now,
     })
+
+
+async def _silent_channels(db: DbSession, now: datetime) -> dict[int, int]:
+    """Подключение Telegram → сколько его каналов молчит (собираются, а постов нет дольше обычного)."""
+    found: dict[int, int] = {}
+    for c in await ConnectorRepository(db).list_all():
+        if c.enabled and c.type == SourceType.TELEGRAM:
+            rows = await SourceRepository(db).list_with_stats(c.id)
+            if n := sum(r.silent_since(now) is not None for r in rows):
+                found[c.id] = n
+    return found
 
 
 async def _broken_connectors(db: DbSession) -> list[Connector]:

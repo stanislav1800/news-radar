@@ -2,9 +2,28 @@
 {% import "_form_fields.html" as form %}
 {% block title %}{{ topic.name }} · Настройки темы · Сито{% endblock %}
 {% block content %}
-<a class="back" href="/?topic={{ topic.id }}">← К ленте темы</a>
-<h1>{{ topic.name }}</h1>
+<a class="back" href="/?topic={{ topic.id }}">← Лента «{{ topic.name }}»</a>
+<div class="page-head">
+  <h1>{{ topic.name }}{% if topic.paused %} <span class="badge quiet">на паузе</span>{% endif %}</h1>
+  <div class="actions">
+    <form method="post" action="/topics/{{ topic.id }}/pause">
+      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="paused" value="{{ 'false' if topic.paused else 'true' }}">
+      <button class="secondary sm" type="submit" title="{{ 'Новые сюжеты снова будут добавляться' if topic.paused else 'Новые сюжеты не будут добавляться, лента и настройки останутся' }}">
+        {{ "Снять с паузы" if topic.paused else "Поставить на паузу" }}</button>
+    </form>
+  </div>
+</div>
+<nav class="section-nav" aria-label="Разделы настроек">
+  <a href="#main">Основное</a>
+  {% if likes or dislikes %}<a href="#examples">Отмеченные сюжеты</a>{% endif %}
+  <a href="#sources">Источники</a>
+  {% if llm %}<a href="#check">Проверка</a><a href="#prompt">Сводки</a><a href="#digest">Дайджест</a>{% endif %}
+  <a href="#rss">RSS</a>
+  <a href="#delete">Удаление</a>
+</nav>
 
+<h2 id="main">Основное</h2>
 <section class="card settings">
   <form class="stack" method="post" action="/topics/{{ topic.id }}">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
@@ -13,6 +32,7 @@
   </form>
 </section>
 
+<div id="examples" class="anchor"></div>
 {% if likes %}
 <h2>Добавленные сюжеты</h2>
 <p class="muted small">Тема находит похожие на них, даже без слов из названия.</p>
@@ -35,9 +55,9 @@
 </p>
 {% endif %}
 
-<h2>Источники</h2>
+<h2 id="sources">Источники</h2>
 <section class="card">
-  <details{% if topic_sources %} open{% endif %}>
+  <details class="disclosure"{% if topic_sources %} open{% endif %}>
     <summary>{% if topic_sources %}Ищет только в {{ topic_sources | length | plural("источнике", "источниках", "источниках") }}{% else %}Ищет во всех источниках{% endif %} — изменить</summary>
     <p class="muted small">Например, тема «IT» только в Хабре и OpenNET — чтобы «Python» не ловил новости про змей.
       Ничего не отмечено — ищет везде. Сюжеты, которые вы добавили в тему сами, остаются в ней всё равно.</p>
@@ -74,7 +94,7 @@
   <form method="post" action="/topics/{{ topic.id }}/llm-check">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
     <input type="hidden" name="enabled" value="{{ 'false' if topic.llm_check else 'true' }}">
-    <button class="{{ 'secondary' if topic.llm_check else '' }}" type="submit"
+    <button class="secondary" type="submit"
       {%- if not topic.description and not topic.llm_check %} disabled{% endif %}>
       {{ "Выключить проверку" if topic.llm_check else "Включить проверку" }}</button>
     {% if topic.llm_check %}<span class="status-ok small">включена</span>{% endif %}
@@ -84,7 +104,7 @@
     убрала {{ check_counts[1] }}.</p>
   {% endif %}
   {% if rejected %}
-  <details class="rejected">
+  <details class="disclosure rejected">
     <summary>Убранные проверкой ({{ rejected | length }}{% if rejected | length == 50 %}+{% endif %})</summary>
     <ul class="examples-list">
       {% for id, title, reason in rejected %}
@@ -93,7 +113,7 @@
         {% if reason %}<span class="muted small">— {{ reason }}</span>{% endif %}
         <form class="inline" method="post" action="/topics/{{ topic.id }}/checks/{{ id }}/restore">
           <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-          <button class="link small" type="submit" title="Вернуть в тему: она будет находить похожие">Вернуть</button>
+          <button class="ghost small" type="submit" title="Вернуть в тему: она будет находить похожие">Вернуть</button>
         </form>
       </li>
       {% endfor %}
@@ -102,7 +122,7 @@
   {% endif %}
 </section>
 
-<h2>Пожелания к сводкам</h2>
+<h2 id="prompt">Пожелания к сводкам</h2>
 <section class="card settings">
   <form class="stack" method="post" action="/topics/{{ topic.id }}/llm-prompt">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
@@ -125,14 +145,14 @@
           {% for value, label in schedules.items() %}<option value="{{ value }}"{% if topic.digest_schedule == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
       </label>
-      <label>День недели
+      <label class="weekday digest-extra">День недели
         <select name="weekday">
           {% for name in weekdays %}<option value="{{ loop.index0 }}"{% if topic.digest_weekday == loop.index0 %} selected{% endif %}>{{ name }}</option>{% endfor %}
         </select>
       </label>
-      <label>Во сколько <input type="time" name="at" value="{{ topic.digest_time }}" required></label>
+      <label class="digest-extra">Во сколько <input type="time" name="at" value="{{ topic.digest_time }}" required></label>
     </div>
-    <div class="digest-row">
+    <div class="digest-row digest-extra">
       <label>Формат
         <select name="kind">
           <option value="short"{% if topic.digest_format == "short" %} selected{% endif %}>список главных событий</option>
@@ -143,11 +163,11 @@
         <input type="number" name="min_stories" min="1" max="100" value="{{ topic.digest_min_stories }}">
       </label>
     </div>
-    <label for="digest-prompt">Пожелания к дайджесту</label>
-    <textarea id="digest-prompt" name="prompt" rows="2" maxlength="2000"
-              placeholder="Например: только решения властей и цифры, без происшествий">{{ topic.digest_prompt or "" }}</textarea>
-    <p class="muted small">
-      День недели — только для «раз в неделю». Дайджест охватывает всё новое с прошлого дайджеста;
+    <label class="digest-extra">Пожелания к дайджесту
+    <textarea name="prompt" rows="2" maxlength="2000"
+              placeholder="Например: только решения властей и цифры, без происшествий">{{ topic.digest_prompt or "" }}</textarea></label>
+    <p class="muted small digest-extra">
+      Дайджест охватывает всё новое с прошлого дайджеста;
       в пустые дни не делается и денег не тратит.<br>
       Время — по часовому поясу <strong>{{ user.timezone }}</strong> (сейчас там {{ now | local_time(user.timezone, now) }}),
       <a href="/settings">изменить в настройках</a>.
@@ -162,29 +182,24 @@
 </section>
 {% endif %}
 
-<h2>Управление</h2>
+<h2 id="rss">RSS-лента темы</h2>
 <section class="card settings">
-  <div class="setting row">
-    <form method="post" action="/topics/{{ topic.id }}/pause">
-      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-      <input type="hidden" name="paused" value="{{ 'false' if topic.paused else 'true' }}">
-      <button class="link" type="submit">{{ "Снять с паузы" if topic.paused else "Поставить на паузу" }}</button>
-    </form>
-    <form method="post" action="/topics/{{ topic.id }}/delete"
-          onsubmit='return confirm({{ ("Удалить тему «" ~ topic.name ~ "»?") | tojson }})'>
-      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-      <button class="link danger" type="submit">Удалить тему</button>
-    </form>
-  </div>
-  <details>
-    <summary class="muted small">Дополнительно: RSS-лента темы</summary>
-    <p class="muted small">Для RSS-читалки. Адрес секретный: по нему лента открывается без пароля.</p>
-    <input class="rss-url" type="text" readonly value="{{ rss_url }}" aria-label="Адрес RSS-ленты" onclick="this.select()">
-    <form method="post" action="/topics/{{ topic.id }}/rss-token"
-          onsubmit='return confirm({{ "Старый адрес перестанет работать. Сменить?" | tojson }})'>
-      <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-      <button class="link" type="submit">Сменить адрес</button>
-    </form>
-  </details>
+  <p class="muted small">Для RSS-читалки. Адрес секретный: по нему лента открывается без пароля.</p>
+  <input class="rss-url" type="text" readonly value="{{ rss_url }}" aria-label="Адрес RSS-ленты" onclick="this.select()">
+  <form method="post" action="/topics/{{ topic.id }}/rss-token"
+        onsubmit='return confirm({{ "Старый адрес перестанет работать. Сменить?" | tojson }})'>
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button class="secondary sm" type="submit">Сменить адрес</button>
+  </form>
+</section>
+
+<h2 id="delete">Удаление</h2>
+<section class="card danger-zone">
+  <p class="muted small">Тема пропадёт вместе с отметками, сводками и дайджестами. Сами сюжеты останутся в общей ленте.</p>
+  <form method="post" action="/topics/{{ topic.id }}/delete"
+        onsubmit='return confirm({{ ("Удалить тему «" ~ topic.name ~ "»?") | tojson }})'>
+    <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
+    <button class="danger" type="submit">Удалить тему</button>
+  </form>
 </section>
 {% endblock %}

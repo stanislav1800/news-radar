@@ -3,13 +3,13 @@
    Сообщение о действии с «Отменить» через несколько секунд сменяется обычным видом строки (data-settle).
    HTMX заменяет всю строку ответом /topics/vote. #}
 {% set topic_link %}<a class="topic-name" href="/?topic={{ r.topic_id }}">«{{ r.topic_name }}»</a>{% endset %}
-{% macro vote_form(vote, label, title="") %}
+{% macro vote_form(vote, label, title="", cls="secondary sm") %}
   <form class="votes" method="post" action="/topics/vote" hx-post="/topics/vote" hx-target="closest .reason" hx-swap="outerHTML">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
     <input type="hidden" name="topic_id" value="{{ r.topic_id }}">
     <input type="hidden" name="story_id" value="{{ r.story_id }}">
     <input type="hidden" name="next" value="{{ next }}">
-    <button class="link" name="vote" value="{{ vote }}"{% if title %} title="{{ title }}"{% endif %}>{{ label }}</button>
+    <button class="{{ cls }}" name="vote" value="{{ vote }}"{% if title %} title="{{ title }}"{% endif %}>{{ label }}</button>
   </form>
 {% endmacro %}
 <div class="reason{% if not r.matched %} out{% endif %}"{% if done %} data-settle="8"{% endif %}>
@@ -23,7 +23,7 @@
       Не в теме {{ topic_link }}
     {%- endif -%}
   </span>
-  <span class="transient">{{ vote_form("none", "Отменить") }}</span>
+  <span class="transient">{{ vote_form("none", "Отменить", cls="ghost") }}</span>
   {% endif %}
   <span class="why{% if done %} settled-only{% endif %}">
     {%- if r.matched -%}

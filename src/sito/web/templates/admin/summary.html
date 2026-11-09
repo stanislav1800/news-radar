@@ -8,11 +8,11 @@
 <section class="card stats">
   <div class="stat">
     <span class="muted small">Worker</span>
-    {% if worker == "ok" %}<strong class="status-ok">работает</strong>
+    {% if worker == "ok" %}<strong class="status ok">работает</strong>
     <span class="muted small">с {{ beat.started_at | local_time(user.timezone, now) }}</span>
-    {% elif worker == "stale" %}<strong class="status-error">не отвечает</strong>
+    {% elif worker == "stale" %}<strong class="status error">не отвечает</strong>
     <span class="muted small">последний раз {{ beat.beat_at | ago(user.timezone, now) }}</span>
-    {% else %}<strong class="status-error">не запускался</strong>
+    {% else %}<strong class="status error">не запускался</strong>
     <span class="muted small">uv run python -m sito.worker</span>{% endif %}
   </div>
   <div class="stat"><span class="muted small">Постов за сутки</span><strong>{{ summary.posts_24h }}</strong></div>
@@ -79,7 +79,7 @@
 {% endif %}
 
 <h2>Источники с проблемами</h2>
-{% if broken or silent or broken_connectors %}
+{% if broken or silent or silent_channels or broken_connectors %}
 <section class="card">
   <ul class="problems">
     {% for c in broken_connectors %}
@@ -93,6 +93,11 @@
     <li><strong>{{ s.name }}</strong> — <span class="status-error">ошибка</span>
       {% if s.failures > 1 %}{{ s.failures | plural("раз", "раза", "раз") }} подряд, {% endif %}последняя {{ s.last_error_at | ago(user.timezone, now) }}.
       <div class="small field-error">{{ (s.last_error or "")[:200] }}</div></li>
+    {% endfor %}
+    {% for connector_id, n in silent_channels.items() %}
+    <li><strong>{{ n | plural("канал Telegram", "канала Telegram", "каналов Telegram") }}</strong> — <span class="status warn">молчат</span>:
+      собираются, но постов нет дольше обычного. Обычно канал заброшен — от таких лучше отписаться, подписки ограничены.
+      <a href="/admin/connectors/{{ connector_id }}/channels?show=silent#list">Показать →</a></li>
     {% endfor %}
     {% for s, since in silent %}
     <li><strong>{{ s.name }}</strong> — <span class="status-error">молчит</span>:
@@ -122,7 +127,7 @@
             <form method="post" action="/admin/failed/retry">
               <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
               <input type="hidden" name="post_id" value="{{ p.id }}">
-              <button class="link" type="submit">Повторить</button>
+              <button class="ghost" type="submit">Повторить</button>
             </form>
           </td>
         </tr>
@@ -132,7 +137,7 @@
   </div>
   <form method="post" action="/admin/failed/retry">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button class="link" type="submit">Повторить все</button>
+    <button class="secondary sm" type="submit">Повторить все</button>
   </form>
 </section>
 {% else %}

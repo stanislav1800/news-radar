@@ -5,7 +5,7 @@
         hx-target="#summary" hx-swap="outerHTML" hx-disabled-elt="find button"
         hx-on::before-request="this.querySelector('button').textContent = 'Пересказываю…'">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button class="{{ 'link' if summary else 'secondary' }}" type="submit">{{ label }}</button>
+    <button class="{{ 'secondary sm' if summary else 'secondary' }}" type="submit">{{ label }}</button>
   </form>
   {% endmacro %}
   {% if summary %}

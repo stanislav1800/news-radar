@@ -13,3 +13,4 @@ wheels/
 .env
 compose.override.yaml
 backups/
+.playwright-mcp/

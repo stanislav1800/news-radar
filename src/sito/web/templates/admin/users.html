@@ -28,7 +28,7 @@
               <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
               <input name="password" type="password" minlength="8" required autocomplete="new-password"
                      placeholder="не короче 8 символов" aria-label="Новый пароль для {{ u.username }}">
-              <button class="link" type="submit">Сменить</button>
+              <button class="ghost" type="submit">Сменить</button>
             </form>
           </td>
           <td class="actions">
@@ -36,17 +36,17 @@
             <form method="post" action="/admin/users/{{ u.id }}/admin">
               <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
               <input type="hidden" name="is_admin" value="{{ 'false' if u.is_admin else 'true' }}">
-              <button class="link" type="submit">{{ "Снять админа" if u.is_admin else "Сделать админом" }}</button>
+              <button class="ghost" type="submit">{{ "Снять админа" if u.is_admin else "Сделать админом" }}</button>
             </form>
             <form method="post" action="/admin/users/{{ u.id }}/active">
               <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
               <input type="hidden" name="active" value="{{ 'false' if u.is_active else 'true' }}">
-              <button class="link" type="submit">{{ "Отключить" if u.is_active else "Включить" }}</button>
+              <button class="ghost" type="submit">{{ "Отключить" if u.is_active else "Включить" }}</button>
             </form>
             <form method="post" action="/admin/users/{{ u.id }}/delete"
                   onsubmit='return confirm({{ ("Удалить пользователя " ~ u.username ~ "? Его темы и отметки прочитанного пропадут.") | tojson }})'>
               <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-              <button class="link danger" type="submit">Удалить</button>
+              <button class="ghost danger" type="submit">Удалить</button>
             </form>
             {% endif %}
           </td>
@@ -56,7 +56,7 @@
     </table>
   </div>
 
-  <details class="add-source" {% if form_open %}open{% endif %}>
+  <details class="disclosure add-source" {% if form_open %}open{% endif %}>
     <summary>Новый пользователь</summary>
     <form class="stack" method="post" action="/admin/users">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">

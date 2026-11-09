@@ -4,13 +4,13 @@
 {% block main_class %}page wide{% endblock %}
 {% block content %}
 {% set admin_tab = "sources" %}{% include "admin/_tabs.html" %}
-<a class="back" href="/admin/connectors">← Все источники</a>
+<a class="back" href="/admin/connectors">← Источники</a>
 <h1>Каналы Telegram</h1>
 <p class="muted">
   {{ connector.name }} · {{ connector.settings.phone }} ·
   {% if connector.status == "needs_login" %}<a href="/admin/connectors/{{ connector.id }}/login" class="status-error">нужен вход</a>
-  {% elif connector.status == "error" %}<span class="status-error">ошибка: {{ (connector.last_error or "")[:120] }}</span>
-  {% else %}<span class="status-ok">работает</span>{% endif %}
+  {% elif connector.status == "error" %}<span class="status error">ошибка: {{ (connector.last_error or "")[:120] }}</span>
+  {% else %}<span class="status ok">работает</span>{% endif %}
   · подписок {{ subscribed }} из {{ limit }}
 </p>
 
@@ -36,17 +36,21 @@
 
 <section class="card">
   <div class="channels-head">
-    <h2>Подписки аккаунта</h2>
+    <h2 id="list">Подписки аккаунта</h2>
     <input type="search" data-filter="#channels" placeholder="Найти в списке" aria-label="Найти канал в списке">
   </div>
   {% set labels = [("collecting", "Собираются"), ("waiting", "Ждут решения"), ("stopped", "Не собираются"),
                    ("pending", "Ждут подписки"), ("error", "С ошибкой"), ("leaving", "Отписываюсь"), ("left", "Отписаны")] %}
   <div class="table-tools" data-table-tools="#channels">
     <div class="chips" role="group" aria-label="Показать">
-      <button type="button" class="chip active" data-state-filter="">Все <span>{{ rows | length }}</span></button>
+      <button type="button" class="chip{% if not show %} active{% endif %}" data-state-filter="">Все <span>{{ rows | length }}</span></button>
       {% for state, label in labels if counts.get(state) %}
-      <button type="button" class="chip" data-state-filter="{{ state }}">{{ label }} <span>{{ counts[state] }}</span></button>
+      <button type="button" class="chip{% if show == state %} active{% endif %}" data-state-filter="{{ state }}">{{ label }} <span>{{ counts[state] }}</span></button>
       {% endfor %}
+      {% if counts.silent %}
+      <button type="button" class="chip{% if show == 'silent' %} active{% endif %}" data-state-filter="silent"
+              title="Собираются, но постов нет дольше обычного: обычно канал заброшен. Отметьте все и отпишитесь">Молчат <span>{{ counts.silent }}</span></button>
+      {% endif %}
     </div>
     <label class="small muted">Сортировать
       <select data-sort>
@@ -72,7 +76,7 @@
     <button class="secondary" form="bulk" name="action" value="leave">Отписаться</button>
     <button class="secondary danger" form="bulk" name="action" value="delete"
             onclick="return confirm('Отписаться и удалить отмеченные каналы вместе со всеми их постами? Отменить нельзя.')">Отписаться и удалить посты</button>
-    <button type="button" class="link bulk-clear" data-bulk-clear="#channels">Снять отметки</button>
+    <button type="button" class="ghost bulk-clear" data-bulk-clear="#channels">Снять отметки</button>
   </div>
   <div class="table-wrap with-menus">
     <table class="sources" id="channels">
@@ -85,7 +89,7 @@
       <tbody>
         {% for row in rows %}{% set s = row.source %}
         <tr id="source-{{ s.id }}" data-name="{{ (s.name ~ ' ' ~ (row.username or '')) | lower }}"
-            data-state="{{ row.state }}" data-subs="{{ s.info.subscribers or 0 }}" data-posts="{{ s.posts_24h or 0 }}"
+            data-state="{{ row.state }}"{% if row.silent %} data-silent="1"{% endif %} data-subs="{{ s.info.subscribers or 0 }}" data-posts="{{ s.posts_24h or 0 }}"
             data-last="{{ s.last_post_at.timestamp() | int if s.last_post_at else 0 }}" data-order="{{ loop.index }}"
             class="{% if row.state in ('stopped', 'left', 'leaving') %}disabled{% endif %}">
           <td><input type="checkbox" form="bulk" name="source_id" value="{{ s.id }}" aria-label="Отметить {{ s.name }}"></td>
@@ -101,19 +105,20 @@
             {% if s.info.about %}<div class="muted small about">{{ s.info.about[:140] }}</div>{% endif %}
           </td>
           <td>
-            {% if row.state == "collecting" %}<span class="status-ok">собирается</span>
+            {% if row.state == "collecting" and row.silent %}<span class="status warn">молчит</span>
+            {% elif row.state == "collecting" %}<span class="status ok">собирается</span>
             {% elif row.state == "waiting" %}<span class="status-warn">ждёт решения</span>
               <div class="small muted">подписались в приложении</div>
             {% elif row.state == "stopped" %}<span class="muted">не собирается</span>
             {% elif row.state == "pending" %}<span class="muted">ждёт подписки</span>
               <div class="small muted">по одному каналу в минуту</div>
-            {% elif row.state == "error" %}<span class="status-error">не вышло</span>
+            {% elif row.state == "error" %}<span class="status error">не вышло</span>
               <div class="small field-error">{{ (s.last_error or "")[:120] }}</div>
             {% elif row.state == "leaving" %}<span class="muted">отписываюсь…</span>
             {% else %}<span class="muted">отписан</span>{% endif %}
           </td>
           <td class="num">{{ s.posts_24h or "" }}</td>
-          <td class="small">{% if s.last_post_at %}{{ s.last_post_at | ago(user.timezone, now) }}{% endif %}</td>
+          <td class="small">{% if s.last_post_at %}{{ s.last_post_at | ago(user.timezone, now) }}{% elif row.silent %}<span class="muted">не было</span>{% endif %}</td>
           <td class="actions">
             {% if row.state != "leaving" %}
             <details class="menu card-menu">
@@ -123,19 +128,19 @@
                   <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
                   <input type="hidden" name="source_id" value="{{ s.id }}">
                   {% if row.state in ("waiting", "stopped") %}
-                  <button class="link" name="action" value="collect">Собирать посты</button>
+                  <button class="ghost" name="action" value="collect">Собирать посты</button>
                   {% elif row.state == "collecting" %}
-                  <button class="link" name="action" value="stop" title="Подписка остаётся, новые посты не собираются">Не собирать</button>
+                  <button class="ghost" name="action" value="stop" title="Подписка остаётся, новые посты не собираются">Не собирать</button>
                   {% elif row.state == "left" and s.url %}
-                  <button class="link" name="action" value="rejoin">Подписаться снова</button>
+                  <button class="ghost" name="action" value="rejoin">Подписаться снова</button>
                   {% elif row.state in ("pending", "error") %}
-                  <button class="link" name="action" value="forget">Не подписываться, убрать</button>
+                  <button class="ghost" name="action" value="forget">Не подписываться, убрать</button>
                   {% endif %}
                   {% if row.state in ("waiting", "stopped", "collecting") %}
-                  <button class="link" name="action" value="leave">Отписаться <span class="muted">(посты останутся)</span></button>
+                  <button class="ghost" name="action" value="leave">Отписаться <span class="muted">(посты останутся)</span></button>
                   {% endif %}
                   {% if row.state in ("waiting", "stopped", "collecting", "left") %}
-                  <button class="link danger" name="action" value="delete"
+                  <button class="ghost danger" name="action" value="delete"
                           onclick='return confirm({{ ((("Отписаться от «" ~ s.name ~ "» и") if row.state != "left" else ("Удалить «" ~ s.name ~ "»")) ~ " удалить все его посты? Отменить нельзя.") | tojson }})'>
                     {{ "Отписаться и удалить посты" if row.state != "left" else "Удалить посты" }}</button>
                   {% endif %}
@@ -145,7 +150,7 @@
                 <form method="post" action="/admin/connectors/{{ connector.id }}/channels/similar">
                   <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
                   <input type="hidden" name="source_id" value="{{ s.id }}">
-                  <button class="link" title="Каналы, которые Telegram рекомендует к этому">Похожие каналы</button>
+                  <button class="ghost" title="Каналы, которые Telegram рекомендует к этому">Похожие каналы</button>
                 </form>
                 {% endif %}
               </div>
@@ -184,13 +189,13 @@
   <h2>Подключение</h2>
   <p>
     {% if not connector.enabled %}<span class="muted">выключено: каналы не собираются</span>
-    {% elif connector.status == "needs_login" %}<span class="status-error">нужен вход</span>
-    {% elif connector.status == "error" %}<span class="status-error">ошибка</span>
-    {% else %}<span class="status-ok">работает</span>{% endif %}
+    {% elif connector.status == "needs_login" %}<span class="status error">нужен вход</span>
+    {% elif connector.status == "error" %}<span class="status error">ошибка</span>
+    {% else %}<span class="status ok">работает</span>{% endif %}
     · <a href="/admin/connectors/{{ connector.id }}/login">{{ "Войти в аккаунт" if connector.status == "needs_login" else "Вход в аккаунт" }}</a>
   </p>
   {% if connector.last_error %}<p class="small field-error">{{ connector.last_error[:300] }}</p>{% endif %}
-  <details class="add-source">
+  <details class="disclosure add-source">
     <summary>Название и учётные данные (api_id, api_hash, телефон)</summary>
     <form class="stack" method="post" action="/admin/connectors/{{ connector.id }}">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
@@ -203,17 +208,17 @@
     <form method="post" action="/admin/connectors/{{ connector.id }}/enabled">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
       <input type="hidden" name="enabled" value="{{ 'false' if connector.enabled else 'true' }}">
-      <button class="link" type="submit">{{ "Выключить подключение" if connector.enabled else "Включить подключение" }}</button>
+      <button class="ghost" type="submit">{{ "Выключить подключение" if connector.enabled else "Включить подключение" }}</button>
     </form>
     <form method="post" action="/admin/connectors/{{ connector.id }}/logout"
           onsubmit="return confirm('Выйти из аккаунта? Сбор каналов остановится, пока не войдёте снова.')">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-      <button class="link danger" type="submit">Выйти из аккаунта</button>
+      <button class="ghost danger" type="submit">Выйти из аккаунта</button>
     </form>
     <form method="post" action="/admin/connectors/{{ connector.id }}/delete"
           onsubmit='return confirm({{ ("Удалить подключение «" ~ connector.name ~ "»? Сначала удалите или отпишите его каналы.") | tojson }})'>
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-      <button class="link danger" type="submit">Удалить подключение</button>
+      <button class="ghost danger" type="submit">Удалить подключение</button>
     </form>
   </div>
 </section>

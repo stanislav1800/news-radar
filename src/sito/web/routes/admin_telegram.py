@@ -35,6 +35,8 @@ class ChannelRow:
     # waiting — ждёт решения, collecting, stopped, pending — ждёт подписки, error — подписаться не вышло,
     # leaving — отписывается, left — отписан
     state: str
+    # Собирается, но постов нет дольше обычного для канала: обычно канал заброшен — кандидат на отписку
+    silent: bool = False
 
     @property
     def username(self) -> str | None:
@@ -72,19 +74,24 @@ def _back(connector_id: int, anchor: str = "") -> RedirectResponse:
 @router.get("/channels", response_class=HTMLResponse)
 async def channels_page(
     request: Request, db: DbSession, user: AdminUser, connector_id: int, preview: int | None = None,
+    show: str = "",
 ) -> HTMLResponse:
+    """show — фильтр списка при открытии (silent — «Молчат», ссылка со страницы «Состояние»)."""
     connector = await _telegram(db, connector_id)
-    rows = [ChannelRow(r, _state(r)) for r in await SourceRepository(db).list_with_stats(connector_id)]
+    now = datetime.now(UTC)
+    rows = [ChannelRow(r, state, state == "collecting" and r.silent_since(now) is not None)
+            for r in await SourceRepository(db).list_with_stats(connector_id) if (state := _state(r))]
     rows.sort(key=lambda r: (_ORDER[r.state], r.source.name.lower()))
     counts: dict[str, int] = {}
     for row in rows:
         counts[row.state] = counts.get(row.state, 0) + 1
+    counts["silent"] = sum(row.silent for row in rows)
     return templates.TemplateResponse(request, "admin/telegram_channels.html", {
-        "user": user, "connector": connector, "rows": rows, "counts": counts, "preview_id": preview,
+        "user": user, "connector": connector, "rows": rows, "counts": counts, "preview_id": preview, "show": show,
         "subscribed": sum(r.state not in ("left", "pending", "error") for r in rows), "limit": CHANNELS_LIMIT,
         "new_channels": connector.settings.get("new_channels", "collect"),
         "quiet": bool(connector.settings.get("quiet", True)), "alerts": bool(connector.settings.get("alerts", True)),
-        "now": datetime.now(UTC),
+        "now": now,
         # Подключение целиком здесь же: вход, учётные данные, включить, удалить
         "fields": _connector_fields(COLLECTORS[SourceType.TELEGRAM], connector, None, None),
     })

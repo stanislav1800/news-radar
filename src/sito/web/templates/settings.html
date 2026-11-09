@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Настройки · Сито{% endblock %}
 {% block content %}
-<a class="back" href="/">← К ленте</a>
+<a class="back" href="/">← Лента</a>
 <h1>Настройки</h1>
 
 <h2>Вкладки ленты</h2>
@@ -27,7 +27,7 @@
         <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
         <input type="hidden" name="source_id" value="{{ source.id }}">
         <input type="hidden" name="action" value="show">
-        <button class="link" type="submit">Показывать снова</button>
+        <button class="ghost" type="submit">Показывать снова</button>
       </form>
     </li>
     {% endfor %}

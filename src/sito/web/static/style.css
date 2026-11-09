@@ -11,7 +11,12 @@
   --error-bg: #fdecec;
   --error-text: #9b1c1c;
   --notice-bg: #eef4ff;
+  --ok-text: #1f7a4d;
+  --warn-text: #9a5b00;
+  --hover: rgb(0 0 0 / .05);
   --radius: 10px;
+  --r-sm: 6px;
+  --s1: .25rem; --s2: .5rem; --s3: .75rem; --s4: 1rem; --s5: 1.5rem; --s6: 2rem;
   color-scheme: light;
 }
 
@@ -27,6 +32,9 @@
     --error-bg: #3a1d1f;
     --error-text: #f2b8b5;
     --notice-bg: #1d2a40;
+    --ok-text: #6fcf97;
+    --warn-text: #e0a64a;
+    --hover: rgb(255 255 255 / .07);
     color-scheme: dark;
   }
 }
@@ -74,32 +82,17 @@ input {
   border: 1px solid var(--border); border-radius: 8px; padding: .55rem .7rem;
 }
 input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
-button {
-  font: inherit; font-weight: 600; cursor: pointer;
-  background: var(--accent); color: var(--accent-text);
-  border: 0; border-radius: 8px; padding: .6rem 1rem;
-}
-button.link { background: none; color: var(--accent); padding: 0; font-weight: 400; }
-button.link:hover { text-decoration: underline; }
 
 .error, .notice { border-radius: 8px; padding: .6rem .8rem; font-size: .92rem; }
 .error { background: var(--error-bg); color: var(--error-text); }
 .notice { background: var(--notice-bg); }
-.warn { color: #9a5b00; margin: .3rem 0 0; }
-@media (prefers-color-scheme: dark) { .warn { color: #e0a64a; } }
+.warn { color: var(--warn-text); margin: .3rem 0 0; }
 .notice code { display: block; margin-top: .4rem; background: var(--surface); }
 
 /* Лента */
 h2 { font-size: 1.1rem; margin: 1.75rem 0 .5rem; }
 .small { font-size: .85rem; }
 .feed-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: 1rem; }
-.chips { display: flex; gap: .4rem; }
-.chip {
-  padding: .25rem .7rem; border: 1px solid var(--border); border-radius: 999px;
-  color: var(--muted); font-size: .9rem; background: var(--surface);
-}
-.chip:hover { text-decoration: none; border-color: var(--accent); }
-.chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 
 .feed { display: grid; gap: .75rem; }
 .story-card {
@@ -168,9 +161,8 @@ table.sources { width: 100%; border-collapse: collapse; font-size: .92rem; }
 .sources .url { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sources .actions { white-space: nowrap; text-align: right; }
 .sources .actions form { display: inline; margin-left: .6rem; }
-.status-ok { color: var(--muted); }
+.status-ok { color: var(--ok-text); }
 .status-error, .field-error { color: var(--error-text); }
-button.link.danger { color: var(--error-text); }
 .add-source { margin-top: 1rem; }
 .add-source summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .stack { display: grid; gap: .8rem; max-width: 520px; margin-top: .8rem; }
@@ -188,11 +180,6 @@ select {
   font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem;
 }
-a.button {
-  display: inline-block; font-weight: 600; padding: .5rem .9rem; border-radius: 8px;
-  background: var(--accent); color: var(--accent-text);
-}
-a.button:hover { text-decoration: none; opacity: .9; }
 .card.empty p { margin: 0 0 .6rem; }
 .card.empty p:last-child { margin: 0; }
 
@@ -274,8 +261,6 @@ button.vote.on { background: var(--notice-bg); border-color: var(--accent); filt
 .search-help ul { padding-left: 1.1rem; }
 
 /* Действия с темами на странице сюжета */
-button.secondary { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); padding: .35rem .8rem; }
-button.secondary:hover { background: var(--notice-bg); }
 details.menu { position: relative; }
 details.menu summary { cursor: pointer; color: var(--accent); list-style: none; }
 details.menu summary::-webkit-details-marker { display: none; }
@@ -395,8 +380,7 @@ h2.day:first-child { margin-top: 0; }
 .qr-login ol { margin: .75rem 0 0; padding-left: 1.2rem; }
 
 /* Каналы Telegram */
-.status-warn { color: #9a5b00; font-weight: 600; }
-@media (prefers-color-scheme: dark) { .status-warn { color: #e0a64a; } }
+.status-warn { color: var(--warn-text); font-weight: 600; }
 .channels-head { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline; }
 .channels-head h2 { margin: 0; }
 .channels-head p { margin: 0; flex: 1; }
@@ -415,7 +399,6 @@ h2.day:first-child { margin-top: 0; }
 textarea { width: 100%; font: inherit; }
 .inline-search { display: flex; gap: .5rem; margin-top: .6rem; }
 .inline-search input { flex: 1; }
-button.secondary.danger { color: var(--error-text); border-color: var(--error-text); }
 .table-tools { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; justify-content: space-between; margin: .75rem 0; }
 .chips { display: flex; flex-wrap: wrap; gap: .35rem; }
 .chip { background: none; border: 1px solid var(--border); border-radius: 999px; padding: .15rem .65rem;
@@ -493,3 +476,114 @@ button.secondary.danger { color: var(--error-text); border-color: var(--error-te
 /* Проверка по описанию */
 form.inline { display: inline; }
 .rejected summary { cursor: pointer; }
+
+/* ===== Дизайн-система (docs/UI.md). Последним в файле: переопределяет старые правила тех же элементов ===== */
+
+/* Кнопки: главная — заливка (одна на форму), secondary — рамка, ghost — как текст (строки, списки, меню),
+   danger — удаление. .link — прежнее имя ghost */
+button, a.button {
+  display: inline-flex; align-items: center; justify-content: center; gap: .35rem;
+  font: inherit; font-size: .95rem; font-weight: 600; line-height: 1.25; cursor: pointer;
+  background: var(--accent); color: var(--accent-text);
+  border: 1px solid var(--accent); border-radius: var(--r-sm); padding: .5rem .95rem;
+  transition: background .15s, border-color .15s;
+}
+a.button:hover { text-decoration: none; }
+button:hover, a.button:hover { filter: brightness(1.07); }
+button:disabled { opacity: .5; cursor: default; filter: none; }
+button:focus-visible, a.button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.secondary, a.button.secondary { background: var(--surface); color: var(--accent); border-color: var(--border); }
+button.secondary:hover, a.button.secondary:hover { border-color: var(--accent); background: var(--notice-bg); filter: none; }
+button.danger { background: var(--surface); color: var(--error-text); border-color: currentColor; }
+button.danger:hover { background: var(--error-bg); filter: none; }
+button.ghost, button.link {
+  background: none; border-color: transparent; color: var(--accent); font-weight: 500;
+  padding: .2rem .45rem; margin: -.2rem -.45rem;
+}
+button.ghost:hover, button.link:hover { background: var(--hover); filter: none; }
+button.ghost.danger, button.link.danger { color: var(--error-text); }
+button.ghost.danger:hover, button.link.danger:hover { background: var(--error-bg); }
+button.sm, a.button.sm { font-size: .85rem; padding: .3rem .7rem; }
+.small button.ghost, .small button.link { font-size: inherit; }
+summary.ghost { color: var(--accent); cursor: pointer; }
+
+/* Кнопки форм — по ширине текста, внизу слева */
+.stack > button, .settings button[type=submit], .card > form > button { justify-self: start; }
+.form-actions { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: center; }
+.form-actions form { margin: 0; }
+input, select, textarea { border-radius: var(--r-sm); }
+textarea { color: var(--text); background: var(--bg); border: 1px solid var(--border); padding: .55rem .7rem; }
+select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.hint { color: var(--muted); font-size: .85rem; margin: 0; }
+
+/* Меню «⋯» и меню пользователя: пункты — строки во всю ширину */
+.menu-body { gap: .1rem; padding: .35rem; }
+.menu-body a, .menu-body button.ghost, .menu-body button.link, .menu-body summary.ghost {
+  display: flex; width: 100%; justify-content: flex-start; text-align: left; white-space: normal;
+  margin: 0; padding: .4rem .55rem; border-radius: var(--r-sm); color: var(--text); font-weight: 400;
+}
+.menu-body a:hover, .menu-body button.ghost:hover, .menu-body summary.ghost:hover { background: var(--hover); text-decoration: none; }
+.menu-body button.ghost.danger { color: var(--error-text); }
+.menu-body .one-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.menu.card-menu summary::after { content: none; }
+.card-menu summary { font-size: 1.2rem; line-height: 1; padding: .1rem .4rem .3rem; }
+
+/* Каркас страницы: «← Куда вернуться», заголовок с действиями, оглавление длинной страницы */
+.back { display: inline-flex; gap: .3rem; margin-bottom: var(--s3); font-size: .92rem; color: var(--muted); }
+.back:hover { color: var(--accent); text-decoration: none; }
+.page-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); margin-bottom: var(--s4); }
+.page-head h1 { margin: 0; flex: 1; min-width: 12rem; }
+.page-head .actions { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.page-head .actions form { margin: 0; }
+.section-nav { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); font-size: .9rem; margin: 0 0 var(--s2);
+  padding-bottom: var(--s3); border-bottom: 1px solid var(--border); }
+h2 { scroll-margin-top: calc(var(--topbar-h) + 1rem); }
+.card.danger-zone { border-color: color-mix(in srgb, var(--error-text) 35%, var(--border)); }
+.card.danger-zone p { margin: 0 0 var(--s3); }
+
+/* Метки и статусы */
+.badge.ok { background: color-mix(in srgb, var(--ok-text) 14%, transparent); color: var(--ok-text); }
+.badge.warn { background: color-mix(in srgb, var(--warn-text) 14%, transparent); color: var(--warn-text); }
+.badge.error { background: var(--error-bg); color: var(--error-text); }
+.status { display: inline-flex; align-items: center; gap: .35rem; font-weight: 500; }
+.status::before { content: ""; width: .5rem; height: .5rem; border-radius: 50%; background: currentColor; flex: none; }
+.status.ok { color: var(--ok-text); }
+.status.warn { color: var(--warn-text); }
+.status.error { color: var(--error-text); }
+.status.off { color: var(--muted); }
+
+/* Раскрывающийся блок: стрелка слева показывает, что заголовок нажимается */
+details.disclosure > summary { cursor: pointer; list-style: none; }
+details.disclosure > summary::-webkit-details-marker { display: none; }
+details.disclosure > summary::before { content: "▸"; display: inline-block; width: 1em; color: var(--muted); transition: transform .15s; }
+details.disclosure[open] > summary::before { transform: rotate(90deg); }
+.timeline details.post > summary::before { content: "▸"; display: inline-block; width: 1em; color: var(--muted); transition: transform .15s; }
+.timeline details.post[open] > summary::before { transform: rotate(90deg); }
+
+/* Лента: поиск с лупой (на телефоне подсказка не влезает), сводка темы свёрнута в строку */
+.top-search input {
+  padding-left: 2.1rem; background-repeat: no-repeat; background-position: .7rem center; background-size: 1rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a919c' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");
+}
+.report-tools > summary { font-weight: 600; }
+.report-tools[open] > summary { margin-bottom: var(--s3); }
+.topic-report .report-bar { margin: 0; }
+.topic-tools { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); align-items: baseline; margin: -.4rem 0 .9rem; font-size: .92rem; }
+.topic-tools p { margin: 0; }
+.card-action { gap: var(--s2); }
+
+/* Сюжет: темы и действия */
+.story-actions { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; margin: var(--s4) 0 0; }
+.story-actions form, .story-actions .story-summary { margin: 0; }
+.reason .votes button { font-size: .85rem; }
+
+/* Дайджест: поля видны, только когда он включён; день недели — только для «раз в неделю» */
+.digest-form:has(select[name=schedule] option[value=""]:checked) .digest-extra { display: none; }
+.digest-form:not(:has(select[name=schedule] option[value="weekly"]:checked)) .weekday { display: none; }
+/* Вкладки, которые не влезли: затухающий край со стороны, где есть ещё (классы ставит sito.js) */
+.tabs.more-left { mask-image: linear-gradient(to left, #000 calc(100% - 3rem), transparent); }
+/* «+ Тема» всегда видна у правого края, даже когда темы не влезли; тень цвета фона — затухание под ней */
+.tab.add { position: sticky; right: 0; flex: none; margin-left: auto; color: var(--accent); }
+.tabs.more-right .tab.add { box-shadow: -2rem 0 1.25rem -.5rem var(--bg); }
+.anchor { scroll-margin-top: calc(var(--topbar-h) + 1rem); }
+.tabs { scroll-padding-inline: 1rem 7rem; }  /* активная вкладка не прячется под «+ Тема» */

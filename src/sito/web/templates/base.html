@@ -25,7 +25,7 @@
         {% if user.is_admin %}<a href="/admin">Администрирование</a>{% endif %}
         <form method="post" action="/logout">
           <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-          <button class="link" type="submit">Выйти</button>
+          <button class="ghost" type="submit">Выйти</button>
         </form>
       </div>
     </details>

@@ -5,7 +5,7 @@
 {% block content %}
 {% set admin_tab = "sources" %}{% include "admin/_tabs.html" %}
 {% if detail %}
-<a class="back" href="/admin/connectors">← Все источники</a>
+<a class="back" href="/admin/connectors">← Источники</a>
 {% else %}
 <h1>Источники</h1>
 <p class="muted">Источники общие для всех пользователей. Подключение — тип источников со своими настройками и учётными данными; RSS есть всегда.</p>
@@ -20,13 +20,13 @@
     {% if section.spec %}<p class="muted small">{{ section.spec.description }}</p>{% endif %}
     {% if not c.builtin %}
     <p class="connector-status">
-      {% if not c.enabled %}<span class="muted">выключено</span>
-      {% elif c.status == "needs_login" %}<span class="status-error">нужен повторный вход</span>
-      {% elif c.status == "error" %}<span class="status-error">ошибка</span>
-      {% else %}<span class="status-ok">работает</span>{% endif %}
+      {% if not c.enabled %}<span class="status off">выключено</span>
+      {% elif c.status == "needs_login" %}<span class="status error">нужен повторный вход</span>
+      {% elif c.status == "error" %}<span class="status error">ошибка</span>
+      {% else %}<span class="status ok">работает</span>{% endif %}
       {% if c.last_error %}<span class="small field-error">{{ c.last_error[:300] }}</span>{% endif %}
       {% if section.spec and section.spec.login and c.status == "needs_login" %}
-      <a class="button" href="/admin/connectors/{{ c.id }}/login">Войти в аккаунт</a>
+      <a class="button sm" href="/admin/connectors/{{ c.id }}/login">Войти в аккаунт</a>
       {% endif %}
     </p>
     {% endif %}
@@ -40,7 +40,7 @@
     {%- if n.failing %} · <span class="status-error">с ошибкой {{ n.failing }}</span>{% endif %}
     {%- if n.silent %} · <span class="status-error">молчат {{ n.silent }}</span>{% endif %}
     {%- if n.late %} · <span class="status-warn">с опозданием {{ n.late }}</span>{% endif %}
-    <a class="button" href="{{ section.url }}">{{ "Каналы и настройки →" if section.spec and section.spec.login else "Ленты →" }}</a>
+    <a class="button secondary sm" href="{{ section.url }}">{{ "Каналы и настройки →" if section.spec and section.spec.login else "Ленты →" }}</a>
   </p>
   {% else %}
   {% if section.sources %}
@@ -62,7 +62,7 @@
   {% endif %}
 
   {% if section.spec and section.spec.source_form and not section.spec.login %}
-  <details class="add-source" {% if section.form_open %}open{% endif %}>
+  <details class="disclosure add-source" {% if section.form_open %}open{% endif %}>
     <summary>{{ "Добавить канал" if section.spec.login else "Добавить ленту" }}</summary>
     <form class="stack" method="post" action="/admin/connectors/{{ c.id }}/sources">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
@@ -81,7 +81,7 @@
   {% if not c.builtin %}
   <div class="connector-actions">
     {% if section.edit_fields %}
-    <details class="add-source" {% if section.edit_open %}open{% endif %}>
+    <details class="disclosure add-source" {% if section.edit_open %}open{% endif %}>
       <summary>Настройки подключения</summary>
       <form class="stack" method="post" action="/admin/connectors/{{ c.id }}">
         <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
@@ -95,12 +95,12 @@
       <form method="post" action="/admin/connectors/{{ c.id }}/enabled">
         <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
         <input type="hidden" name="enabled" value="{{ 'false' if c.enabled else 'true' }}">
-        <button class="link" type="submit">{{ "Выключить подключение" if c.enabled else "Включить подключение" }}</button>
+        <button class="ghost" type="submit">{{ "Выключить подключение" if c.enabled else "Включить подключение" }}</button>
       </form>
       <form method="post" action="/admin/connectors/{{ c.id }}/delete"
             onsubmit='return confirm({{ ("Удалить подключение «" ~ c.name ~ "»?") | tojson }})'>
         <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-        <button class="link danger" type="submit">Удалить</button>
+        <button class="ghost danger" type="submit">Удалить</button>
       </form>
     </div>
   </div>
@@ -112,7 +112,7 @@
 {% if not detail %}
 {% for item in new_connectors %}
 <section class="card connector new-connector">
-  <details {% if item.form_open %}open{% endif %}>
+  <details class="disclosure" {% if item.form_open %}open{% endif %}>
     <summary><strong>Добавить подключение: {{ item.spec.title }}</strong></summary>
     <p class="muted small">{{ item.spec.description }}</p>
     <form class="stack" method="post" action="/admin/connectors?type={{ item.spec.source_type }}">

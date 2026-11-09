@@ -2,7 +2,7 @@
 {% block title %}Вход в Telegram · {{ connector.name }} · Сито{% endblock %}
 {% block content %}
 {% set admin_tab = "sources" %}{% include "admin/_tabs.html" %}
-<a class="back" href="/admin/connectors#connector-{{ connector.id }}">← К источникам</a>
+<a class="back" href="/admin/connectors#connector-{{ connector.id }}">← Источники</a>
 <h1>Вход в Telegram</h1>
 <p class="muted">Подключение «{{ connector.name }}», аккаунт {{ connector.settings.phone }}.</p>
 
@@ -46,7 +46,7 @@
 {% if step in ("done", "code") or (step == "start" and not qr_running) %}
   <form method="post" action="/admin/connectors/{{ connector.id }}/login/send-code">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button class="{{ 'secondary' if step == 'start' else 'link' }}" type="submit">
+    <button class="{{ 'secondary' if step == 'start' else 'ghost' }}" type="submit">
       {%- if step == "start" %}Прислать код
       {%- elif step == "code" %}Код не пришёл — прислать {{ next_delivery or "ещё раз" }}
       {%- else %}Войти заново{% endif -%}
@@ -56,7 +56,7 @@
 {% if step in ("code", "password") or qr_running %}
   <form method="post" action="/admin/connectors/{{ connector.id }}/login/cancel">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button class="link" type="submit">Отменить вход</button>
+    <button class="ghost" type="submit">Отменить вход</button>
   </form>
 {% endif %}
 </section>

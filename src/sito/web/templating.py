@@ -10,14 +10,20 @@ from sito.web.security import CSRF_FORM_FIELD, CSRF_HEADER, csrf_token, pop_flas
 WEB_DIR = Path(__file__).parent
 
 
-@cache
 def static_version(path: str) -> str:
     """Короткий хеш содержимого файла статики: меняется вместе с файлом.
 
     Добавляется к адресу (?v=...), поэтому после обновления Сито браузер скачивает новые стили,
-    а не показывает старые из своего кэша. Считается один раз на процесс.
+    а не показывает старые из своего кэша. Пересчитывается, только когда файл изменился (веб в Docker
+    берёт статику прямо из папки проекта — правка видна без перезапуска).
     """
-    return hashlib.sha256((WEB_DIR / "static" / path).read_bytes()).hexdigest()[:10]
+    file = WEB_DIR / "static" / path
+    return _content_hash(file, file.stat().st_mtime_ns)
+
+
+@cache
+def _content_hash(file: Path, mtime_ns: int) -> str:
+    return hashlib.sha256(file.read_bytes()).hexdigest()[:10]
 
 
 templates = Jinja2Templates(directory=WEB_DIR / "templates")

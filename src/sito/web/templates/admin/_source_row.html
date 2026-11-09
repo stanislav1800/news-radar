@@ -34,13 +34,13 @@
           hx-post="/admin/sources/{{ s.id }}/enabled" hx-target="closest tr" hx-swap="outerHTML">
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
       <input type="hidden" name="enabled" value="{{ 'false' if s.enabled else 'true' }}">
-      <button class="link" type="submit">{{ "Выключить" if s.enabled else "Включить" }}</button>
+      <button class="ghost" type="submit">{{ "Выключить" if s.enabled else "Включить" }}</button>
     </form>
     {# tojson: название из базы безопасно попадает в JS-строку, кавычки в нём не ломают код #}
     <form method="post" action="/admin/sources/{{ s.id }}/delete"
           onsubmit='return confirm({{ ("Удалить «" ~ s.name ~ "» вместе со всеми постами? Лучше просто выключить.") | tojson }})'>
       <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-      <button class="link danger" type="submit">Удалить</button>
+      <button class="ghost danger" type="submit">Удалить</button>
     </form>
   </td>
 </tr>

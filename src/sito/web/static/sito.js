@@ -26,7 +26,16 @@
       tab.classList.add("active");
     });
 
+    // Вкладки не влезли — края, за которыми есть ещё, затухают: видно, что список прокручивается
+    const edges = () => {
+      tabs.classList.toggle("more-left", tabs.scrollLeft > 1);
+      tabs.classList.toggle("more-right", tabs.scrollLeft + tabs.clientWidth < tabs.scrollWidth - 1);
+    };
+    tabs.addEventListener("scroll", edges, { passive: true });
+    window.addEventListener("resize", edges);
+
     revealActive(tabs);
+    edges();
   }
 
   // «← Лента» на странице сюжета: если пришли из ленты Сито, вернуться браузерным «назад» —
@@ -93,7 +102,8 @@
     const state = active ? active.dataset.stateFilter : "";
     document.querySelectorAll(`${selector} tbody tr`).forEach((row) => {
       const byText = !query || (row.dataset.name || "").includes(query);
-      const byState = !state || row.dataset.state === state;
+      // «Молчат» — не отдельное состояние, а собираемые каналы без постов дольше обычного
+      const byState = !state || (state === "silent" ? row.dataset.silent === "1" : row.dataset.state === state);
       row.hidden = !(byText && byState);
       if (row.hidden) row.querySelectorAll("input[type=checkbox]").forEach((box) => { box.checked = false; });
     });
@@ -173,6 +183,8 @@
 
   document.addEventListener("htmx:load", (event) => scheduleExpiry(event.target));
   document.addEventListener("DOMContentLoaded", () => {
+    // Фильтр, выбранный заранее (?show=… в адресе), применить сразу
+    document.querySelectorAll("[data-table-tools]").forEach((tools) => applyFilters(tools.dataset.tableTools));
     setup();
     scheduleExpiry(document);
   });

@@ -2,7 +2,7 @@
 {% import "_story_card.html" as cards with context %}
 {% block title %}{% if results.query %}{{ results.query }} · {% endif %}Поиск · Сито{% endblock %}
 {% block content %}
-<a class="back" href="/">← К ленте</a>
+<a class="back" href="/">← Лента</a>
 {% if not results.query %}
 <div class="card intro">
   <strong>Новая тема</strong>

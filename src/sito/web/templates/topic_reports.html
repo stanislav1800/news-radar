@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}История сводок · {{ topic.name }} · Сито{% endblock %}
 {% block content %}
-<a class="back" href="/?topic={{ topic.id }}">← К ленте темы</a>
+<a class="back" href="/?topic={{ topic.id }}">← Лента «{{ topic.name }}»</a>
 <h1>История: {{ topic.name }}</h1>
 {% if reports %}
 <ul class="report-list">

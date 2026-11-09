@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ "Вопрос" if report.kind == "question" else "Сводка" }} · {{ topic.name }} · Сито{% endblock %}
 {% block content %}
-<a class="back" href="/topics/{{ topic.id }}/reports">← История: {{ topic.name }}</a>
+<a class="back" href="/topics/{{ topic.id }}/reports">← История сводок «{{ topic.name }}»</a>
 <article class="topic-report card">
   {% with open=true, new=0 %}{% include "_topic_report.html" %}{% endwith %}
   <form method="post" action="/topics/{{ topic.id }}/reports/{{ report.id }}/delete"
         onsubmit="return confirm('Удалить из истории?')">
     <input type="hidden" name="{{ CSRF_FORM_FIELD }}" value="{{ csrf_token(request) }}">
-    <button class="link danger small" type="submit">Удалить из истории</button>
+    <button class="ghost danger small" type="submit">Удалить из истории</button>
   </form>
 </article>
 {% endblock %}

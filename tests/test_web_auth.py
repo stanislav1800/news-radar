@@ -109,6 +109,21 @@ def test_lockout_per_login_from_many_addresses() -> None:
     assert limiter.seconds_left(("10.9.9.9", "other")) == 0
 
 
+def test_wide_lockout_spares_owner_address() -> None:
+    """Чужой перебор с многих адресов не запирает владельца там, откуда он уже входил."""
+    limiter = LoginLimiter(max_failures=3, lockout_seconds=60)
+    limiter.reset(("192.168.1.5", "admin"))  # владелец входил отсюда
+    for i in range(3 * LOGIN_WIDE_FACTOR):
+        limiter.record_failure((f"10.0.0.{i}", "admin"))
+
+    assert limiter.seconds_left(("10.9.9.9", "admin")) > 0       # новый адрес — пауза
+    assert limiter.seconds_left(("192.168.1.5", "admin")) == 0   # свой — нет
+
+    for _ in range(3):  # но перебор со «своего» адреса упирается в счётчик пары
+        limiter.record_failure(("192.168.1.5", "admin"))
+    assert limiter.seconds_left(("192.168.1.5", "admin")) > 0
+
+
 def test_limiter_forgets_old_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sito.web.security.MAX_TRACKED", 4)
     limiter = LoginLimiter(max_failures=3, lockout_seconds=0)

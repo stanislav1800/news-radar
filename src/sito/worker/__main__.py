@@ -97,6 +97,13 @@ async def poll_loop(service: IngestService, stop: asyncio.Event) -> None:
 
 
 BATCH_TIMEOUT = 900  # пачка конвейера обычно идёт секунды
+ERROR_PAUSE_MAX = 300
+
+
+def error_pause(tick: float, failures: int) -> float:
+    """Пауза после ошибок подряд: tick, 2·tick, 4·tick… до 5 минут. Сломанная модель или база
+    не должны крутить шаг вхолостую и засыпать лог одинаковыми ошибками каждые несколько секунд."""
+    return min(ERROR_PAUSE_MAX, tick * 2 ** (failures - 1)) if failures else tick
 
 
 class BatchResult(Protocol):
@@ -107,7 +114,8 @@ class BatchResult(Protocol):
 async def drain_loop(
     name: str, process_batch: Callable[[], Awaitable[BatchResult]], tick: float, stop: asyncio.Event
 ) -> None:
-    """Обрабатывать пачки подряд, пока есть работа, потом ждать tick секунд."""
+    """Обрабатывать пачки подряд, пока есть работа, потом ждать tick секунд (после ошибок — дольше)."""
+    failures = 0
     while not stop.is_set():
         started = time.monotonic()
         try:
@@ -115,17 +123,20 @@ async def drain_loop(
             async with asyncio.timeout(BATCH_TIMEOUT):
                 result = await process_batch()
         except TimeoutError:
+            failures += 1
             metrics.STEP_ERRORS.labels(name, "timeout").inc()
             logger.error("шаг «%s»: пачка не закончилась за %d мин, повторяю", name, BATCH_TIMEOUT // 60)
         except Exception:
+            failures += 1
             metrics.STEP_ERRORS.labels(name, "error").inc()
-            logger.exception("ошибка шага «%s»", name)
+            logger.exception("ошибка шага «%s», следующая попытка через %.0f с", name, error_pause(tick, failures))
         else:
+            failures = 0
             if result.total:
                 metrics.BATCH_SECONDS.labels(name).observe(time.monotonic() - started)
                 metrics.BATCH_ITEMS.labels(name).inc(result.total)
                 continue
-        await sleep_until_stop(stop, tick)
+        await sleep_until_stop(stop, error_pause(tick, failures))
 
 
 async def embed_loop(stop: asyncio.Event) -> None:

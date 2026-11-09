@@ -11,9 +11,11 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from urllib.parse import quote
 
+import asyncpg
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -70,6 +72,12 @@ async def _warm_up(embedder: LazyEmbedder) -> None:
         logger.exception("модель для поиска по смыслу не загрузилась")
     else:
         logger.info("модель для поиска по смыслу загружена: %s", embedder.name)
+
+
+def _out_of_range(exc: DBAPIError) -> bool:
+    # asyncpg проверяет число ещё до отправки в базу (DataError), PostgreSQL — своим кодом 22003
+    cause = exc.orig.__cause__ if exc.orig is not None else None
+    return isinstance(cause, asyncpg.exceptions.DataError) or getattr(exc.orig, "sqlstate", None) == "22003"
 
 
 def create_app(
@@ -153,6 +161,14 @@ def create_app(
             # HTMX подменяет часть страницы; ему нужен заголовок, чтобы перейти на логин целиком
             return Response(status_code=401, headers={"HX-Redirect": login_url})
         return RedirectResponse(login_url, status_code=303)
+
+    @app.exception_handler(DBAPIError)
+    async def bad_value(request: Request, exc: DBAPIError) -> Response:
+        """Число из адреса не влезло в колонку (/stories/99999999999999999999): такого точно нет — 404.
+        Остальные ошибки базы — как раньше, 500 и запись в лог."""
+        if _out_of_range(exc):
+            return PlainTextResponse("Не найдено", status_code=404)
+        raise exc
 
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
     app.include_router(health.router)

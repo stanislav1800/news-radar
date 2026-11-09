@@ -23,6 +23,7 @@ class _Attempts:
 LOGIN_WIDE_FACTOR = 4      # на один логин со всех адресов — вчетверо больше попыток
 MAX_TRACKED = 10_000       # сколько записей держать в памяти, прежде чем чистить устаревшие
 LOGIN_LOCKS = 64           # попытки на один логин идут по очереди; замков — фиксированное число
+MAX_TRUSTED = 10_000       # адресов, с которых входили удачно (растёт только от удачных входов)
 
 
 @dataclass
@@ -31,6 +32,10 @@ class LoginLimiter:
 
     Считается для пары «адрес + логин» и отдельно для логина со всех адресов: адрес клиента берётся
     из заголовка прокси, и перебор с подменой адреса упрётся во второй счётчик.
+
+    Общий счётчик не блокирует адрес, с которого этот логин уже входил удачно: иначе чужой перебор
+    запирал бы настоящего владельца. Перебор с такого адреса всё равно упрётся в счётчик пары.
+
     Хранится в памяти процесса: для одного процесса веба этого достаточно,
     после перезапуска счётчики обнуляются.
     """
@@ -39,6 +44,7 @@ class LoginLimiter:
     lockout_seconds: float
     _attempts: dict[tuple[str, str], _Attempts] = field(default_factory=dict)
     _locks: list[asyncio.Lock] = field(default_factory=lambda: [asyncio.Lock() for _ in range(LOGIN_LOCKS)])
+    _trusted: set[tuple[str, str]] = field(default_factory=set)
 
     def lock(self, login: str) -> asyncio.Lock:
         """Замок логина: проверка паузы, пароля и запись неудачи — одним шагом. Без него сотня параллельных
@@ -51,8 +57,9 @@ class LoginLimiter:
 
     def seconds_left(self, key: tuple[str, str]) -> float:
         now = time.monotonic()
+        keys = (key,) if key in self._trusted else self._keys(key)
         return max(
-            (max(0.0, a.locked_until - now) for k in self._keys(key) if (a := self._attempts.get(k))),
+            (max(0.0, a.locked_until - now) for k in keys if (a := self._attempts.get(k))),
             default=0.0,
         )
 
@@ -69,8 +76,14 @@ class LoginLimiter:
                 attempts.failures = 0
 
     def reset(self, key: tuple[str, str]) -> None:
-        for k in self._keys(key):
-            self._attempts.pop(k, None)
+        """Удачный вход: счётчик пары обнулить, адрес запомнить как свой для этого логина.
+
+        Общий счётчик логина не обнуляется: удачный вход владельца не должен давать перебору
+        с других адресов новые попытки."""
+        self._attempts.pop(key, None)
+        if len(self._trusted) >= MAX_TRUSTED:
+            self._trusted.clear()
+        self._trusted.add(key)
 
     def _prune(self) -> None:
         """Забыть неудачи старше паузы: иначе перебор случайных логинов раздувал бы память."""

@@ -2,7 +2,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
 
-from sqlalchemy import Boolean, func, literal_column, select, text
+from sqlalchemy import Boolean, case, func, literal_column, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,6 +112,9 @@ class PostRepository:
                     "links": [],
                     "embedding": None,
                     "embedding_model": None,
+                    # Полный текст — статьи по ссылке: ссылка та же — текст тот же, сменилась — скачать заново
+                    "full_text": case((Post.url_normalized == new.url_normalized, Post.full_text), else_=None),
+                    "full_text_at": case((Post.url_normalized == new.url_normalized, Post.full_text_at), else_=None),
                     "status": PostStatus.NEW,
                     "attempt": 0,
                     "last_error": None,

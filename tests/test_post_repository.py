@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sito.models import Post, PostStatus
@@ -80,3 +80,18 @@ async def test_url_owners(session: AsyncSession, make_source: MakeSource) -> Non
 
     assert owners == {"https://news.example/1": (source_id, "id-1")}
     assert await repo.url_owners([]) == {}
+
+
+async def test_edit_keeps_full_text_only_for_same_link(session: AsyncSession, make_source: MakeSource) -> None:
+    """Полный текст — статьи по ссылке: правка текста поста его не трогает, смена ссылки — сбрасывает."""
+    source_id = await make_source()
+    repo = PostRepository(session)
+    await repo.upsert_many([new_post(source_id, 1), new_post(source_id, 2)])
+    await session.execute(update(Post).values(full_text="Статья", full_text_at=func.now()))
+
+    same_link = new_post(source_id, 1, "v2")
+    new_link = replace(new_post(source_id, 2, "v2"), url="https://other.example/a", url_normalized="https://other.example/a")
+    await repo.upsert_many([same_link, new_link])
+
+    rows = dict((await session.execute(select(Post.external_id, Post.full_text).order_by(Post.id))).all())
+    assert rows == {"id-1": "Статья", "id-2": None}

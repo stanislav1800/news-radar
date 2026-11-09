@@ -43,9 +43,10 @@ def _parse_cursor(raw: str | None) -> tuple[datetime, int] | None:
         return None
     try:
         micros, story_id = raw.split("-", 1)
-        return datetime.fromtimestamp(int(micros) / 1_000_000, UTC), int(story_id)
-    except ValueError:
+        moment, sid = datetime.fromtimestamp(int(micros) / 1_000_000, UTC), int(story_id)
+    except (ValueError, OverflowError, OSError):  # OverflowError, OSError — время за пределами календаря
         return None  # испорченный курсор — просто первая страница
+    return (moment, sid) if 0 <= sid < 2**63 else None
 
 
 def _divider_before(stories: list[FeedStory], boundary: datetime | None, after: datetime | None) -> int | None:

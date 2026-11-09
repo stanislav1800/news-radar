@@ -3,13 +3,19 @@
 import math
 from collections.abc import Sequence
 
+import pytest
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import Post, PostStatus
 from sito.models.post import EMBEDDING_DIM
 from sito.repositories.posts import NewPost, PostRepository
-from sito.services.embedding import Embedder, EmbeddingService, embedding_text
+from sito.services.embedding import (
+    Embedder,
+    EmbeddingService,
+    EmbeddingUnavailable,
+    embedding_text,
+)
 from sito.services.pipeline import MAX_ATTEMPTS
 from tests.conftest import MakeSource
 
@@ -108,23 +114,25 @@ async def test_success_resets_attempts_from_previous_step(
     assert (await get_post(session_factory, post_id)).attempt == 0
 
 
-async def test_model_error_counts_for_whole_batch(
+async def test_broken_model_does_not_burn_attempts(
     session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
 ) -> None:
+    """Ни один пост пачки не посчитался — сломана модель: посты ждут, попытки не тратятся."""
     source_id = await make_source()
     ids = [await add_post(session_factory, source_id, n) for n in range(2)]
     service = EmbeddingService(session_factory, FakeEmbedder(fail=True))
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        result = await service.process_batch()
-        assert result.errors == 2
-        assert {(await get_post(session_factory, i)).attempt for i in ids} == {attempt}
+    for _ in range(MAX_ATTEMPTS + 1):
+        with pytest.raises(EmbeddingUnavailable, match="ни одного из 2"):
+            await service.process_batch()
 
     for post_id in ids:
         post = await get_post(session_factory, post_id)
-        assert post.status is PostStatus.FAILED
-        assert post.last_error == "RuntimeError: модель упала"
-        assert post.embedding is None
+        assert (post.status, post.attempt, post.last_error) == (PostStatus.CLEANED, 0, None)
+
+    # Модель заработала — очередь пошла сама
+    service.embedder = FakeEmbedder()
+    assert (await service.process_batch()).embedded == 2
 
 
 async def test_one_bad_text_does_not_fail_the_batch(

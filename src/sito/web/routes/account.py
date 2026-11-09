@@ -3,9 +3,10 @@
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Form, Request, status
+from fastapi import APIRouter, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from sito.models import Source
 from sito.repositories.users import UserRepository
 from sito.services.users import UserError, UserService
 from sito.web.deps import CurrentUser, DbSession
@@ -109,6 +110,8 @@ async def hide_source(
 ) -> Response:
     """Скрыть источник из «Главного» и «Всех новостей» или вернуть его."""
     repo = UserRepository(db)
+    if await db.get(Source, source_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Источник не найден")
     if action == "show":
         await repo.unhide_source(user.id, source_id)
         message = "Источник снова показывается"

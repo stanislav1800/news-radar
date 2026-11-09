@@ -97,6 +97,14 @@ def embedding_text(title: str, text: str | None, max_chars: int = 1000) -> str:
     return f"{title}\n{body}".strip()
 
 
+class EmbeddingUnavailable(RuntimeError):
+    """Модель не посчитала ни одного поста пачки: сломана она (память, файлы модели), а не тексты.
+
+    Попытки постам не засчитываются — иначе за три круга вся очередь ушла бы в failed. Шаг ждёт
+    с растущей паузой (drain_loop) и продолжит сам, когда модель заработает.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class EmbedBatchResult:
     embedded: int = 0
@@ -134,17 +142,26 @@ class EmbeddingService:
             except Exception:
                 # Пачка не посчиталась — по одному: один «плохой» текст не должен тянуть за собой остальные
                 logger.exception("ошибка расчёта векторов для пачки из %d постов, считаю по одному", len(posts))
-                errors = 0
+                outcomes: list[tuple[Post, list[float] | Exception]] = []
                 for post in posts:
                     try:
                         [vector] = await self._embed([post])
-                    except Exception as exc:
-                        errors += 1
-                        record_post_error(post, exc)
-                        logger.exception("post=%s: вектор не посчитан", post.id, extra={"post_id": post.id})
+                    except Exception as exc:  # noqa: BLE001 — записывается ниже: в пост или в EmbeddingUnavailable
+                        outcomes.append((post, exc))
                     else:
-                        self._done(post, vector)
-                result = EmbedBatchResult(embedded=len(posts) - errors, errors=errors)
+                        outcomes.append((post, vector))
+                failed = [(post, exc) for post, exc in outcomes if isinstance(exc, Exception)]
+                if len(failed) == len(posts):
+                    raise EmbeddingUnavailable(
+                        f"модель не посчитала ни одного из {len(posts)} постов: {type(failed[-1][1]).__name__}: {failed[-1][1]}"
+                    ) from failed[-1][1]
+                for post, outcome in outcomes:
+                    if isinstance(outcome, Exception):
+                        record_post_error(post, outcome)
+                        logger.error("post=%s: вектор не посчитан", post.id, exc_info=outcome, extra={"post_id": post.id})
+                    else:
+                        self._done(post, outcome)
+                result = EmbedBatchResult(embedded=len(posts) - len(failed), errors=len(failed))
             else:
                 for post, vector in zip(posts, vectors, strict=True):
                     self._done(post, vector)

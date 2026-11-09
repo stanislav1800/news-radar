@@ -92,3 +92,10 @@ async def test_http_requests_by_route_template(client: httpx.AsyncClient) -> Non
     before = sample("sito_http_requests_total", method="GET", route="/health", status="200")
     assert (await client.get("/health")).status_code == 200
     assert sample("sito_http_requests_total", method="GET", route="/health", status="200") == before + 1
+
+
+def test_error_pause_grows_and_resets() -> None:
+    from sito.worker.__main__ import ERROR_PAUSE_MAX, error_pause
+
+    assert [error_pause(5, n) for n in range(5)] == [5, 5, 10, 20, 40]
+    assert error_pause(5, 100) == ERROR_PAUSE_MAX

@@ -184,3 +184,29 @@ async def test_chatter_without_title_is_skipped(
 
     assert [(await get_post(session_factory, i)).status for i in junk] == [PostStatus.SKIPPED] * 3
     assert [(await get_post(session_factory, i)).status for i in news] == [PostStatus.CLEANED] * 4
+
+
+async def test_channel_byline_is_not_a_title(
+    session_factory: async_sessionmaker[AsyncSession], make_source: MakeSource
+) -> None:
+    """Агрегатор ставит первой строкой имя канала-первоисточника у каждого репоста: это подпись, а не заголовок."""
+    aggregator, channel = await make_source(), await make_source()
+    reposts = [await add_post(session_factory, aggregator, n, "", raw) for n, raw in enumerate([
+        "<strong>Открытый Город</strong>\nfrom <strong>INSIDER ELITES</strong>\nФНС вскрыла схемы угольной компании.",
+        "<strong>Открытый Город</strong>\nВ Юрге посчитали стоимость отлова собак. Подробности позже.",
+        "<strong>Открытый Город</strong>\n\nНа руднике установили остановку для работников.",
+    ])]
+    # Разные жирные заголовки у одного канала — настоящие заголовки
+    own = [await add_post(session_factory, channel, 10 + n, "", f"<b>{title}</b>\nТекст новости.")
+           for n, title in enumerate(["Взрыв в Кемерове", "Пожар на шахте", "Новый мэр Юрги"])]
+
+    await CleaningService(session_factory).process_batch()
+
+    assert [(await get_post(session_factory, i)).title for i in reposts] == [
+        "ФНС вскрыла схемы угольной компании", "В Юрге посчитали стоимость отлова собак",
+        "На руднике установили остановку для работников",
+    ]
+    assert "Открытый Город" not in ((await get_post(session_factory, reposts[0])).text or "")
+    assert [(await get_post(session_factory, i)).title for i in own] == [
+        "Взрыв в Кемерове", "Пожар на шахте", "Новый мэр Юрги",
+    ]

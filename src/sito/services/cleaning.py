@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,6 +17,7 @@ from sito.utils.text import (
     clean_line,
     is_chatter,
     split_headline,
+    strip_byline,
     tidy_title,
     title_from_text,
 )
@@ -24,6 +26,10 @@ __all__ = ["MAX_ATTEMPTS", "CleanBatchResult", "CleaningService"]
 
 logger = logging.getLogger(__name__)
 
+
+# Первая строка, которая повторяется у стольких постов источника за BYLINE_WINDOW, — подпись канала, а не заголовок
+BYLINE_MIN_POSTS = 3
+BYLINE_WINDOW = timedelta(days=7)
 
 # Пост короче этого (в буквах, без цифр и имён) — не новость: «Бггггг», «ОК от униан))», «красиво))»
 SHORT_POST_LETTERS = 12
@@ -58,12 +64,18 @@ class CleaningService:
         counts = {PostStatus.CLEANED: 0, PostStatus.SKIPPED: 0}
         errors = 0
         async with self.session_factory() as session, session.begin():
-            posts = await PostRepository(session).take_pending(PostStatus.NEW, self.batch_size)
+            repo = PostRepository(session)
+            posts = await repo.take_pending(PostStatus.NEW, self.batch_size)
+            # Подписи источников (имя канала первой строкой у каждого репоста) — у постов без своего заголовка
+            bylines = await repo.bylines(
+                {p.source_id for p in posts if not clean_line(p.title)},
+                datetime.now(UTC) - BYLINE_WINDOW, BYLINE_MIN_POSTS,
+            ) if posts else {}
             # Разбор HTML и леммы — работа процессора на сотни миллисекунд: в отдельном потоке, чтобы
             # остальные циклы worker'а (Telegram, опрос лент) не стояли. Пока поток работает, к этой сессии
             # и этим постам никто больше не обращается
             if posts:
-                errors = await asyncio.to_thread(self._clean_all, posts, counts)
+                errors = await asyncio.to_thread(self._clean_all, posts, counts, bylines)
             # Изменения объектов Post запишет commit при выходе из session.begin()
 
         result = CleanBatchResult(counts[PostStatus.CLEANED], counts[PostStatus.SKIPPED], errors)
@@ -71,11 +83,11 @@ class CleaningService:
             logger.info("очистка: %s", result, extra=asdict(result))
         return result
 
-    def _clean_all(self, posts: list[Post], counts: dict[PostStatus, int]) -> int:
+    def _clean_all(self, posts: list[Post], counts: dict[PostStatus, int], bylines: dict[int, set[str]]) -> int:
         errors = 0
         for post in posts:
             try:
-                status = self._clean(post)
+                status = self._clean(post, bylines.get(post.source_id, set()))
             except Exception as exc:
                 errors += 1
                 record_post_error(post, exc)
@@ -87,9 +99,11 @@ class CleaningService:
         return errors
 
     @staticmethod
-    def _clean(post: Post) -> PostStatus:
+    def _clean(post: Post, bylines: set[str]) -> PostStatus:
         raw, title = post.raw_text, clean_line(post.title)
         derived = not title  # у поста нет своего заголовка — Telegram
+        if derived and raw and bylines:
+            raw = strip_byline(raw, bylines)
         headline = None
         if not title and raw and (split := split_headline(raw)):
             # Пост без заголовка (Telegram), но первая строка явно заголовок: жирная или отделена пустой строкой

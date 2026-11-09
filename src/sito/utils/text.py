@@ -2,6 +2,7 @@
 
 import re
 import warnings
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning
@@ -102,6 +103,26 @@ def _has_words(text: str) -> bool:
     """Есть ли в строке хоть одно слово (не считая хэштегов, ссылок и эмодзи)."""
     plain = _URL.sub(" ", _HASHTAG.sub(" ", _EMOJI.sub(" ", text)))
     return sum(ch.isalpha() for ch in plain) >= 2
+
+
+_FORWARDED = re.compile(r"^from\s", re.IGNORECASE)
+
+
+def strip_byline(raw: str, bylines: Collection[str]) -> str:
+    """Убрать подпись в начале поста: имя канала, которое агрегатор ставит первой строкой у каждого
+    репоста («<b>Открытый Город</b>», затем «from <b>INSIDER ELITES</b>»). Иначе она становится заголовком.
+
+    bylines — первые строки, повторяющиеся у многих постов этого источника (см. PostRepository.bylines).
+    """
+    lines = raw.strip().split("\n")
+    if not lines or lines[0].strip() not in bylines:
+        return raw
+    lines = lines[1:]
+    if lines and _FORWARDED.match(_TAG.sub("", lines[0]).strip()) and len(lines[0]) < 200:
+        lines = lines[1:]
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    return "\n".join(lines)
 
 
 def split_headline(raw: str) -> tuple[str, str] | None:

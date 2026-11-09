@@ -86,11 +86,6 @@ services:
   web:
     <<: *app
     command: ["sito", "web"]
-    volumes:
-      - models:/home/sito/.cache/huggingface
-      # Веб из папки проекта: шаблоны и стили подхватываются сразу, правки Python — после
-      # docker compose restart web. Остальной код (worker, сервисы) — из образа
-      - ./src/sito/web:/app/.venv/lib/python3.13/site-packages/sito/web:ro
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-pass}@db:5432/sito
       # Порт открыт только на этой машине (см. ports), поэтому доверять X-Forwarded-* можно любому

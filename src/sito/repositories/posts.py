@@ -52,6 +52,24 @@ class PostRepository:
         result = await self.session.scalars(query)
         return list(result)
 
+    async def bylines(self, source_ids: Collection[int], since: datetime, min_count: int) -> dict[int, set[str]]:
+        """Первые строки, повторяющиеся у min_count+ постов источника с since: подписи, а не заголовки.
+
+        Считается по исходному тексту, а не по заголовкам: заголовки после очистки подписей уже не содержат.
+        """
+        if not source_ids:
+            return {}
+        rows = await self.session.execute(text("""
+            SELECT source_id, split_part(btrim(raw_text, E' \\t\\r\\n'), E'\\n', 1) AS line FROM post
+            WHERE source_id = ANY(CAST(:sources AS bigint[])) AND fetched_at >= :since AND raw_text IS NOT NULL
+            GROUP BY 1, 2 HAVING count(*) >= :min_count AND length(split_part(btrim(raw_text, E' \\t\\r\\n'), E'\\n', 1)) < 300
+        """), {"sources": list(source_ids), "since": since, "min_count": min_count})
+        found: dict[int, set[str]] = {}
+        for source_id, line in rows:
+            if line.strip():
+                found.setdefault(source_id, set()).add(line.strip())
+        return found
+
     async def lock_urls(self, urls: Collection[str]) -> None:
         """Блокировка адресов до конца транзакции: две ленты одного издания с одной статьёй сохраняются
         по очереди, и вторая увидит статью первой, а не упадёт на уникальности url_normalized.

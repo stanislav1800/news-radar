@@ -142,9 +142,12 @@ async def _feed_context(
     if topic is not None and not topic.paused and (first_page or not has_more):
         ask, suggestions, suggestion_reasons = await _suggestions(request, db, user, topic)
         if not first_page or len(stories) <= ASK_AFTER:
-            ask = []  # вопросы — только среди карточек первой страницы; на следующих они уже были
-        if has_more:
-            suggestions = []
+            # Вопросы — только среди карточек первой страницы; на следующих они уже были. Лента
+            # короче ASK_AFTER — спросить в её конце, вместе с остальными
+            suggestions = ask + suggestions
+            ask = []
+        if has_more or ask:
+            suggestions = []  # один блок обучения за раз: либо вопрос в ленте, либо список в конце
 
     after = before[0] if before else None
     # Вверху ленты темы — блок «Сводка» с последним отчётом LLM

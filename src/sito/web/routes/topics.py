@@ -86,6 +86,7 @@ async def search_page(
     # Что найдёт тема по этим словам, если нажать «Следить»: поиск показывает и частичные совпадения,
     # а тема берёт только сюжеты со всеми словами
     preview = None
+    in_topic: set[int] = set()
     if results.query:
         since = datetime.now(UTC) - timedelta(days=config.topic_backfill_days)
         preview = TopicPreview(
@@ -94,8 +95,14 @@ async def search_page(
             single_word=parse_query(results.query).single_word is not None,
             wide_after=config.topic_wide_per_day * config.topic_backfill_days,
         )
+        # Поиск находит и упоминания мимоходом, и похожее по смыслу — показать отдельно, что возьмёт тема
+        in_topic = await TopicRepository(db).word_matching(
+            results.query, [h.story.id for h in results.hits if not h.by_meaning]
+        )
     return templates.TemplateResponse(request, "search.html", {
         "user": user, "results": results, "search_query": results.query, "preview": preview,
+        "topic_hits": [h for h in results.hits if h.story.id in in_topic],
+        "other_hits": [h for h in results.hits if h.story.id not in in_topic],
         "topic_name": topic_name_from(results.query) if results.query else "",
         "llm": request.app.state.llm is not None,
         "now": datetime.now(UTC),

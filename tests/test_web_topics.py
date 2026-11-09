@@ -63,7 +63,9 @@ async def test_search_one_list_words_then_meaning(
     assert titles(html) == ["Добыча угля в Кузбассе выросла", "Министр о добыче", "Шахтёры перевыполнили план"]
     assert html.count("по смыслу</span>") == 1  # пометка только у найденного по смыслу
     assert embedder.calls == ["добыча угля в кузбассе"]  # пробелы схлопнуты
-    assert "по запросу «добыча угля в кузбассе»" in html and ">Следить</button>" in html
+    assert "Тема «" in html and ">Следить</button>" in html
+    # Что возьмёт тема, отдельно от упоминаний и похожего по смыслу
+    assert "Попадут в тему" in html and "Тоже нашлось, но в тему не попадёт" in html
 
     await logged_in.get("/search", params={"q": 'добыча or "уголь" -нефть'})
     assert embedder.calls[-1] == "добыча уголь"  # синтаксис поиска по словам модели не передаётся

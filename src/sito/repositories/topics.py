@@ -92,6 +92,11 @@ _PREVIEW_SQL = text(f"""
 """)
 
 
+_WORD_MATCHING_SQL = text(f"""
+    SELECT DISTINCT post.story_id FROM post WHERE post.story_id = ANY(:ids) AND {_WORD_MATCH_SQL}
+""").bindparams(bindparam("ids", type_=ARRAY(BigInteger)))
+
+
 def _source_params(topic: Topic) -> dict[str, object]:
     return {"sources": list(topic.source_ids or []), "all_sources": not topic.source_ids}
 
@@ -460,6 +465,14 @@ class TopicRepository:
             return []
         rows = await self.session.execute(_PREVIEW_STORIES_SQL, {**params, "since": since, "limit": limit})
         return [(row[0], row[1], row[2]) for row in rows]
+
+    async def word_matching(self, query: str, story_ids: list[int]) -> set[int]:
+        """Какие из этих сюжетов тема с таким запросом взяла бы по словам (поиск находит и упоминания мимоходом)."""
+        params = _word_params(query)
+        if not params["words"] or not story_ids:
+            return set()
+        rows = await self.session.scalars(_WORD_MATCHING_SQL, {**params, "ids": story_ids})
+        return set(rows)
 
     async def preview(self, query: str, since: datetime) -> int:
         """Сколько сюжетов с since тема с таким запросом нашла бы по словам: до того, как её создать."""

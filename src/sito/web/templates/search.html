@@ -16,7 +16,7 @@
   <input type="hidden" name="query" value="{{ results.query }}">
   <input type="hidden" name="name" value="{{ topic_name }}">
   <div>
-    <strong>{{ results.hits | length | plural("сюжет", "сюжета", "сюжетов") }} по запросу «{{ results.query }}»</strong>
+    <strong>Тема «{{ topic_name }}»</strong>
     {% if preview.found == 0 %}
     <p class="warn small">Сюжетов, где есть все эти слова, за {{ preview.days | plural("день", "дня", "дней") }} нет.
       Тема берёт только сюжеты со всеми словами — уберите лишние, иначе она будет пустой.</p>
@@ -39,11 +39,21 @@
   </div>
 </form>
 
-{% if results.hits %}
+{% if topic_hits %}
+<h2>Попадут в тему</h2>
 <div class="feed">
-  {% for h in results.hits %}{{ cards.story_card(h.story, note="по смыслу" if h.by_meaning else none) }}{% endfor %}
+  {% for h in topic_hits %}{{ cards.story_card(h.story) }}{% endfor %}
 </div>
-{% else %}
+{% endif %}
+{% if other_hits %}
+<h2>Тоже нашлось, но в тему не попадёт</h2>
+<p class="muted small">Слова упомянуты мимоходом, есть не все слова или сюжет просто похож по смыслу.
+  Если такие нужны — уточните запрос или после создания добавьте подходящие в тему вручную.</p>
+<div class="feed">
+  {% for h in other_hits %}{{ cards.story_card(h.story, note="по смыслу" if h.by_meaning else none) }}{% endfor %}
+</div>
+{% endif %}
+{% if not results.hits %}
 <p class="muted">Ничего не нашлось. Попробуйте другие слова.</p>
 {% endif %}
 {% if results.meaning_unavailable %}

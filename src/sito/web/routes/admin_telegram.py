@@ -74,10 +74,12 @@ def _back(connector_id: int, anchor: str = "") -> RedirectResponse:
 @router.get("/channels", response_class=HTMLResponse)
 async def channels_page(
     request: Request, db: DbSession, user: AdminUser, connector_id: int, preview: int | None = None,
-    show: str = "",
+    show: str = "", tab: str = "list",
 ) -> HTMLResponse:
-    """show — фильтр списка при открытии (silent — «Молчат», ссылка со страницы «Состояние»)."""
+    """Вкладки: list — каналы, add — добавить (там же ответ на предпросмотр), settings — настройки.
+    show — фильтр списка при открытии (silent — «Молчат», ссылка со страницы «Состояние»)."""
     connector = await _telegram(db, connector_id)
+    tab = "add" if preview else tab if tab in ("list", "add", "settings") else "list"
     now = datetime.now(UTC)
     rows = [ChannelRow(r, state, state == "collecting" and r.silent_since(now) is not None)
             for r in await SourceRepository(db).list_with_stats(connector_id) if (state := _state(r))]
@@ -87,7 +89,7 @@ async def channels_page(
         counts[row.state] = counts.get(row.state, 0) + 1
     counts["silent"] = sum(row.silent for row in rows)
     return templates.TemplateResponse(request, "admin/telegram_channels.html", {
-        "user": user, "connector": connector, "rows": rows, "counts": counts, "preview_id": preview, "show": show,
+        "user": user, "connector": connector, "rows": rows, "counts": counts, "preview_id": preview, "show": show, "tab": tab,
         "subscribed": sum(r.state not in ("left", "pending", "error") for r in rows), "limit": CHANNELS_LIMIT,
         "new_channels": connector.settings.get("new_channels", "collect"),
         "quiet": bool(connector.settings.get("quiet", True)), "alerts": bool(connector.settings.get("alerts", True)),
@@ -109,7 +111,7 @@ async def save_options(
     )
     await db.commit()
     flash(request, "Настройки сохранены. Worker переподключится в течение минуты.")
-    return _back(connector_id)
+    return _back(connector_id, "?tab=settings")
 
 
 # --- Добавление: ссылки → предпросмотр → подписка ---------------------------------------------------
@@ -120,7 +122,7 @@ async def preview_links(request: Request, db: DbSession, connector_id: int, link
     await _telegram(db, connector_id)
     if not links.strip():
         flash(request, "Вставьте ссылки на каналы")
-        return _back(connector_id)
+        return _back(connector_id, "?tab=add")
     return await _command(request, db, connector_id, "preview", {"links": links[:10_000]})
 
 
@@ -139,7 +141,7 @@ async def similar_channels(request: Request, db: DbSession, connector_id: int, s
 async def logout(request: Request, db: DbSession, connector_id: int) -> Response:
     await _command(request, db, connector_id, "logout", {})
     flash(request, "Выхожу из аккаунта: сессия завершится и в Telegram. Чтобы снова собирать каналы, войдите заново.")
-    return _back(connector_id)
+    return _back(connector_id, "?tab=settings")
 
 
 async def _command(request: Request, db: DbSession, connector_id: int, kind: str, payload: dict[str, Any]) -> Response:

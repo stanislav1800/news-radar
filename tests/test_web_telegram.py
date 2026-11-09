@@ -264,3 +264,16 @@ async def test_silent_channels_filter_and_summary(
 
     page = (await admin.get(f"/admin/connectors/{connector_id}/channels?show=silent")).text
     assert 'class="chip active" data-state-filter="silent"' in page  # фильтр выбран заранее and 'data-silent="1"' in page
+
+
+async def test_channels_page_tabs(
+    admin: httpx.AsyncClient, fake_login: FakeLogin, session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Каналы, добавление и настройки — на отдельных вкладках, а не одной длинной страницей."""
+    await add_account(admin)
+    base = f"/admin/connectors/{(await connector(session_factory)).id}/channels"
+    listing, adding, settings = [(await admin.get(base, params={"tab": t})).text for t in ("list", "add", "settings")]
+    assert "Подписки аккаунта" in listing and "Добавить каналы" not in listing and "Выйти из аккаунта" not in listing
+    assert "Добавить каналы" in adding and "Подписки аккаунта" not in adding
+    assert "Выйти из аккаунта" in settings and "Подписки аккаунта" not in settings
+    assert "Подписки аккаунта" in (await admin.get(base, params={"tab": "чушь"})).text

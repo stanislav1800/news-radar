@@ -602,3 +602,5 @@ details.disclosure[open] > summary::before { transform: rotate(90deg); }
 .new-topic-words { display: flex; gap: var(--s2); }
 .new-topic-words input { flex: 1; min-width: 0; }
 .card .hint { margin-top: var(--s2); }
+.tabs.subtabs { position: static; margin: 0 0 var(--s4); padding-top: 0; }
+section.card + section.card { margin-top: var(--s4); }  /* карточки подряд, без заголовка между ними */

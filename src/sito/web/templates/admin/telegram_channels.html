@@ -13,6 +13,13 @@
   {% else %}<span class="status ok">работает</span>{% endif %}
   · подписок {{ subscribed }} из {{ limit }}
 </p>
+<nav class="tabs subtabs" aria-label="Разделы подключения">
+  <a class="tab{% if tab == 'list' %} active{% endif %}" href="?tab=list">Каналы <span class="count">{{ rows | length }}</span></a>
+  <a class="tab{% if tab == 'add' %} active{% endif %}" href="?tab=add">Добавить</a>
+  <a class="tab{% if tab == 'settings' %} active{% endif %}" href="?tab=settings">Настройки</a>
+</nav>
+
+{% if tab == "add" %}
 
 <section class="card" id="add">
   <h2>Добавить каналы</h2>
@@ -33,7 +40,9 @@
   </div>
   {% endif %}
 </section>
+{% endif %}
 
+{% if tab == "list" %}
 <section class="card">
   <div class="channels-head">
     <h2 id="list">Подписки аккаунта</h2>
@@ -166,7 +175,9 @@
   <p class="muted">Каналов пока нет. Подпишите аккаунт в приложении Telegram или добавьте каналы ссылками выше.</p>
   {% endif %}
 </section>
+{% endif %}
 
+{% if tab == "settings" %}
 <section class="card settings">
   <h2>Настройки</h2>
   <form class="stack" method="post" action="/admin/connectors/{{ connector.id }}/channels/options">
@@ -222,4 +233,5 @@
     </form>
   </div>
 </section>
+{% endif %}
 {% endblock %}

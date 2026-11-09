@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito.models import ConnectorCommand, Post, Source, SourceType
@@ -208,12 +208,12 @@ async def test_join_channel_added_by_link(
         for url in ("https://t.me/coal", "https://t.me/nobody"):
             session.add(Source(connector_id=config.id, type=SourceType.TELEGRAM, name=url, url=url, state={}))
     tg = FakeTelegram(public={"coal": COAL}, history={COAL.id: [message(1)]})
-    session = _Session(config, sink, tg, TelegramRules())
-    await session.run()
+    listener = _Session(config, sink, tg, TelegramRules())
+    await listener.run()
 
-    await session._join_one()  # по одному каналу за круг
-    await session._join_one()
-    await session._join_one()
+    await listener._join_one()  # по одному каналу за круг
+    await listener._join_one()
+    await listener._join_one()
 
     async with session_factory() as db:
         sources = {s.url: s for s in await db.scalars(select(Source))}
@@ -230,9 +230,9 @@ async def test_link_to_channel_already_followed_is_merged(
     await sink.source(config.id, str(COAL.id), name=COAL.title, url="https://t.me/coal_old_name")
     async with session_factory() as session, session.begin():
         session.add(Source(connector_id=config.id, type=SourceType.TELEGRAM, name="@coal", url="https://t.me/coal", state={}))
-    session = _Session(config, sink, FakeTelegram(public={"coal": COAL}), TelegramRules())
+    listener = _Session(config, sink, FakeTelegram(public={"coal": COAL}), TelegramRules())
 
-    await session._join_one()
+    await listener._join_one()
 
     assert [s.external_id for s in await sink.sources(config.id)] == ["111"]  # без дубля
     async with session_factory() as db:
@@ -323,6 +323,7 @@ async def test_preview_and_leave_commands(
         await session._run_command(command)
 
     shown = (await command_result(session_factory, preview)).result
+    assert shown is not None
     assert [(item["title"], item.get("known"), item["error"]) for item in shown] == [
         ("", None, "«bad» — не ссылка на канал: нужна t.me/имя_канала, @имя, t.me/+приглашение или t.me/addlist/папка"),
         ("Уголь Кузбасса", True, None),
@@ -387,9 +388,11 @@ async def test_search_similar_and_logout_commands(
     while (command := await sink.next_command(config.id)) is not None:
         await session._run_command(command)
 
-    assert [(i["title"], i["known"]) for i in (await command_result(session_factory, search)).result] == [
-        ("Уголь Кузбасса", True)]
-    assert [i["title"] for i in (await command_result(session_factory, similar)).result] == ["Mash"]
+    found = (await command_result(session_factory, search)).result
+    alike = (await command_result(session_factory, similar)).result
+    assert found is not None and alike is not None
+    assert [(i["title"], i["known"]) for i in found] == [("Уголь Кузбасса", True)]
+    assert [i["title"] for i in alike] == ["Mash"]
     assert tg.calls == ["search уголь", "similar 111", "log_out"]
 
 
@@ -421,7 +424,7 @@ async def test_gap_after_failed_save_is_filled(
     session = _Session(config, sink, tg, TelegramRules())
     await session.run()
     async with session_factory() as db, db.begin():
-        await db.execute(Post.__table__.delete().where(Post.external_id == "2"))  # будто 2 не сохранилось
+        await db.execute(delete(Post).where(Post.external_id == "2"))  # будто 2 не сохранилось
     session.gaps[COAL.id] = 2
 
     await session._fill_gaps()

@@ -205,9 +205,9 @@ async def test_digest_by_schedule_page_badge_and_rss(
     assert await service.run_due(tomorrow) == 0 and seen == []
 
     async with session_factory() as session, session.begin():
-        topic = await session.get(Topic, topic_id)
-        assert topic is not None
-        topic.digest_min_stories, topic.digest_last_at = 1, None
+        stored = await session.get(Topic, topic_id)
+        assert stored is not None
+        stored.digest_min_stories, stored.digest_last_at = 1, None
     assert await service.run_due(tomorrow) == 1
     assert "Только цифры" in str(seen[0]["messages"]) and "дайджест" in str(seen[0]["messages"])
     assert await service.run_due(tomorrow) == 0  # этот слот уже отработан
@@ -305,9 +305,9 @@ async def test_topic_check_removes_and_restore_returns(
 
     # Пересчёт темы не возвращает отклонённое
     async with session_factory() as session, session.begin():
-        topic = await session.get(Topic, topic_id)
-        assert topic is not None
-        await TopicService(session, TopicRules.from_settings(app.state.settings)).rematch(topic)
+        stored = await session.get(Topic, topic_id)
+        assert stored is not None
+        await TopicService(session, TopicRules.from_settings(app.state.settings)).rematch(stored)
     assert await matched() == {good}
 
     app.state.llm = client

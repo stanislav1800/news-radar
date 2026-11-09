@@ -421,7 +421,7 @@
     {
       "type": "timeseries",
       "title": "От сбора до ленты (у нас)",
-      "description": "Очистка, вектор, склейка. Посты, попавшие в ленту за последние 15 минут",
+      "description": "Очистка, вектор, склейка. Свежие посты, попавшие в ленту за последние 15 минут",
       "id": 9,
       "datasource": {
         "type": "prometheus",
@@ -429,7 +429,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 9,
         "x": 0,
         "y": 6
       },
@@ -474,7 +474,7 @@
     {
       "type": "timeseries",
       "title": "От публикации до сбора (у источника)",
-      "description": "Опрос RSS по расписанию, доставка Telegram",
+      "description": "Опрос RSS по расписанию, доставка Telegram. Без догруженных после простоя",
       "id": 10,
       "datasource": {
         "type": "prometheus",
@@ -482,8 +482,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 9,
+        "x": 9,
         "y": 6
       },
       "targets": [
@@ -525,9 +525,62 @@
       }
     },
     {
+      "type": "timeseries",
+      "title": "Догружено после простоя, за 15 минут",
+      "description": "Опубликованы, пока worker не работал. В задержку не входят: иначе после перезапуска она показывала бы длительность простоя",
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (source_type) (sito_post_lag_posts{kind=\"caught_up\"})",
+          "legendFormat": "{{source_type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 25,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
       "type": "row",
       "title": "Конвейер",
-      "id": 11,
+      "id": 12,
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -541,7 +594,7 @@
       "type": "timeseries",
       "title": "Собрано постов, в минуту",
       "description": "inserted — новые, updated — правки, duplicates — статья уже есть у другого поста",
-      "id": 12,
+      "id": 13,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -594,7 +647,7 @@
       "type": "timeseries",
       "title": "Обработано шагами, в минуту",
       "description": "",
-      "id": 13,
+      "id": 14,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -647,7 +700,7 @@
       "type": "timeseries",
       "title": "Очередь по статусам",
       "description": "",
-      "id": 14,
+      "id": 15,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -700,7 +753,7 @@
       "type": "timeseries",
       "title": "Время пачки, p95",
       "description": "",
-      "id": 15,
+      "id": 16,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -753,7 +806,7 @@
       "type": "timeseries",
       "title": "Ошибки и перезапуски, за 15 минут",
       "description": "",
-      "id": 16,
+      "id": 17,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -823,7 +876,7 @@
     {
       "type": "row",
       "title": "Источники",
-      "id": 17,
+      "id": 18,
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -837,7 +890,7 @@
       "type": "timeseries",
       "title": "Источники по состоянию",
       "description": "ok — работают; silent — молчат дольше обычного; failing — ошибка сбора",
-      "id": 18,
+      "id": 19,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -890,7 +943,7 @@
       "type": "timeseries",
       "title": "Подключения",
       "description": "1 — работает, 0 — ошибка или нужен вход",
-      "id": 19,
+      "id": 20,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -942,7 +995,7 @@
     {
       "type": "row",
       "title": "Сайт",
-      "id": 20,
+      "id": 21,
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -956,7 +1009,7 @@
       "type": "timeseries",
       "title": "Запросы в секунду",
       "description": "",
-      "id": 21,
+      "id": 22,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1009,7 +1062,7 @@
       "type": "timeseries",
       "title": "Время ответа p95, самые медленные страницы",
       "description": "",
-      "id": 22,
+      "id": 23,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1062,7 +1115,7 @@
       "type": "timeseries",
       "title": "Память процессов",
       "description": "",
-      "id": 23,
+      "id": 24,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1114,7 +1167,7 @@
     {
       "type": "row",
       "title": "LLM",
-      "id": 24,
+      "id": 25,
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1128,7 +1181,7 @@
       "type": "timeseries",
       "title": "Расход по функциям, ₽ в час",
       "description": "",
-      "id": 25,
+      "id": 26,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1181,7 +1234,7 @@
       "type": "timeseries",
       "title": "Время ответа модели",
       "description": "",
-      "id": 26,
+      "id": 27,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1242,7 +1295,7 @@
     {
       "type": "row",
       "title": "Логи",
-      "id": 27,
+      "id": 28,
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1256,7 +1309,7 @@
       "type": "timeseries",
       "title": "Ошибки и предупреждения в логах, за 5 минут",
       "description": "Всплеск здесь и на графиках выше в то же время — смотрите строки ниже или Explore → Loki",
-      "id": 28,
+      "id": 29,
       "datasource": {
         "type": "loki",
         "uid": "loki"
@@ -1308,7 +1361,7 @@
     {
       "type": "logs",
       "title": "Последние ошибки",
-      "id": 29,
+      "id": 30,
       "datasource": {
         "type": "loki",
         "uid": "loki"

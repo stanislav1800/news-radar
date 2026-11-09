@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sito import metrics
 from sito.models import PostStatus
+from sito.repositories.pipeline import PipelineRepository
 from sito.services.llm import LlmAnswer, record_usage
 from sito.worker.__main__ import drain_loop
 from tests.conftest import MakeSource
@@ -30,14 +31,23 @@ async def test_state_from_database(
         published_at=now - timedelta(minutes=5), fetched_at=now - timedelta(minutes=3),
         clustered_at=now - timedelta(minutes=2),
     )
+    # Опубликован, пока worker не работал: догружен после запуска, в задержку не входит
+    async with session_factory() as session, session.begin():
+        await PipelineRepository(session).beat("worker", now - timedelta(minutes=30))
+    await add_post(
+        session_factory, source, 3, PostStatus.CLUSTERED,
+        published_at=now - timedelta(days=2), fetched_at=now - timedelta(minutes=1),
+        clustered_at=now - timedelta(seconds=30),
+    )
 
     async with session_factory() as session:
         await metrics.refresh_state(session, now)
 
     assert sample("sito_posts", status="new") == 1
-    assert sample("sito_posts", status="clustered") == 1
+    assert sample("sito_posts", status="clustered") == 2
     assert sample("sito_pipeline_oldest_pending_seconds") == pytest.approx(600, abs=5)
-    assert sample("sito_post_lag_posts", source_type="rss") == 1
+    assert sample("sito_post_lag_posts", source_type="rss", kind="live") == 1
+    assert sample("sito_post_lag_posts", source_type="rss", kind="caught_up") == 1
     assert sample("sito_post_lag_seconds", source_type="rss", stage="collect", quantile="0.5") == pytest.approx(120)
     assert sample("sito_post_lag_seconds", source_type="rss", stage="process", quantile="0.9") == pytest.approx(60)
     assert sample("sito_sources", source_type="rss", state="ok") == 1

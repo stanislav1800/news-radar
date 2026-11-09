@@ -33,10 +33,13 @@ class PipelineSummary:
 
 @dataclass(frozen=True, slots=True)
 class Lag:
-    """Задержка постов одного типа источников за последние сутки, в секундах."""
+    """Задержка постов одного типа источников, попавших в ленту за окно, в секундах. Только «живые» посты:
+    догруженные после простоя (опубликованы до запуска worker'а) — отдельным числом caught_up, иначе после
+    каждого перезапуска медиана показывает часы простоя, а не работу сбора и конвейера."""
 
     source_type: str
     posts: int
+    caught_up: int                 # догружено после простоя
     collect_median: float | None   # от публикации до сбора: опрос, источник, Telegram
     collect_p90: float | None
     process_median: float | None   # от сбора до ленты: очистка, вектор, склейка у нас
@@ -44,22 +47,27 @@ class Lag:
     process_max: float | None
 
 
+LAG_WINDOW = timedelta(hours=1)
+
 # Публикация → сбор → в сюжете. Время публикации у некоторых лент бывает «будущим» или неточным —
-# отрицательные задержки считаем нулём
+# отрицательные задержки считаем нулём. Нет пульса worker'а (тесты, первый запуск) — все посты «живые»
 _LAG_SQL = text("""
-    SELECT source.type AS source_type, count(*) AS posts,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY greatest(0, extract(epoch FROM post.fetched_at - post.published_at)))
-               AS collect_median,
-           percentile_cont(0.9) WITHIN GROUP (ORDER BY greatest(0, extract(epoch FROM post.fetched_at - post.published_at)))
-               AS collect_p90,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM post.clustered_at - post.fetched_at))
-               AS process_median,
-           percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM post.clustered_at - post.fetched_at))
-               AS process_p90,
-           max(extract(epoch FROM post.clustered_at - post.fetched_at)) AS process_max
-    FROM post JOIN source ON source.id = post.source_id
-    WHERE post.clustered_at > now() - interval '24 hours' AND post.published_at IS NOT NULL
-    GROUP BY source.type ORDER BY source.type
+    WITH started AS (
+        SELECT coalesce((SELECT started_at FROM heartbeat WHERE name = 'worker'), '-infinity') AS at
+    ), recent AS (
+        SELECT source.type AS source_type, post.published_at >= started.at AS live,
+               greatest(0, extract(epoch FROM post.fetched_at - post.published_at)) AS collect,
+               extract(epoch FROM post.clustered_at - post.fetched_at) AS process
+        FROM post JOIN source ON source.id = post.source_id CROSS JOIN started
+        WHERE post.clustered_at > now() - make_interval(secs => :window) AND post.published_at IS NOT NULL
+    )
+    SELECT source_type, count(*) FILTER (WHERE live) AS posts, count(*) FILTER (WHERE NOT live) AS caught_up,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY collect) FILTER (WHERE live) AS collect_median,
+           percentile_cont(0.9) WITHIN GROUP (ORDER BY collect) FILTER (WHERE live) AS collect_p90,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY process) FILTER (WHERE live) AS process_median,
+           percentile_cont(0.9) WITHIN GROUP (ORDER BY process) FILTER (WHERE live) AS process_p90,
+           max(process) FILTER (WHERE live) AS process_max
+    FROM recent GROUP BY source_type ORDER BY source_type
 """)
 
 
@@ -89,9 +97,10 @@ class PipelineRepository:
         oldest = await self.session.scalar(select(func.min(Post.fetched_at)).where(Post.status.in_(IN_PROGRESS)))
         return PipelineSummary(posts_24h, stories_24h, by_status, oldest)
 
-    async def lag(self) -> list[Lag]:
+    async def lag(self, window: timedelta = LAG_WINDOW) -> list[Lag]:
         """Сколько идёт пост от публикации до ленты: у источника и у нас (если растёт — конвейер не успевает)."""
-        return [Lag(**row._mapping) for row in await self.session.execute(_LAG_SQL)]
+        rows = await self.session.execute(_LAG_SQL, {"window": window.total_seconds()})
+        return [Lag(**row._mapping) for row in rows]
 
     async def failed_posts(self, limit: int) -> list[FailedPost]:
         query = (

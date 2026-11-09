@@ -14,11 +14,11 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sito.models import Connector, ConnectorStatus, LlmUsage, Post
-from sito.repositories.pipeline import IN_PROGRESS
+from sito.repositories.pipeline import IN_PROGRESS, PipelineRepository
 from sito.repositories.sources import SourceRepository
 
 logger = logging.getLogger(__name__)
@@ -66,28 +66,16 @@ LAG = Gauge(
     "process — от сбора до ленты",
     ["source_type", "stage", "quantile"],
 )
-LAG_POSTS = Gauge("sito_post_lag_posts", "Сколько постов попало в ленту за LAG_WINDOW", ["source_type"])
+LAG_POSTS = Gauge(
+    "sito_post_lag_posts", "Сколько постов попало в ленту за LAG_WINDOW: live — свежие (по ним задержка), "
+    "caught_up — догружены после простоя (опубликованы до запуска worker'а)", ["source_type", "kind"],
+)
 SOURCES = Gauge("sito_sources", "Включённые источники по состоянию", ["source_type", "state"])  # ok, failing, silent
 CONNECTOR_UP = Gauge("sito_connector_up", "Подключение работает (1) или нет (0)", ["connector"])
 LLM_COST_24H = Gauge("sito_llm_cost_rub_24h", "Расход на LLM за последние сутки, ₽")
 
+# Короче, чем у админки: график должен реагировать за минуты
 LAG_WINDOW = timedelta(minutes=15)
-
-# Как _LAG_SQL у админки, но за короткое окно: график должен реагировать за минуты, а не за сутки
-_LAG_SQL = text("""
-    SELECT source.type AS source_type, count(*) AS posts,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY greatest(0, extract(epoch FROM post.fetched_at - post.published_at)))
-               AS collect_p50,
-           percentile_cont(0.9) WITHIN GROUP (ORDER BY greatest(0, extract(epoch FROM post.fetched_at - post.published_at)))
-               AS collect_p90,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM post.clustered_at - post.fetched_at))
-               AS process_p50,
-           percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM post.clustered_at - post.fetched_at))
-               AS process_p90
-    FROM post JOIN source ON source.id = post.source_id
-    WHERE post.clustered_at > now() - make_interval(secs => :window) AND post.published_at IS NOT NULL
-    GROUP BY source.type
-""")
 
 _started = False
 
@@ -116,13 +104,15 @@ async def refresh_state(session: AsyncSession, now: datetime | None = None) -> N
 
     LAG.clear()
     LAG_POSTS.clear()
-    for row in await session.execute(_LAG_SQL, {"window": LAG_WINDOW.total_seconds()}):
-        m = row._mapping
-        LAG_POSTS.labels(m["source_type"]).set(m["posts"])
-        for stage in ("collect", "process"):
-            for q, quantile in (("p50", "0.5"), ("p90", "0.9")):
-                if (value := m[f"{stage}_{q}"]) is not None:
-                    LAG.labels(m["source_type"], stage, quantile).set(value)
+    for lag in await PipelineRepository(session).lag(LAG_WINDOW):
+        LAG_POSTS.labels(lag.source_type, "live").set(lag.posts)
+        LAG_POSTS.labels(lag.source_type, "caught_up").set(lag.caught_up)
+        for stage, quantile, value in (
+            ("collect", "0.5", lag.collect_median), ("collect", "0.9", lag.collect_p90),
+            ("process", "0.5", lag.process_median), ("process", "0.9", lag.process_p90),
+        ):
+            if value is not None:
+                LAG.labels(lag.source_type, stage, quantile).set(value)
 
     counts: dict[tuple[str, str], int] = {}
     for s in await SourceRepository(session).list_with_stats():
